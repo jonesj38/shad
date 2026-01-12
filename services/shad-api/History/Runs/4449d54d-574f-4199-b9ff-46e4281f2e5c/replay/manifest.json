@@ -1,0 +1,19 @@
+{
+  "run_id": "4449d54d-574f-4199-b9ff-46e4281f2e5c",
+  "config": {
+    "goal": "Compare Python and JavaScript for web development",
+    "notebook_id": null,
+    "budget": {
+      "max_wall_time": 300,
+      "max_tokens": 100000,
+      "max_nodes": 50,
+      "max_depth": 2,
+      "max_branching_factor": 7
+    },
+    "voice": null
+  },
+  "node_count": 1,
+  "cache_keys": [
+    "8d35177aed64624c"
+  ]
+}

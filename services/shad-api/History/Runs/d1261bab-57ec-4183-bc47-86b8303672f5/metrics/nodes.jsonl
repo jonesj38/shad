@@ -1,0 +1,8 @@
+{"node_id": "f228296c", "depth": 0, "status": "succeeded", "tokens_used": 0, "cache_hit": false, "duration_ms": 128931}
+{"node_id": "caca0db4", "depth": 1, "status": "succeeded", "tokens_used": 582, "cache_hit": false, "duration_ms": 12984}
+{"node_id": "880bf495", "depth": 1, "status": "succeeded", "tokens_used": 562, "cache_hit": false, "duration_ms": 12452}
+{"node_id": "5b3bb047", "depth": 1, "status": "succeeded", "tokens_used": 646, "cache_hit": false, "duration_ms": 14239}
+{"node_id": "319fa391", "depth": 1, "status": "succeeded", "tokens_used": 558, "cache_hit": false, "duration_ms": 12917}
+{"node_id": "dfaf4787", "depth": 1, "status": "succeeded", "tokens_used": 728, "cache_hit": false, "duration_ms": 15556}
+{"node_id": "832e549d", "depth": 1, "status": "succeeded", "tokens_used": 654, "cache_hit": false, "duration_ms": 14427}
+{"node_id": "0be6a620", "depth": 1, "status": "succeeded", "tokens_used": 750, "cache_hit": false, "duration_ms": 16211}

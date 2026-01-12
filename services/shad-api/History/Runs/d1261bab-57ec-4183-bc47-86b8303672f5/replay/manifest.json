@@ -1,0 +1,26 @@
+{
+  "run_id": "d1261bab-57ec-4183-bc47-86b8303672f5",
+  "config": {
+    "goal": "Research and explain the key architectural differences between microservices and monolithic applications, including their respective advantages, disadvantages, and best use cases for each approach in modern software development",
+    "notebook_id": null,
+    "budget": {
+      "max_wall_time": 300,
+      "max_tokens": 100000,
+      "max_nodes": 50,
+      "max_depth": 2,
+      "max_branching_factor": 7
+    },
+    "voice": null
+  },
+  "node_count": 8,
+  "cache_keys": [
+    "e90a79f8296d744d",
+    "ecda568074d884da",
+    "40cade17c08f9ccc",
+    "579b1b711fce89c1",
+    "5bb38a85f6f352c5",
+    "3a2b717614ef2c80",
+    "a65697cc204d1cfc",
+    "ea0ba39e318c945a"
+  ]
+}
