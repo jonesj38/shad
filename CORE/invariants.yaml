@@ -1,0 +1,92 @@
+# CORE Invariants - Machine-readable format
+version: "1.0"
+
+invariants:
+  - id: never_auto_publish
+    name: Never Auto-Publish
+    description: >
+      Shad must not publish, deploy, send, post, or execute irreversible
+      side effects without explicit human approval.
+    severity: critical
+    enforcement: hard_gate
+    covered_actions:
+      - push_code
+      - deploy_infrastructure
+      - post_social_media
+      - send_email
+      - modify_production
+      - issue_payment
+      - change_public_pod
+    requires:
+      - confirmation_flag
+      - approval_token
+      - user_identity
+      - run_id
+    logging: mandatory
+
+  - id: never_exfiltrate
+    name: Never Exfiltrate
+    description: >
+      Shad must not send notebook data, derived notes, or pod contents
+      to external services unless explicitly permitted for that run.
+    severity: critical
+    enforcement: hard_gate
+    default: deny
+    allowlist_scope: per_run
+    privileged_capability: external_send
+    logging: mandatory
+
+  - id: never_self_modify
+    name: Never Self-Modify
+    description: >
+      Shad must not directly change its own Skills, routing logic, or
+      CORE policies without explicit human review and approval.
+    severity: critical
+    enforcement: hard_gate
+    allowed_actions:
+      - propose_patches
+      - generate_diffs
+      - write_to_staging
+      - run_evals
+    requires:
+      - human_approval
+      - version_bump
+      - recorded_rationale
+    mount_mode: read_only
+
+budget_constraints:
+  - id: max_depth
+    type: integer
+    default: 3
+    min: 1
+    max: 10
+    enforcement: hard_limit
+
+  - id: max_nodes
+    type: integer
+    default: 50
+    min: 1
+    max: 500
+    enforcement: hard_limit
+
+  - id: max_wall_time
+    type: integer
+    unit: seconds
+    default: 300
+    min: 10
+    max: 3600
+    enforcement: hard_limit
+
+  - id: max_tokens
+    type: integer
+    default: 100000
+    min: 1000
+    max: 1000000
+    enforcement: hard_limit
+
+  - id: max_branching_factor
+    type: integer
+    default: 7
+    min: 1
+    max: 20
+    enforcement: hard_limit

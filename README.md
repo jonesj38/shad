@@ -10,6 +10,70 @@ Shad is a **self-orchestrating cognitive system** that treats context as an envi
 
 ---
 
+## Quick Start
+
+### Prerequisites
+
+- Docker and Docker Compose
+- An Anthropic API key (or OpenAI API key)
+
+### Installation
+
+```bash
+# Clone the repository
+git clone https://github.com/yourusername/shad.git
+cd shad
+
+# Copy environment template
+cp .env.example .env
+
+# Edit .env with your API key
+# ANTHROPIC_API_KEY=your_key_here
+
+# Deploy
+./scripts/deploy.sh
+```
+
+### CLI Usage
+
+```bash
+# Install CLI (from services/shad-api directory)
+cd services/shad-api
+pip install -e .
+
+# Run a reasoning task
+shad run "What are the key themes in quantum computing?" --max-depth 2
+
+# Check run status
+shad status <run_id>
+
+# View execution tree
+shad trace tree <run_id>
+
+# Resume a partial run
+shad resume <run_id>
+```
+
+### API Usage
+
+```bash
+# Health check
+curl http://localhost:8000/v1/health
+
+# Execute a run
+curl -X POST http://localhost:8000/v1/run \
+  -H "Content-Type: application/json" \
+  -d '{"goal": "Explain the key concepts in machine learning"}'
+
+# Get run results
+curl http://localhost:8000/v1/run/<run_id>
+
+# Resume a partial run
+curl -X POST http://localhost:8000/v1/run/<run_id>/resume
+```
+
+---
+
 ## Why Shad Exists
 
 Most AI systems break down when:
@@ -31,8 +95,6 @@ Shad combines:
 * **n8n** for scheduling, fan-out, and workflow orchestration
 * **Caching + verification** to make recursion efficient and safe
 
-This project is heavily inspired by Daniel Miessler’s *Personal AI Infrastructure (PAI)* work — but Shad is an independent system with its own architecture and goals.
-
 ---
 
 ## Core Concepts
@@ -43,7 +105,7 @@ Shad does not shove massive context into a single prompt.
 
 Instead:
 
-* the “prompt” is treated as an **external environment**
+* the "prompt" is treated as an **external environment**
 * the model writes code to inspect, slice, and query that environment
 * the system recursively calls itself on sub-problems
 * results are cached, verified, and recomposed
@@ -71,18 +133,23 @@ OpenNotebookLM is treated as **read-only input during reasoning**, and **write-o
 
 ---
 
-### 3. n8n as Workflow Orchestrator
+### 3. Budget Controls
 
-n8n handles:
+Every run enforces hard limits:
 
-* cron and event-based triggers
-* fan-out and parallel execution
-* multi-step pipelines
-* maintenance tasks (cache hygiene, evals, backups)
-* publishing and notifications
+| Budget | Description |
+|--------|-------------|
+| `max_wall_time` | Total execution time |
+| `max_tokens` | Per tier + total token budget |
+| `max_nodes` | Maximum DAG nodes |
+| `max_depth` | Maximum recursion depth |
+| `max_branching_factor` | Maximum children per node |
 
-Shad handles *thinking*.
-n8n handles *when and how often thinking happens*.
+When budgets are exhausted, Shad returns partial results with:
+- Completed subtrees
+- Missing branches list
+- Suggested next run plan
+- Resume commands
 
 ---
 
@@ -108,33 +175,23 @@ Skills allow Shad to:
 
 ---
 
-### 5. Caching & Verification
+### 5. History & Artifacts
 
-Recursive calls are:
+Every run produces structured artifacts:
 
-* **cached** (Redis-backed) to avoid recomputation
-* **scored / verified** before being reused
-* stored as structured nodes, not raw text
-
-This turns recursive reasoning from a tree into a **DAG**, dramatically reducing cost and latency.
-
----
-
-### 6. History & Hooks
-
-Every run produces:
-
-* a full trace of decisions and subcalls
-* structured artifacts
-* metrics and cache stats
-* optional summaries and learnings
-
-Hooks fire on:
-
-* session start
-* pre-tool execution
-* post-tool execution
-* session stop
+```
+History/Runs/<run_id>/
+├── run.manifest.json      # Inputs, versions, config
+├── events.jsonl           # Node lifecycle events
+├── dag.json               # DAG structure with statuses
+├── metrics/
+│   ├── nodes.jsonl        # Per-node metrics
+│   └── summary.json       # Rollup metrics
+├── replay/
+│   └── manifest.json      # Deterministic replay bundle
+├── final.report.md        # Human-readable output
+└── final.summary.json     # Machine-readable output
+```
 
 Nothing important is lost. Shad compounds.
 
@@ -148,13 +205,17 @@ User / n8n
    v
 Shad API / CLI
    |
-   +-- OpenNotebookLM (memory, retrieval, notes)
+   +-- Skill Router (GoalSpec → Skill selection)
    |
-   +-- RLM Engine (recursive reasoning loop)
+   +-- RLM Engine (recursive DAG execution)
+   |       |
+   |       +-- OpenNotebookLM (graph-based knowledge retrieval)
+   |       +-- Redis (subtree caching)
+   |       +-- LLM Providers (tiered model calls)
    |
-   +-- Redis (subtree caching)
+   +-- History/ (structured run artifacts)
    |
-   +-- History + Hooks
+   +-- Voice Renderer (persona layer)
 ```
 
 ---
@@ -165,64 +226,89 @@ Shad API / CLI
 shad/
 ├── docker-compose.yml
 ├── services/
-│   └── shad-api/          # RLM engine + orchestration API
-├── Skills/                # personalization modules
-├── CORE/                  # constitution, policies, invariants
-├── hooks/                 # lifecycle automation
-├── History/               # generated at runtime (volume)
-├── scripts/               # deploy / maintenance helpers
+│   └── shad-api/              # RLM engine + orchestration API
+│       ├── src/shad/
+│       │   ├── api/           # FastAPI endpoints
+│       │   ├── cli/           # Click CLI
+│       │   ├── engine/        # RLM + LLM providers
+│       │   ├── history/       # Artifact management
+│       │   ├── models/        # Pydantic models
+│       │   └── utils/         # Configuration
+│       ├── Dockerfile
+│       └── pyproject.toml
+├── Skills/                    # Personalization modules
+│   └── research/              # Example skill
+├── CORE/                      # Constitution, policies, invariants
+│   ├── invariants.md
+│   ├── invariants.yaml
+│   └── Voices/
+├── History/                   # Generated at runtime (volume)
+├── scripts/
+│   └── deploy.sh
 ├── .env.example
+├── CLAUDE.md
+├── PLAN.md
+├── SPEC.md
 └── README.md
 ```
 
 ---
 
-## What Shad Is (and Is Not)
+## API Endpoints
 
-**Shad is:**
+| Endpoint | Description |
+|----------|-------------|
+| `POST /v1/run` | Execute a reasoning task |
+| `GET /v1/run/:id` | Get run status and results |
+| `POST /v1/run/:id/resume` | Resume a partial/failed run |
+| `GET /v1/runs` | List recent runs |
+| `GET /v1/health` | Health check |
 
-* a personal cognitive infrastructure
-* designed for long-context reasoning
-* workflow-driven, not chat-driven
-* modular and extensible
-* built to run unattended
+---
 
-**Shad is not:**
+## CLI Commands
 
-* a hosted SaaS (by default)
-* a general consumer chatbot
-* a fine-tuned model
-* a prompt-engineering playground
+```bash
+# Start a run
+shad run "goal text" --notebook <id> --max-depth 3
+
+# Check status
+shad status <run_id>
+
+# Inspect the trace
+shad trace tree <run_id>
+shad trace node <run_id> <node_id>
+
+# Resume / replay
+shad resume <run_id>
+
+# Debug mode
+shad debug <run_id>
+```
 
 ---
 
 ## Current Status
 
-Shad is under **active development**.
+Shad MVP is **complete** with the following features:
 
-Planned milestones:
+- [x] Infrastructure scaffold (Docker, services)
+- [x] Shad API v0 (`/v1/run`, `/v1/health`)
+- [x] CLI commands (run, status, trace, resume, debug)
+- [x] RLM recursion loop with decomposition
+- [x] Budget controls with partial results
+- [x] History artifacts generation
+- [x] Resume from checkpoint
+- [x] OpenNotebookLM data model
 
-* [ ] Infrastructure scaffold (Docker, services)
-* [ ] OpenNotebookLM integration
-* [ ] Shad API v0 (`/v1/run`)
-* [ ] n8n workflow integration
-* [ ] RLM recursion loop
-* [ ] Subtree caching
-* [ ] Skills + evals
-* [ ] Long-running autonomous workflows
+**Post-MVP features planned:**
 
-This README will evolve as the system matures.
-
----
-
-## Inspiration & References
-
-* Daniel Miessler — Personal AI Infrastructure (PAI)
-* *Recursive Language Models* (arXiv:2512.24601)
-* OpenNotebookLM
-* n8n
-* UNIX philosophy (small tools, composability)
-* Scientific method as a cognitive loop
+- [ ] Full OpenNotebookLM integration
+- [ ] n8n workflow integration
+- [ ] Subtree caching (Redis)
+- [ ] Skill router + skill composition
+- [ ] Verification loops / judges
+- [ ] Learnings extraction
 
 ---
 
