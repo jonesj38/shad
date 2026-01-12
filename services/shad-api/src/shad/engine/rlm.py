@@ -11,7 +11,7 @@ from __future__ import annotations
 
 import logging
 from datetime import datetime
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 from shad.engine.llm import LLMProvider, ModelTier
 from shad.models.goal import GoalSpec
@@ -25,6 +25,9 @@ from shad.models.run import (
     StopReason,
 )
 from shad.utils.config import get_settings
+
+if TYPE_CHECKING:
+    from shad.cache.redis_cache import RedisCache
 
 logger = logging.getLogger(__name__)
 
@@ -52,11 +55,11 @@ class RLMEngine:
         self,
         llm_provider: LLMProvider | None = None,
         notebook_store: Any | None = None,
-        cache: Any | None = None,
+        cache: RedisCache | None = None,
     ):
         self.llm = llm_provider or LLMProvider()
         self.notebook_store = notebook_store
-        self.cache = cache
+        self.cache: RedisCache | None = cache
         self.settings = get_settings()
 
     async def execute(self, config: RunConfig) -> Run:

@@ -290,8 +290,9 @@ shad debug <run_id>
 
 ## Current Status
 
-Shad MVP is **complete** with the following features:
+Shad is **fully implemented** with all planned features:
 
+### MVP Features (Complete)
 - [x] Infrastructure scaffold (Docker, services)
 - [x] Shad API v0 (`/v1/run`, `/v1/health`)
 - [x] CLI commands (run, status, trace, resume, debug)
@@ -301,14 +302,23 @@ Shad MVP is **complete** with the following features:
 - [x] Resume from checkpoint
 - [x] OpenNotebookLM data model
 
-**Post-MVP features planned:**
+### Post-MVP Features (Complete)
+- [x] Redis caching with hierarchical keys
+- [x] Skill router + skill composition
+- [x] n8n webhook integration
+- [x] Verification loops / validators / entailment checking
+- [x] HITL review queues
+- [x] Novelty detection for pruning
+- [x] Voice rendering system
+- [x] Learnings extraction and promotion pipeline
 
-- [ ] Full OpenNotebookLM integration
-- [ ] n8n workflow integration
-- [ ] Subtree caching (Redis)
-- [ ] Skill router + skill composition
-- [ ] Verification loops / judges
-- [ ] Learnings extraction
+**Future work:**
+
+- [ ] Full OpenNotebookLM service integration
+- [ ] Inspection code sandbox
+- [ ] Payment/entitlement system
+- [ ] Multi-tenant support
+- [ ] Offline mode
 
 ---
 
