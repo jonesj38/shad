@@ -18,6 +18,7 @@ from shad.integrations import N8NClient
 from shad.learnings import LearningsStore
 from shad.models import Budget, RunConfig
 from shad.models.run import Run, RunStatus
+from shad.notebook import OpenNotebookClient
 from shad.skills import SkillRouter
 from shad.utils.config import get_settings
 from shad.verification import HITLQueue
@@ -34,13 +35,14 @@ voice_renderer: VoiceRenderer | None = None
 n8n_client: N8NClient | None = None
 hitl_queue: HITLQueue | None = None
 learnings_store: LearningsStore | None = None
+notebook_client: OpenNotebookClient | None = None
 
 
 @asynccontextmanager
 async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
     """Application lifespan manager."""
     global engine, history, cache, skill_router, voice_renderer
-    global n8n_client, hitl_queue, learnings_store
+    global n8n_client, hitl_queue, learnings_store, notebook_client
 
     # Initialize components
     llm_provider = LLMProvider()
@@ -49,8 +51,12 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
     cache = RedisCache()
     await cache.connect()
 
-    # Initialize engine with cache
-    engine = RLMEngine(llm_provider=llm_provider, cache=cache)
+    # Initialize Open Notebook client
+    notebook_client = OpenNotebookClient()
+    await notebook_client.connect()
+
+    # Initialize engine with cache and notebook
+    engine = RLMEngine(llm_provider=llm_provider, cache=cache, notebook_store=notebook_client)
     history = HistoryManager()
 
     # Initialize skill router
@@ -79,6 +85,8 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
         await cache.disconnect()
     if n8n_client:
         await n8n_client.disconnect()
+    if notebook_client:
+        await notebook_client.disconnect()
 
     logger.info("Shad API shutting down")
 
@@ -342,6 +350,140 @@ async def list_voices() -> dict[str, Any]:
     return {"voices": voice_renderer.list_voices()}
 
 
+# Notebook router - exposes Open Notebook operations
+notebooks_router = APIRouter(prefix="/v1/notebooks", tags=["Notebooks"])
+
+
+@notebooks_router.get("")
+async def list_notebooks() -> dict[str, Any]:
+    """List all available notebooks from Open Notebook."""
+    if notebook_client is None:
+        raise HTTPException(status_code=503, detail="Service not initialized")
+
+    if not notebook_client.is_connected:
+        return {"notebooks": [], "connected": False}
+
+    notebooks = await notebook_client.list_notebooks()
+    return {"notebooks": notebooks, "connected": True}
+
+
+@notebooks_router.get("/{notebook_id}")
+async def get_notebook(notebook_id: str) -> dict[str, Any]:
+    """Get a specific notebook by ID."""
+    if notebook_client is None:
+        raise HTTPException(status_code=503, detail="Service not initialized")
+
+    notebook = await notebook_client.get_notebook(notebook_id)
+    if notebook is None:
+        raise HTTPException(status_code=404, detail=f"Notebook {notebook_id} not found")
+
+    return notebook
+
+
+@notebooks_router.post("")
+async def create_notebook(name: str, description: str = "") -> dict[str, Any]:
+    """Create a new notebook."""
+    if notebook_client is None:
+        raise HTTPException(status_code=503, detail="Service not initialized")
+
+    notebook = await notebook_client.create_notebook(name, description)
+    if notebook is None:
+        raise HTTPException(status_code=500, detail="Failed to create notebook")
+
+    return notebook
+
+
+@notebooks_router.get("/{notebook_id}/sources")
+async def list_sources(notebook_id: str) -> dict[str, Any]:
+    """List sources in a notebook."""
+    if notebook_client is None:
+        raise HTTPException(status_code=503, detail="Service not initialized")
+
+    sources = await notebook_client.list_sources(notebook_id)
+    return {"sources": sources}
+
+
+@notebooks_router.post("/{notebook_id}/sources")
+async def add_source(
+    notebook_id: str,
+    content: str,
+    title: str = "",
+    source_type: str = "text",
+    url: str | None = None,
+) -> dict[str, Any]:
+    """Add a source to a notebook."""
+    if notebook_client is None:
+        raise HTTPException(status_code=503, detail="Service not initialized")
+
+    source = await notebook_client.add_source(
+        notebook_id, content, title, source_type, url
+    )
+    if source is None:
+        raise HTTPException(status_code=500, detail="Failed to add source")
+
+    return source
+
+
+@notebooks_router.post("/{notebook_id}/sources/url")
+async def add_source_from_url(notebook_id: str, url: str) -> dict[str, Any]:
+    """Add a source from a URL (web page, PDF, etc.)."""
+    if notebook_client is None:
+        raise HTTPException(status_code=503, detail="Service not initialized")
+
+    source = await notebook_client.add_source_from_url(notebook_id, url)
+    if source is None:
+        raise HTTPException(status_code=500, detail="Failed to add URL source")
+
+    return source
+
+
+@notebooks_router.post("/{notebook_id}/search")
+async def search_notebook(notebook_id: str, query: str, limit: int = 10) -> dict[str, Any]:
+    """Search for content in a notebook."""
+    if notebook_client is None:
+        raise HTTPException(status_code=503, detail="Service not initialized")
+
+    results = await notebook_client.search(notebook_id, query, limit)
+    return {"results": results, "query": query}
+
+
+@notebooks_router.get("/{notebook_id}/notes")
+async def list_notes(notebook_id: str) -> dict[str, Any]:
+    """List notes in a notebook."""
+    if notebook_client is None:
+        raise HTTPException(status_code=503, detail="Service not initialized")
+
+    notes = await notebook_client.list_notes(notebook_id)
+    return {"notes": notes}
+
+
+@notebooks_router.post("/{notebook_id}/notes")
+async def create_note(
+    notebook_id: str,
+    title: str,
+    content: str,
+    source_ids: list[str] | None = None,
+) -> dict[str, Any]:
+    """Create a note in a notebook."""
+    if notebook_client is None:
+        raise HTTPException(status_code=503, detail="Service not initialized")
+
+    note = await notebook_client.create_note(notebook_id, title, content, source_ids)
+    if note is None:
+        raise HTTPException(status_code=500, detail="Failed to create note")
+
+    return note
+
+
+@notebooks_router.get("/stats")
+async def notebook_stats() -> dict[str, Any]:
+    """Get Open Notebook statistics."""
+    if notebook_client is None:
+        return {"connected": False}
+
+    return await notebook_client.get_stats()
+
+
 def create_app() -> FastAPI:
     """Create and configure the FastAPI application."""
     application = FastAPI(
@@ -356,6 +498,7 @@ def create_app() -> FastAPI:
     application.include_router(run_router)
     application.include_router(skills_router)
     application.include_router(admin_router)
+    application.include_router(notebooks_router)
 
     return application
 

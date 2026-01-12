@@ -1,6 +1,9 @@
 version: "3.8"
 
 services:
+  # =============================================================================
+  # Shad API - Core reasoning engine
+  # =============================================================================
   shad-api:
     build:
       context: ./services/shad-api
@@ -13,6 +16,10 @@ services:
       - OPENAI_API_KEY=${OPENAI_API_KEY}
       - HISTORY_PATH=/data/history
       - NOTEBOOKS_PATH=/data/notebooks
+      - SKILLS_PATH=/data/skills
+      - CORE_PATH=/data/core
+      # Open Notebook connection
+      - OPEN_NOTEBOOK_URL=http://open-notebook:5055
     volumes:
       - ./History:/data/history
       - ./Notebooks:/data/notebooks
@@ -20,6 +27,7 @@ services:
       - ./CORE:/data/core:ro
     depends_on:
       - redis
+      - open-notebook
     restart: unless-stopped
     healthcheck:
       test: ["CMD", "curl", "-f", "http://localhost:8000/v1/health"]
@@ -27,6 +35,9 @@ services:
       timeout: 10s
       retries: 3
 
+  # =============================================================================
+  # Redis - Subtree caching
+  # =============================================================================
   redis:
     image: redis:7-alpine
     ports:
@@ -41,5 +52,35 @@ services:
       timeout: 5s
       retries: 3
 
+  # =============================================================================
+  # Open Notebook - Knowledge management & retrieval (OpenNotebookLM)
+  # =============================================================================
+  open-notebook:
+    image: lfnovo/open_notebook:v1-latest
+    ports:
+      - "8502:8502"  # Web UI
+      - "5055:5055"  # REST API
+    volumes:
+      - notebook-data:/app/data
+    env_file:
+      - .env.notebook
+    depends_on:
+      - surrealdb
+    restart: unless-stopped
+
+  # =============================================================================
+  # SurrealDB - Database for Open Notebook
+  # =============================================================================
+  surrealdb:
+    image: surrealdb/surrealdb:v2
+    ports:
+      - "8001:8000"  # Remapped to avoid conflict with shad-api
+    volumes:
+      - surreal-data:/mydata
+    command: start --user root --pass root rocksdb:/mydata/mydatabase.db
+    restart: unless-stopped
+
 volumes:
   redis-data:
+  notebook-data:
+  surreal-data:

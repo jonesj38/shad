@@ -203,15 +203,18 @@ Nothing important is lost. Shad compounds.
 User / n8n
    |
    v
-Shad API / CLI
+Shad API / CLI (:8000)
    |
    +-- Skill Router (GoalSpec → Skill selection)
    |
    +-- RLM Engine (recursive DAG execution)
    |       |
-   |       +-- OpenNotebookLM (graph-based knowledge retrieval)
-   |       +-- Redis (subtree caching)
-   |       +-- LLM Providers (tiered model calls)
+   |       +-- Open Notebook (:5055 API, :8502 Web UI)
+   |       |       |
+   |       |       +-- SurrealDB (:8001)
+   |       |
+   |       +-- Redis (:6379)
+   |       +-- LLM Providers (Claude Code CLI)
    |
    +-- History/ (structured run artifacts)
    |
@@ -229,11 +232,18 @@ shad/
 │   └── shad-api/              # RLM engine + orchestration API
 │       ├── src/shad/
 │       │   ├── api/           # FastAPI endpoints
+│       │   ├── cache/         # Redis caching
 │       │   ├── cli/           # Click CLI
 │       │   ├── engine/        # RLM + LLM providers
 │       │   ├── history/       # Artifact management
+│       │   ├── integrations/  # n8n integration
+│       │   ├── learnings/     # Learning extraction
 │       │   ├── models/        # Pydantic models
-│       │   └── utils/         # Configuration
+│       │   ├── notebook/      # Open Notebook client
+│       │   ├── skills/        # Skill router
+│       │   ├── utils/         # Configuration
+│       │   ├── verification/  # Validators, HITL
+│       │   └── voice/         # Voice rendering
 │       ├── Dockerfile
 │       └── pyproject.toml
 ├── Skills/                    # Personalization modules
@@ -256,13 +266,34 @@ shad/
 
 ## API Endpoints
 
+### Runs
 | Endpoint | Description |
 |----------|-------------|
 | `POST /v1/run` | Execute a reasoning task |
 | `GET /v1/run/:id` | Get run status and results |
 | `POST /v1/run/:id/resume` | Resume a partial/failed run |
 | `GET /v1/runs` | List recent runs |
+
+### Notebooks (Open Notebook)
+| Endpoint | Description |
+|----------|-------------|
+| `GET /v1/notebooks` | List all notebooks |
+| `GET /v1/notebooks/:id` | Get notebook details |
+| `POST /v1/notebooks` | Create a new notebook |
+| `GET /v1/notebooks/:id/sources` | List sources in a notebook |
+| `POST /v1/notebooks/:id/sources` | Add a source to a notebook |
+| `POST /v1/notebooks/:id/sources/url` | Add source from URL |
+| `POST /v1/notebooks/:id/search` | Search notebook content |
+| `GET /v1/notebooks/:id/notes` | List notes in a notebook |
+| `POST /v1/notebooks/:id/notes` | Create a note |
+
+### Admin & Health
+| Endpoint | Description |
+|----------|-------------|
 | `GET /v1/health` | Health check |
+| `GET /v1/skills` | List available skills |
+| `GET /v1/admin/cache/stats` | Cache statistics |
+| `GET /v1/admin/hitl/queue` | HITL review queue |
 
 ---
 
@@ -312,9 +343,14 @@ Shad is **fully implemented** with all planned features:
 - [x] Voice rendering system
 - [x] Learnings extraction and promotion pipeline
 
+### Open Notebook Integration (Complete)
+- [x] Open Notebook service integration (lfnovo/open-notebook)
+- [x] Notebook API endpoints for CRUD operations
+- [x] Search and retrieval from notebooks
+- [x] Context injection into RLM reasoning
+
 **Future work:**
 
-- [ ] Full OpenNotebookLM service integration
 - [ ] Inspection code sandbox
 - [ ] Payment/entitlement system
 - [ ] Multi-tenant support
