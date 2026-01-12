@@ -2,12 +2,10 @@
 
 from __future__ import annotations
 
+import asyncio
 import json
 import logging
 from enum import Enum
-
-import anthropic
-import openai
 
 from shad.utils.config import get_settings
 
@@ -27,26 +25,11 @@ class ModelTier(str, Enum):
 class LLMProvider:
     """Abstraction over LLM providers with tiered model support."""
 
-    def __init__(self) -> None:
+    def __init__(self, use_claude_code: bool = True) -> None:
         self.settings = get_settings()
-        self._anthropic_client: anthropic.Anthropic | None = None
-        self._openai_client: openai.OpenAI | None = None
-
-    @property
-    def anthropic_client(self) -> anthropic.Anthropic:
-        """Get or create Anthropic client."""
-        if self._anthropic_client is None:
-            self._anthropic_client = anthropic.Anthropic(
-                api_key=self.settings.anthropic_api_key
-            )
-        return self._anthropic_client
-
-    @property
-    def openai_client(self) -> openai.OpenAI:
-        """Get or create OpenAI client."""
-        if self._openai_client is None:
-            self._openai_client = openai.OpenAI(api_key=self.settings.openai_api_key)
-        return self._openai_client
+        self.use_claude_code = use_claude_code
+        self._anthropic_client = None
+        self._openai_client = None
 
     def get_model_for_tier(self, tier: ModelTier) -> str:
         """Get the model name for a given tier."""
@@ -76,7 +59,14 @@ class LLMProvider:
         model = self.get_model_for_tier(tier)
         logger.debug(f"Using model {model} for tier {tier}")
 
-        # Use Anthropic as primary provider
+        # Use Claude Code CLI as primary (uses subscription, not API costs)
+        if self.use_claude_code:
+            return await self._complete_claude_code(
+                prompt=prompt,
+                system=system,
+            )
+
+        # Fallback to API if configured
         if self.settings.anthropic_api_key:
             return await self._complete_anthropic(
                 prompt=prompt,
@@ -88,13 +78,53 @@ class LLMProvider:
         elif self.settings.openai_api_key:
             return await self._complete_openai(
                 prompt=prompt,
-                model="gpt-4o",  # Fallback model
+                model="gpt-4o",
                 system=system,
                 max_tokens=max_tokens,
                 temperature=temperature,
             )
         else:
-            raise ValueError("No LLM provider configured. Set ANTHROPIC_API_KEY or OPENAI_API_KEY.")
+            raise ValueError(
+                "No LLM provider configured. Use Claude Code CLI or set API keys."
+            )
+
+    async def _complete_claude_code(
+        self,
+        prompt: str,
+        system: str | None = None,
+    ) -> tuple[str, int]:
+        """Complete using Claude Code CLI (uses subscription, not API costs)."""
+        # Combine system prompt and user prompt
+        full_prompt = prompt
+        if system:
+            full_prompt = f"{system}\n\n{prompt}"
+
+        # Run claude CLI in non-interactive mode
+        try:
+            process = await asyncio.create_subprocess_exec(
+                "claude",
+                "-p", full_prompt,
+                "--output-format", "text",
+                stdout=asyncio.subprocess.PIPE,
+                stderr=asyncio.subprocess.PIPE,
+            )
+
+            stdout, stderr = await process.communicate()
+
+            if process.returncode != 0:
+                error_msg = stderr.decode() if stderr else "Unknown error"
+                logger.error(f"Claude Code CLI error: {error_msg}")
+                raise RuntimeError(f"Claude Code CLI failed: {error_msg}")
+
+            response = stdout.decode().strip()
+            # Claude Code doesn't report token usage, estimate based on length
+            estimated_tokens = len(response.split()) * 2
+            return response, estimated_tokens
+
+        except FileNotFoundError as e:
+            raise RuntimeError(
+                "Claude Code CLI not found. Install it or set use_claude_code=False"
+            ) from e
 
     async def _complete_anthropic(
         self,
@@ -105,9 +135,16 @@ class LLMProvider:
         temperature: float,
     ) -> tuple[str, int]:
         """Complete using Anthropic API."""
+        import anthropic
+
+        if self._anthropic_client is None:
+            self._anthropic_client = anthropic.Anthropic(
+                api_key=self.settings.anthropic_api_key
+            )
+
         messages = [{"role": "user", "content": prompt}]
 
-        response = self.anthropic_client.messages.create(
+        response = self._anthropic_client.messages.create(
             model=model,
             max_tokens=max_tokens,
             temperature=temperature,
@@ -128,12 +165,17 @@ class LLMProvider:
         temperature: float,
     ) -> tuple[str, int]:
         """Complete using OpenAI API."""
+        import openai
+
+        if self._openai_client is None:
+            self._openai_client = openai.OpenAI(api_key=self.settings.openai_api_key)
+
         messages: list[dict[str, str]] = []
         if system:
             messages.append({"role": "system", "content": system})
         messages.append({"role": "user", "content": prompt})
 
-        response = self.openai_client.chat.completions.create(
+        response = self._openai_client.chat.completions.create(
             model=model,
             messages=messages,  # type: ignore
             max_tokens=max_tokens,
@@ -177,15 +219,30 @@ Return a JSON array of subtask strings. Example: ["subtask 1", "subtask 2", "sub
         )
 
         try:
-            # Parse JSON response
-            subtasks = json.loads(response.strip())
+            # Try to extract JSON from response
+            # Handle case where response has markdown code blocks
+            json_str = response.strip()
+            if "```" in json_str:
+                # Extract content between code blocks
+                parts = json_str.split("```")
+                for part in parts:
+                    part = part.strip()
+                    if part.startswith("json"):
+                        part = part[4:].strip()
+                    if part.startswith("["):
+                        json_str = part
+                        break
+
+            subtasks = json.loads(json_str)
             if isinstance(subtasks, list):
                 return [str(s) for s in subtasks[:max_subtasks]]
         except json.JSONDecodeError:
             logger.warning(f"Failed to parse decomposition response: {response}")
             # Fallback: split by newlines if JSON parsing fails
             lines = [line.strip() for line in response.split("\n") if line.strip()]
-            return lines[:max_subtasks]
+            # Filter out lines that look like JSON artifacts
+            lines = [ln for ln in lines if not ln.startswith(("[", "]", "{", "}"))]
+            return lines[:max_subtasks] if lines else [task]
 
         return [task]  # Return original task if decomposition fails
 
