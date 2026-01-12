@@ -23,6 +23,9 @@ class Settings(BaseSettings):
     # Redis Settings
     redis_url: str = "redis://localhost:6379/0"
 
+    # Open Notebook Settings
+    open_notebook_url: str = "http://localhost:5055"
+
     # LLM Provider Settings
     anthropic_api_key: str = ""
     openai_api_key: str = ""
