@@ -1,15 +1,15 @@
 ---
 active: true
-iteration: 2
+iteration: 1
 max_iterations: 10
 completion_promise: "COMPLETE"
-started_at: "2026-01-12T19:45:58Z"
+started_at: "2026-01-12T20:17:25Z"
 ---
 
-Help me build the shad MVP based on @SPEC.md 
-Success criteria:
-- All requirements for MVP implemented
-- No linter errors
-- Documentation updated
+Help me build the rest of the shad system based on @SPEC.md and @README.md and @PLAN.md 
+  Success criteria:
+  - All requirements implemented
+  - No linter errors
+  - Documentation updated
 
-Output <promise>COMPLETE</promise> when done.
+  Output <promise>COMPLETE</promise> when done.

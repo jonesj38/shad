@@ -11,56 +11,81 @@ from fastapi import APIRouter, BackgroundTasks, FastAPI, HTTPException
 from pydantic import BaseModel, Field
 
 from shad import __version__
+from shad.cache import RedisCache
 from shad.engine import LLMProvider, RLMEngine
 from shad.history import HistoryManager
+from shad.integrations import N8NClient
+from shad.learnings import LearningsStore
 from shad.models import Budget, RunConfig
 from shad.models.run import Run, RunStatus
+from shad.skills import SkillRouter
 from shad.utils.config import get_settings
+from shad.verification import HITLQueue
+from shad.voice import VoiceRenderer
 
 logger = logging.getLogger(__name__)
 
 # Global instances
 engine: RLMEngine | None = None
 history: HistoryManager | None = None
+cache: RedisCache | None = None
+skill_router: SkillRouter | None = None
+voice_renderer: VoiceRenderer | None = None
+n8n_client: N8NClient | None = None
+hitl_queue: HITLQueue | None = None
+learnings_store: LearningsStore | None = None
 
 
 @asynccontextmanager
 async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
     """Application lifespan manager."""
-    global engine, history
+    global engine, history, cache, skill_router, voice_renderer
+    global n8n_client, hitl_queue, learnings_store
 
     # Initialize components
     llm_provider = LLMProvider()
-    engine = RLMEngine(llm_provider=llm_provider)
+
+    # Initialize cache
+    cache = RedisCache()
+    await cache.connect()
+
+    # Initialize engine with cache
+    engine = RLMEngine(llm_provider=llm_provider, cache=cache)
     history = HistoryManager()
+
+    # Initialize skill router
+    skill_router = SkillRouter()
+    skill_router.load_skills()
+
+    # Initialize voice renderer
+    voice_renderer = VoiceRenderer(llm_provider=llm_provider)
+
+    # Initialize n8n client
+    n8n_client = N8NClient()
+    await n8n_client.connect()
+
+    # Initialize HITL queue
+    hitl_queue = HITLQueue()
+
+    # Initialize learnings store
+    learnings_store = LearningsStore()
 
     logger.info("Shad API initialized")
 
     yield
 
     # Cleanup
+    if cache:
+        await cache.disconnect()
+    if n8n_client:
+        await n8n_client.disconnect()
+
     logger.info("Shad API shutting down")
 
 
 # Routers - defined before create_app
 health_router = APIRouter(tags=["Health"])
 run_router = APIRouter(prefix="/v1", tags=["Runs"])
-
-
-def create_app() -> FastAPI:
-    """Create and configure the FastAPI application."""
-    app = FastAPI(
-        title="Shad API",
-        description="Shannon's Daemon - Personal AI Infrastructure for long-context reasoning",
-        version=__version__,
-        lifespan=lifespan,
-    )
-
-    # Include routes
-    app.include_router(health_router)
-    app.include_router(run_router)
-
-    return app
 
 
 # Request/Response models
@@ -225,6 +250,114 @@ async def list_runs(limit: int = 50) -> dict[str, Any]:
 
     runs = history.list_runs(limit=limit)
     return {"runs": runs, "count": len(runs)}
+
+
+# Additional routers
+skills_router = APIRouter(prefix="/v1/skills", tags=["Skills"])
+admin_router = APIRouter(prefix="/v1/admin", tags=["Admin"])
+
+
+@skills_router.get("")
+async def list_skills() -> dict[str, Any]:
+    """List all available skills."""
+    if skill_router is None:
+        raise HTTPException(status_code=503, detail="Service not initialized")
+
+    return {"skills": skill_router.list_skills()}
+
+
+@skills_router.post("/route")
+async def route_goal(goal: str) -> dict[str, Any]:
+    """Route a goal to appropriate skill(s)."""
+    if skill_router is None:
+        raise HTTPException(status_code=503, detail="Service not initialized")
+
+    decision = skill_router.route(goal)
+    return decision.to_dict()
+
+
+@admin_router.get("/cache/stats")
+async def cache_stats() -> dict[str, Any]:
+    """Get cache statistics."""
+    if cache is None:
+        return {"connected": False}
+
+    return await cache.get_stats()
+
+
+@admin_router.get("/hitl/queue")
+async def get_hitl_queue(limit: int = 50) -> dict[str, Any]:
+    """Get pending HITL review items."""
+    if hitl_queue is None:
+        raise HTTPException(status_code=503, detail="Service not initialized")
+
+    items = hitl_queue.list_pending(limit=limit)
+    return {
+        "items": [item.to_dict() for item in items],
+        "stats": hitl_queue.get_stats(),
+    }
+
+
+@admin_router.post("/hitl/{item_id}/approve")
+async def approve_hitl(item_id: str, reviewer: str, notes: str = "") -> dict[str, bool]:
+    """Approve a HITL review item."""
+    if hitl_queue is None:
+        raise HTTPException(status_code=503, detail="Service not initialized")
+
+    success = hitl_queue.approve(item_id, reviewer, notes)
+    if not success:
+        raise HTTPException(status_code=404, detail=f"Item {item_id} not found")
+
+    return {"approved": True}
+
+
+@admin_router.post("/hitl/{item_id}/reject")
+async def reject_hitl(item_id: str, reviewer: str, notes: str = "") -> dict[str, bool]:
+    """Reject a HITL review item."""
+    if hitl_queue is None:
+        raise HTTPException(status_code=503, detail="Service not initialized")
+
+    success = hitl_queue.reject(item_id, reviewer, notes)
+    if not success:
+        raise HTTPException(status_code=404, detail=f"Item {item_id} not found")
+
+    return {"rejected": True}
+
+
+@admin_router.get("/learnings/stats")
+async def learnings_stats() -> dict[str, Any]:
+    """Get learnings store statistics."""
+    if learnings_store is None:
+        raise HTTPException(status_code=503, detail="Service not initialized")
+
+    return learnings_store.get_stats()
+
+
+@admin_router.get("/voices")
+async def list_voices() -> dict[str, Any]:
+    """List available voices."""
+    if voice_renderer is None:
+        raise HTTPException(status_code=503, detail="Service not initialized")
+
+    return {"voices": voice_renderer.list_voices()}
+
+
+def create_app() -> FastAPI:
+    """Create and configure the FastAPI application."""
+    application = FastAPI(
+        title="Shad API",
+        description="Shannon's Daemon - Personal AI Infrastructure for long-context reasoning",
+        version=__version__,
+        lifespan=lifespan,
+    )
+
+    # Include routes
+    application.include_router(health_router)
+    application.include_router(run_router)
+    application.include_router(skills_router)
+    application.include_router(admin_router)
+
+    return application
 
 
 # Create default app instance
