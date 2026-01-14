@@ -5,17 +5,23 @@ The core reasoning engine that:
 2. Recursively decomposes problems
 3. Caches/verifies/recomposes results
 4. Enforces budget constraints
+
+Per OBSIDIAN_PIVOT.md Section 3: Code Execution (The RLM Pattern)
+- RLM writes Python scripts that import MCP tools
+- Scripts execute in sandboxed container with vault access
+- Scripts filter, aggregate, process vault data before returning
+- Only final distilled output enters context window
 """
 
 from __future__ import annotations
 
+import hashlib
 import logging
 from datetime import datetime
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING
 
 from shad.engine.llm import LLMProvider, ModelTier
 from shad.models.goal import GoalSpec
-from shad.models.notebook import Note, RetrievalResult, Source
 from shad.models.run import (
     DAGNode,
     NodeStatus,
@@ -28,6 +34,8 @@ from shad.utils.config import get_settings
 
 if TYPE_CHECKING:
     from shad.cache.redis_cache import RedisCache
+    from shad.mcp.client import ObsidianMCPClient
+    from shad.sandbox.executor import CodeExecutor
 
 logger = logging.getLogger(__name__)
 
@@ -49,18 +57,26 @@ class RLMEngine:
     - Running sub-tasks recursively
     - Synthesizing results
     - Enforcing budget constraints
+
+    Per OBSIDIAN_PIVOT.md:
+    - Uses Code Mode for vault operations
+    - Supports Obsidian MCP client for vault access
+    - Implements hash-based cache validation
     """
 
     def __init__(
         self,
         llm_provider: LLMProvider | None = None,
-        notebook_store: Any | None = None,
         cache: RedisCache | None = None,
+        mcp_client: ObsidianMCPClient | None = None,
+        code_executor: CodeExecutor | None = None,
     ):
         self.llm = llm_provider or LLMProvider()
-        self.notebook_store = notebook_store
         self.cache: RedisCache | None = cache
+        self.mcp_client: ObsidianMCPClient | None = mcp_client
+        self.code_executor: CodeExecutor | None = code_executor
         self.settings = get_settings()
+        self._use_code_mode = mcp_client is not None
 
     async def execute(self, config: RunConfig) -> Run:
         """
@@ -78,11 +94,20 @@ class RLMEngine:
             # Create goal spec
             goal_spec = GoalSpec.from_goal(config.goal)
 
-            # Retrieve context if notebook specified
+            # Retrieve context from Obsidian vault if specified
             context = ""
-            if config.notebook_id and self.notebook_store:
-                retrieval = await self._retrieve_context(config.notebook_id, goal_spec)
-                context = self._format_retrieval_context(retrieval)
+            if config.vault_path:
+                logger.debug(f"[CONTEXT] Vault path: {config.vault_path}")
+                if self.mcp_client:
+                    context = await self._retrieve_vault_context(goal_spec.normalized_goal)
+                    if context:
+                        logger.debug(f"[CONTEXT] Context length: {len(context)} chars")
+                    else:
+                        logger.debug("[CONTEXT] No context retrieved from vault")
+                else:
+                    logger.debug("[CONTEXT] MCP client NOT available - cannot retrieve context")
+            else:
+                logger.debug("[CONTEXT] No vault_path specified")
 
             # Create root node
             root_node = DAGNode(
@@ -341,42 +366,203 @@ class RLMEngine:
                 f"Max tokens {budget.max_tokens} exceeded"
             )
 
-    def _make_cache_key(self, task: str, context: str) -> str:
-        """Generate a cache key for a task."""
-        # Simple hash-based key for MVP
-        import hashlib
+    def _make_cache_key(
+        self,
+        task: str,
+        context: str,
+        context_hash: str | None = None,
+    ) -> str:
+        """Generate a cache key for a task.
 
-        key_data = f"{task}::{context[:500] if context else ''}"
+        Per OBSIDIAN_PIVOT.md Section 6.2: Hash Validation
+        Cache keys include context_hash derived from file content/mtime.
+        """
+        # Include context hash for cache coherence
+        if context_hash:
+            key_data = f"{task}::{context_hash}"
+        else:
+            key_data = f"{task}::{context[:500] if context else ''}"
         return hashlib.sha256(key_data.encode()).hexdigest()[:16]
 
-    async def _retrieve_context(
-        self,
-        notebook_id: str,
-        goal_spec: GoalSpec,
-    ) -> RetrievalResult:
-        """Retrieve relevant context from a notebook."""
-        if not self.notebook_store:
-            return RetrievalResult()
+    async def _get_context_hash(self, query: str) -> str | None:
+        """Get hash of context sources for cache validation.
 
-        # Query notebook store
-        return await self.notebook_store.retrieve(
-            notebook_id=notebook_id,
-            query=goal_spec.normalized_goal,
-            limit=10,
-        )
+        Per OBSIDIAN_PIVOT.md Section 6.2: Before cache lookup,
+        query MCP server for current file hash.
+        """
+        if not self.mcp_client:
+            return None
 
-    def _format_retrieval_context(self, retrieval: RetrievalResult) -> str:
-        """Format retrieval results as context string."""
-        if not retrieval.nodes:
+        try:
+            # Get hashes of relevant files
+            results = await self.mcp_client.search(query, limit=5)
+            if not results:
+                return None
+
+            # Combine hashes
+            hashes = []
+            for result in results:
+                file_hash = await self.mcp_client.get_file_hash(result.path)
+                if file_hash:
+                    hashes.append(file_hash)
+
+            if hashes:
+                combined = ":".join(sorted(hashes))
+                return hashlib.sha256(combined.encode()).hexdigest()[:16]
+        except Exception as e:
+            logger.warning(f"Failed to get context hash: {e}")
+
+        return None
+
+    async def _retrieve_vault_context(self, query: str, limit: int = 10) -> str:
+        """Retrieve relevant context from the Obsidian vault.
+
+        Uses the MCP client to search the vault and format results.
+        """
+        if not self.mcp_client:
+            logger.warning("[RETRIEVAL] No MCP client configured")
             return ""
 
-        parts = []
-        for node in retrieval.nodes:
-            if isinstance(node, Source):
-                parts.append(f"[Source: {node.title}]\n{node.extracted_text or node.content}")
-            elif isinstance(node, Note):
-                parts.append(f"[Note: {node.title}]\n{node.content}")
-            else:
-                parts.append(f"[{node.title}]\n{node.content}")
+        logger.info(f"[RETRIEVAL] Searching vault for: {query[:100]}...")
 
-        return "\n\n---\n\n".join(parts)
+        try:
+            results = await self.mcp_client.search(query, limit=limit)
+            if not results:
+                logger.info("[RETRIEVAL] No results found")
+                return ""
+
+            logger.info(f"[RETRIEVAL] Found {len(results)} results")
+
+            # Format results as context
+            parts = []
+            for result in results:
+                # Create wikilink for citation per Section 4.3
+                path = result.path
+                if path.endswith(".md"):
+                    path = path[:-3]
+                link = f"[[{path}]]"
+
+                title = result.title or result.path
+                content = result.content[:2000] if result.content else ""
+
+                parts.append(f"[{title}] ({link})\n{content}")
+
+            return "\n\n---\n\n".join(parts)
+
+        except Exception as e:
+            logger.error(f"[RETRIEVAL] Failed: {e}")
+            return ""
+
+    async def _execute_code_mode(
+        self,
+        run: Run,
+        node: DAGNode,
+        script: str,
+    ) -> str | None:
+        """Execute a Code Mode script.
+
+        Per OBSIDIAN_PIVOT.md Section 3.1:
+        1. RLM writes Python script importing MCP tools
+        2. Script executes in sandboxed container
+        3. Script filters/aggregates data before returning
+        4. Only final output enters context window
+        """
+        if not self.code_executor:
+            logger.warning("Code executor not configured, falling back to direct execution")
+            return None
+
+        try:
+            result = await self.code_executor.execute(script)
+
+            if result.success:
+                if result.return_value:
+                    return str(result.return_value)
+                return result.stdout
+            else:
+                logger.error(f"Code execution failed: {result.error_message}")
+                node.error = f"Code execution failed: {result.error_message}"
+                return None
+
+        except Exception as e:
+            logger.error(f"Code Mode execution error: {e}")
+            return None
+
+    def _generate_retrieval_script(self, query: str, vault_path: str) -> str:
+        """Generate a Code Mode script for context retrieval.
+
+        Per OBSIDIAN_PIVOT.md Section 3.2: Context Initialization
+        - Runs start with empty context (goal text only)
+        - Code Mode scripts fetch data dynamically
+        """
+        return f'''
+from shad.sandbox.tools import obsidian
+
+# Search for relevant notes in the vault
+results = obsidian.search("{query}", limit=10)
+
+# Extract and format relevant content
+context_parts = []
+for r in results:
+    path = r.get("path", "")
+    content = r.get("content", "")
+    score = r.get("score", 0)
+
+    if score > 0.1:  # Filter by relevance
+        # Get note title from first heading or filename
+        lines = content.split("\\n")
+        title = path
+        for line in lines:
+            if line.startswith("# "):
+                title = line[2:].strip()
+                break
+
+        context_parts.append({{
+            "title": title,
+            "path": path,
+            "content": content[:2000],  # Limit content size
+            "score": score,
+        }})
+
+# Return distilled context
+__result__ = {{
+    "vault_path": "{vault_path}",
+    "results": context_parts,
+    "total": len(context_parts),
+}}
+'''
+
+    async def retrieve_context_code_mode(
+        self,
+        vault_path: str,
+        query: str,
+    ) -> str:
+        """Retrieve context using Code Mode execution.
+
+        Per OBSIDIAN_PIVOT.md Section 3.1 and 3.2:
+        Uses code execution to fetch and filter vault data.
+        """
+        if not self.code_executor:
+            return ""
+
+        script = self._generate_retrieval_script(query, vault_path)
+
+        try:
+            result = await self.code_executor.execute(script)
+
+            if result.success and result.return_value:
+                data = result.return_value
+                if isinstance(data, dict) and "results" in data:
+                    parts = []
+                    for item in data["results"]:
+                        title = item.get("title", "Untitled")
+                        content = item.get("content", "")
+                        path = item.get("path", "")
+                        # Use full-path wikilink per Section 4.3
+                        link = f"[[{path[:-3] if path.endswith('.md') else path}]]"
+                        parts.append(f"[{title}] ({link})\n{content}")
+                    return "\n\n---\n\n".join(parts)
+
+        except Exception as e:
+            logger.error(f"Code Mode retrieval failed: {e}")
+
+        return ""

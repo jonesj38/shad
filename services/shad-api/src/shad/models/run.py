@@ -60,7 +60,7 @@ class RunConfig(BaseModel):
     """Configuration for a run."""
 
     goal: str = Field(..., description="The goal/task to accomplish")
-    notebook_id: str | None = Field(default=None, description="Notebook ID to use for context")
+    vault_path: str | None = Field(default=None, description="Obsidian vault path for context")
     budget: Budget = Field(default_factory=Budget)
     voice: str | None = Field(default=None, description="Voice to use for output rendering")
 

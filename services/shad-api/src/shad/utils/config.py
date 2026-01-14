@@ -10,7 +10,7 @@ class Settings(BaseSettings):
     """Application settings loaded from environment."""
 
     model_config = SettingsConfigDict(
-        env_file=".env",
+        env_file=(".env.local", ".env"),
         env_file_encoding="utf-8",
         extra="ignore",
     )
@@ -23,8 +23,11 @@ class Settings(BaseSettings):
     # Redis Settings
     redis_url: str = "redis://localhost:6379/0"
 
-    # Open Notebook Settings
-    open_notebook_url: str = "http://localhost:5055"
+    # Obsidian MCP Settings
+    obsidian_api_key: str = ""
+    obsidian_base_url: str = "https://127.0.0.1:27124"
+    obsidian_verify_ssl: bool = False
+    obsidian_vault_path: str = ""  # Path to vault for direct file access
 
     # LLM Provider Settings
     anthropic_api_key: str = ""
@@ -37,7 +40,6 @@ class Settings(BaseSettings):
 
     # Path Settings
     history_path: Path = Path("./History")
-    notebooks_path: Path = Path("./Notebooks")
     skills_path: Path = Path("./Skills")
     core_path: Path = Path("./CORE")
 

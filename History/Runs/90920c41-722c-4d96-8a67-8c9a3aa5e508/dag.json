@@ -1,0 +1,21 @@
+{
+  "root_node_id": "200e3d0a",
+  "nodes": [
+    {
+      "node_id": "200e3d0a",
+      "parent_id": null,
+      "depth": 0,
+      "task": "create a proof-of-concept project that uses BSV micropayments as payment gateways for a SOLID pod",
+      "status": "failed",
+      "result": null,
+      "children": [],
+      "cache_key": "2d94ba5f541a0b79",
+      "cache_hit": false,
+      "tokens_used": 0,
+      "start_time": "2026-01-12T22:28:14.309376",
+      "end_time": "2026-01-12T22:28:14.316531",
+      "error": "Claude Code CLI not found. Install it or set use_claude_code=False",
+      "stop_reason": null
+    }
+  ]
+}

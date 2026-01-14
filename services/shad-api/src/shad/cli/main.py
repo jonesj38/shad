@@ -8,6 +8,7 @@ from pathlib import Path
 from typing import Any
 
 import click
+import httpx
 from rich.console import Console
 from rich.panel import Panel
 from rich.progress import Progress, SpinnerColumn, TextColumn
@@ -19,49 +20,85 @@ from shad.engine import LLMProvider, RLMEngine
 from shad.history import HistoryManager
 from shad.models import Budget, RunConfig
 from shad.models.run import NodeStatus, Run, RunStatus
+from shad.utils.config import get_settings
 
 console = Console()
 
 
 def run_async(coro: Any) -> Any:
     """Run an async coroutine synchronously."""
-    return asyncio.get_event_loop().run_until_complete(coro)
+    try:
+        loop = asyncio.get_event_loop()
+    except RuntimeError:
+        loop = asyncio.new_event_loop()
+        asyncio.set_event_loop(loop)
+    return loop.run_until_complete(coro)
+
+
+def get_api_url() -> str:
+    """Get the Shad API URL."""
+    settings = get_settings()
+    return f"http://{settings.api_host}:{settings.api_port}"
 
 
 @click.group()
 @click.version_option(version=__version__, prog_name="shad")
 def cli() -> None:
-    """Shad - Shannon's Daemon: Personal AI Infrastructure for long-context reasoning."""
+    """Shad - Shannon's Daemon: Personal AI Infrastructure.
+
+    \b
+    Usage:
+        shad run "your goal or question"              # Run a reasoning task
+        shad run "question" --vault /path/to/vault    # Run with Obsidian vault context
+        shad status <run_id>                          # Check run status
+        shad trace tree <run_id>                      # View execution DAG
+
+    \b
+    Examples:
+        shad run "Summarize the key points"
+        shad run "What are the main themes?" --vault ~/Documents/MyVault
+        shad status abc12345
+    """
     pass
 
 
-@cli.command()
+@cli.command("run")
 @click.argument("goal")
-@click.option("--notebook", "-n", help="Notebook ID to use for context")
+@click.option("--vault", "-v", help="Obsidian vault path for context")
 @click.option("--max-depth", "-d", default=3, help="Maximum recursion depth")
 @click.option("--max-nodes", default=50, help="Maximum DAG nodes")
 @click.option("--max-time", "-t", default=300, help="Maximum wall time in seconds")
 @click.option("--max-tokens", default=100000, help="Maximum tokens")
-@click.option("--voice", "-v", help="Voice for output rendering")
+@click.option("--voice", help="Voice for output rendering")
 @click.option("--output", "-o", type=click.Path(), help="Output file for results")
+@click.option("--api", default=None, help="Shad API URL (uses local engine if not specified)")
 def run(
     goal: str,
-    notebook: str | None,
+    vault: str | None,
     max_depth: int,
     max_nodes: int,
     max_time: int,
     max_tokens: int,
     voice: str | None,
     output: str | None,
+    api: str | None,
 ) -> None:
     """Execute a reasoning task.
 
-    Example:
-        shad run "What are the key themes in the research paper?" --notebook abc123
+    \b
+    Examples:
+        shad run "Explain quantum computing"
+        shad run "Summarize research" --vault ~/Notes
+        shad run "Compare approaches" --max-depth 2
     """
+    # If API specified, use remote execution
+    if api:
+        _run_via_api(goal, vault, max_depth, api)
+        return
+
     config = RunConfig(
         goal=goal,
-        notebook_id=notebook,
+        vault_path=vault,
         budget=Budget(
             max_depth=max_depth,
             max_nodes=max_nodes,
@@ -73,7 +110,16 @@ def run(
 
     console.print(Panel(f"[bold]Goal:[/bold] {goal}", title="Shad Run", border_style="blue"))
 
-    engine = RLMEngine(llm_provider=LLMProvider())
+    if vault:
+        console.print(f"[dim][CONTEXT] Using vault: {vault}[/dim]")
+    else:
+        console.print("[dim][CONTEXT] No vault specified[/dim]")
+
+    async def _execute_run() -> Run:
+        """Execute run."""
+        engine = RLMEngine(llm_provider=LLMProvider())
+        return await engine.execute(config)
+
     history = HistoryManager()
 
     with Progress(
@@ -83,7 +129,7 @@ def run(
     ) as progress:
         task = progress.add_task("Executing run...", total=None)
 
-        result = run_async(engine.execute(config))
+        result = run_async(_execute_run())
         progress.update(task, description="Complete")
 
     # Save history
@@ -104,6 +150,41 @@ def run(
         sys.exit(1)
     elif result.status == RunStatus.PARTIAL:
         sys.exit(2)
+
+
+def _run_via_api(goal: str, vault: str | None, max_depth: int, api: str) -> None:
+    """Run a goal via the API."""
+    try:
+        with httpx.Client(timeout=120.0) as client:
+            payload: dict[str, Any] = {"goal": goal, "budget": {"max_depth": max_depth}}
+            if vault:
+                payload["vault_path"] = vault
+
+            response = client.post(f"{api}/v1/run", json=payload)
+            response.raise_for_status()
+            data = response.json()
+    except httpx.ConnectError:
+        console.print("[red]Could not connect to Shad API. Is it running?[/red]")
+        console.print(f"[dim]Tried: {api}[/dim]")
+        sys.exit(1)
+    except Exception as e:
+        console.print(f"[red]Error: {e}[/red]")
+        sys.exit(1)
+
+    status = data.get("status", "unknown")
+    result = data.get("result")
+    error = data.get("error")
+
+    if status == "complete" and result:
+        console.print(Panel(result, title="Result", border_style="green"))
+    elif error:
+        console.print(f"[red]Error: {error}[/red]")
+    else:
+        console.print(f"[yellow]Status: {status}[/yellow]")
+        if result:
+            console.print(Panel(result, title="Partial Result", border_style="yellow"))
+
+    console.print(f"\n[dim]Run ID: {data.get('run_id', 'unknown')}[/dim]")
 
 
 @cli.command()
@@ -213,7 +294,10 @@ def resume(
 
     console.print(Panel(f"Resuming run {run_id}", title="Shad Resume", border_style="yellow"))
 
-    engine = RLMEngine(llm_provider=LLMProvider())
+    async def _resume_run() -> Run:
+        """Resume run."""
+        engine = RLMEngine(llm_provider=LLMProvider())
+        return await engine.resume(run_data)
 
     with Progress(
         SpinnerColumn(),
@@ -222,7 +306,7 @@ def resume(
     ) as progress:
         task = progress.add_task("Resuming run...", total=None)
 
-        result = run_async(engine.resume(run_data))
+        result = run_async(_resume_run())
         progress.update(task, description="Complete")
 
     # Save updated history
@@ -270,6 +354,86 @@ def debug(run_id: str) -> None:
         table.add_row("Duration", f"{duration:.2f}s")
 
     console.print(table)
+
+
+# =============================================================================
+# Vault Commands
+# =============================================================================
+
+@cli.command("vault")
+@click.option("--api", default="http://localhost:8000", help="Shad API URL")
+def vault_status(api: str) -> None:
+    """Check Obsidian vault connection status.
+
+    \b
+    Example:
+        shad vault
+    """
+    try:
+        with httpx.Client(timeout=30.0) as client:
+            response = client.get(f"{api}/v1/vault/status")
+            response.raise_for_status()
+            data = response.json()
+    except httpx.ConnectError:
+        console.print("[red]Could not connect to Shad API. Is it running?[/red]")
+        console.print(f"[dim]Tried: {api}[/dim]")
+        sys.exit(1)
+    except Exception as e:
+        console.print(f"[red]Error: {e}[/red]")
+        sys.exit(1)
+
+    if data.get("connected"):
+        console.print("[green]✓ Obsidian vault connected[/green]")
+        if data.get("vault_path"):
+            console.print(f"[dim]Path: {data['vault_path']}[/dim]")
+    else:
+        console.print("[yellow]⚠ Obsidian vault not connected[/yellow]")
+        console.print("[dim]Configure OBSIDIAN_VAULT_PATH in your environment[/dim]")
+
+
+@cli.command("search")
+@click.argument("query")
+@click.option("--limit", "-l", default=10, help="Maximum results")
+@click.option("--api", default="http://localhost:8000", help="Shad API URL")
+def search(query: str, limit: int, api: str) -> None:
+    """Search the Obsidian vault.
+
+    \b
+    Example:
+        shad search "machine learning"
+    """
+    try:
+        with httpx.Client(timeout=30.0) as client:
+            response = client.get(
+                f"{api}/v1/vault/search",
+                params={"query": query, "limit": limit},
+            )
+            response.raise_for_status()
+            data = response.json()
+    except httpx.ConnectError:
+        console.print("[red]Could not connect to Shad API. Is it running?[/red]")
+        sys.exit(1)
+    except httpx.HTTPStatusError as e:
+        if e.response.status_code == 503:
+            console.print("[yellow]Obsidian vault not connected[/yellow]")
+        else:
+            console.print(f"[red]Error: {e}[/red]")
+        sys.exit(1)
+
+    results = data.get("results", [])
+    if not results:
+        console.print(f"[dim]No results found for '{query}'[/dim]")
+        return
+
+    console.print(Panel(f"Search: {query}", title="Vault Search", border_style="blue"))
+
+    for i, result in enumerate(results, 1):
+        path = result.get("path", "Unknown")
+        content = result.get("content", "")[:200]
+        score = result.get("score", 0)
+
+        console.print(f"\n[bold cyan]{i}. {path}[/bold cyan] [dim](score: {score:.2f})[/dim]")
+        console.print(f"   {content}...")
 
 
 def _display_run_result(run: Run) -> None:

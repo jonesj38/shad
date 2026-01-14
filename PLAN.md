@@ -65,13 +65,22 @@
 - [x] Partial results on budget exhaustion
 - [x] Resume from checkpoint
 
-## Phase 7 — OpenNotebookLM Data Model ✅ COMPLETE
+## Phase 7 — Knowledge Backend ✅ COMPLETE
 
+### 7a. OpenNotebookLM Data Model (Legacy)
 - [x] Node types (Notebook, Source, Note)
 - [x] Edge types (DERIVED_FROM, SUMMARIZES, etc.)
 - [x] Graph-based retrieval model
 - [x] RetrievalResult structure
-- [ ] Full OpenNotebookLM service integration (future)
+
+### 7b. Obsidian MCP Integration ✅ COMPLETE
+- [x] MCP client for Obsidian vault operations
+- [x] Code Mode execution sandbox (Docker)
+- [x] Hash-based cache validation
+- [x] Full-path wikilink citations
+- [x] Progressive note standardization ("Gardener" pattern)
+- [x] HITL queue for delete operations
+- [x] Frontmatter-based note typing (note, source, task, report, learning)
 
 ## Phase 8 — History & Artifacts ✅ COMPLETE
 
@@ -188,6 +197,12 @@ All phases from SPEC.md are now implemented:
 services/shad-api/
 ├── pyproject.toml
 ├── Dockerfile
+├── tests/                      # Test suite
+│   ├── conftest.py
+│   ├── test_cache.py
+│   ├── test_mcp_client.py
+│   ├── test_rlm_engine.py
+│   └── test_sandbox.py
 └── src/shad/
     ├── __init__.py
     ├── api/
@@ -195,14 +210,14 @@ services/shad-api/
     │   └── main.py
     ├── cache/
     │   ├── __init__.py
-    │   └── redis_cache.py
+    │   └── redis_cache.py      # + hash validation, budget ledger
     ├── cli/
     │   ├── __init__.py
     │   └── main.py
     ├── engine/
     │   ├── __init__.py
     │   ├── llm.py
-    │   └── rlm.py
+    │   └── rlm.py              # + Code Mode support
     ├── history/
     │   ├── __init__.py
     │   └── manager.py
@@ -213,6 +228,14 @@ services/shad-api/
     │   ├── __init__.py
     │   ├── extractor.py
     │   └── store.py
+    ├── mcp/                     # NEW: Obsidian MCP Client
+    │   ├── __init__.py
+    │   ├── client.py
+    │   └── models.py
+    ├── sandbox/                 # NEW: Code Execution Sandbox
+    │   ├── __init__.py
+    │   ├── executor.py
+    │   └── tools.py
     ├── models/
     │   ├── __init__.py
     │   ├── goal.py

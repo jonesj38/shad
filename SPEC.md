@@ -8,6 +8,10 @@ Shad is a personal AI infrastructure (PAI) for long-context reasoning over large
 
 **Core premise**: Long-context reasoning is an inference problem, not a prompting problem.
 
+**Storage backend**: Local-first Markdown via **Obsidian**, accessed via **Model Context Protocol (MCP)**.
+
+> **Note**: See `OBSIDIAN_PIVOT.md` for the detailed Obsidian integration specification.
+
 ---
 
 ## 1. Architecture
@@ -38,11 +42,24 @@ Shad CLI / API
 | Component | Role |
 |-----------|------|
 | **RLM Engine** | Recursive Language Model engine. Treats prompts as external environments, generates code to inspect/query that environment, recursively decomposes problems, caches/verifies/recomposes results. |
-| **OpenNotebookLM** | Graph-based knowledge substrate. Provides notebooks, sources, notes, full-text and vector search. Read-only during reasoning, write-only during persistence. |
+| **Obsidian Vault** | Local-first Markdown knowledge substrate. Uses frontmatter for structured metadata, Bases plugin for database-like views. |
+| **MCP Client** | Connects to Obsidian MCP Server. Translates RLM intents into tool execution requests. |
+| **Code Sandbox** | Docker container with vault bind-mounted. Executes RLM-generated Python scripts in isolation. |
 | **Skill Router** | Converts goals into GoalSpecs, scores candidate skills, selects primary + support skills, enforces loop guards. |
-| **Redis** | Subtree caching with hierarchical keys. Turns recursive reasoning from a tree into a DAG. |
+| **Redis** | Subtree caching with hierarchical keys and hash validation. Central ledger for budget enforcement. |
 | **n8n** | Thin trigger + automation layer. Handles scheduling, event wiring, fan-out/fan-in of runs (not nodes), integrations. |
-| **History/** | Structured, append-only run artifacts. The "black box flight recorder" for debugging, replay, and learning. |
+| **History/** | Structured, append-only run artifacts stored inside the Obsidian vault at `Vault/Shad/History/`. |
+
+### 1.3 Code Mode (RLM Pattern)
+
+Instead of chat-based tool calling, Shad implements **Code Execution with MCP**:
+
+1. RLM writes a Python script that imports MCP tools (e.g., `obsidian.search`, `obsidian.read_note`)
+2. Script executes in sandboxed container with vault access
+3. Script filters, aggregates, and processes vault data *before* returning results
+4. Only final distilled output enters the context window
+
+This reduces context pollution and enables complex vault queries.
 
 ### 1.3 Tenancy Model
 

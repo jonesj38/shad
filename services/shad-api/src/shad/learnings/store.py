@@ -371,8 +371,8 @@ class LearningsStore:
 
     def get_stats(self) -> dict[str, Any]:
         """Get store statistics."""
-        by_status = {}
-        by_type = {}
+        by_status: dict[str, int] = {}
+        by_type: dict[str, int] = {}
 
         for learning in self._learnings.values():
             status = learning.status.value

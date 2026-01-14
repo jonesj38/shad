@@ -155,7 +155,7 @@ class SkillRouter:
 
         Args:
             goal: Raw goal string
-            context: Optional context (notebook_id, prior skills, etc.)
+            context: Optional context (vault_path, prior skills, etc.)
 
         Returns:
             RoutingDecision with selected skills and scoring breakdown

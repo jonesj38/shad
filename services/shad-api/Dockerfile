@@ -7,12 +7,10 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     curl \
     && rm -rf /var/lib/apt/lists/*
 
-# Install Python dependencies
-COPY pyproject.toml .
-RUN pip install --no-cache-dir -e .
-
-# Copy application code
+# Copy application code and install dependencies
+COPY pyproject.toml README.md ./
 COPY src/ src/
+RUN pip install --no-cache-dir .
 
 # Create non-root user
 RUN useradd -m -u 1000 shad && chown -R shad:shad /app

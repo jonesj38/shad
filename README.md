@@ -1,12 +1,14 @@
 # Shad (Shannon's Daemon)
 
-**Shad** is a personal AI infrastructure (PAI) designed to operate over *arbitrarily large knowledge environments* using **Recursive Language Models (RLMs)**, **OpenNotebookLM**, and **workflow orchestration via n8n**.
+**Shad** is a personal AI infrastructure (PAI) designed to operate over *arbitrarily large knowledge environments* using **Recursive Language Models (RLMs)**, **Obsidian via MCP**, and **workflow orchestration via n8n**.
 
 Shad is not a chatbot.
 Shad is not a prompt collection.
 Shad is not a single model.
 
 Shad is a **self-orchestrating cognitive system** that treats context as an environment, not a prompt.
+
+**Storage backend:** Local-first Markdown via **Obsidian**, accessed via **Model Context Protocol (MCP)**.
 
 ---
 
@@ -114,22 +116,23 @@ This allows Shad to reason over **millions of tokens** without exceeding model c
 
 ---
 
-### 2. OpenNotebookLM as Memory OS
+### 2. Obsidian as Memory OS
 
-OpenNotebookLM provides:
+Obsidian provides a local-first knowledge substrate accessed via MCP (Model Context Protocol):
 
-* notebooks, sources, and notes
-* full-text and vector search
-* stable identifiers for retrieved knowledge
+* **Vault** - Local Markdown files with full filesystem control
+* **Frontmatter** - YAML metadata for structured queries
+* **Bases** - Database-like views over notes (Obsidian 1.10+)
+* **Full-text search** - Via Local REST API plugin
 
-Shad uses OpenNotebookLM for:
+Shad uses Obsidian for:
 
-* long-term memory
-* evidence storage
-* citation and traceability
-* knowledge reuse across runs
+* Long-term memory and evidence storage
+* Full-path wikilink citations (`[[Folder/Note]]`)
+* Knowledge reuse across runs
+* Progressive note standardization ("Gardener" pattern)
 
-OpenNotebookLM is treated as **read-only input during reasoning**, and **write-only output during persistence**.
+**Code Mode:** Instead of chat-based tool calling, Shad writes Python scripts that import MCP tools (`obsidian.search()`, `obsidian.read_note()`), execute in a sandboxed container, and return distilled results. This reduces context pollution.
 
 ---
 
@@ -209,17 +212,29 @@ Shad API / CLI (:8000)
    |
    +-- RLM Engine (recursive DAG execution)
    |       |
-   |       +-- Open Notebook (:5055 API, :8502 Web UI)
-   |       |       |
-   |       |       +-- SurrealDB (:8001)
-   |       |
+   |       +-- MCP Client ──────────────────────┐
+   |       |                                    v
+   |       +-- Code Sandbox ──> Obsidian MCP Server
+   |       |   (Docker)             |
+   |       |                        v
+   |       |                    Obsidian Vault
+   |       |                    (Local REST API)
    |       +-- Redis (:6379)
    |       +-- LLM Providers (Claude Code CLI)
    |
-   +-- History/ (structured run artifacts)
+   +-- History/ (inside Obsidian vault)
    |
    +-- Voice Renderer (persona layer)
 ```
+
+### Obsidian Integration
+
+| Component | Purpose |
+|-----------|---------|
+| **Obsidian Local REST API** | HTTPS API for vault operations |
+| **cyanheads/obsidian-mcp-server** | MCP server bridge |
+| **Shad MCP Client** | Python client for vault access |
+| **Code Sandbox** | Docker container for script execution |
 
 ---
 
@@ -239,7 +254,9 @@ shad/
 │       │   ├── integrations/  # n8n integration
 │       │   ├── learnings/     # Learning extraction
 │       │   ├── models/        # Pydantic models
-│       │   ├── notebook/      # Open Notebook client
+│       │   ├── mcp/           # Obsidian MCP client
+│       │   ├── notebook/      # Open Notebook client (legacy)
+│       │   ├── sandbox/       # Code execution sandbox
 │       │   ├── skills/        # Skill router
 │       │   ├── utils/         # Configuration
 │       │   ├── verification/  # Validators, HITL
@@ -343,18 +360,22 @@ Shad is **fully implemented** with all planned features:
 - [x] Voice rendering system
 - [x] Learnings extraction and promotion pipeline
 
-### Open Notebook Integration (Complete)
-- [x] Open Notebook service integration (lfnovo/open-notebook)
-- [x] Notebook API endpoints for CRUD operations
-- [x] Search and retrieval from notebooks
-- [x] Context injection into RLM reasoning
+### Obsidian Integration (Complete)
+- [x] MCP client for Obsidian vault operations
+- [x] Code Mode execution sandbox (Docker)
+- [x] Hash-based cache validation
+- [x] Full-path wikilink citations
+- [x] Progressive note standardization
+- [x] HITL queue for delete operations
+
+### Legacy Open Notebook Support
+- [x] Open Notebook client (deprecated, use Obsidian)
 
 **Future work:**
 
-- [ ] Inspection code sandbox
 - [ ] Payment/entitlement system
 - [ ] Multi-tenant support
-- [ ] Offline mode
+- [ ] Offline mode with local LLMs
 
 ---
 
