@@ -1,0 +1,21 @@
+{
+  "root_node_id": "4e375bfe",
+  "nodes": [
+    {
+      "node_id": "4e375bfe",
+      "parent_id": null,
+      "depth": 0,
+      "task": "notebooks",
+      "status": "succeeded",
+      "result": "## Notebooks in Shad\n\nThe **notebooks** system in Shad is based on **OpenNotebookLM**, a graph-based knowledge substrate used for context retrieval during reasoning tasks.\n\n### Architecture\n\nThere are two implementations:\n\n| Component | Location | Purpose |\n|-----------|----------|---------|\n| `OpenNotebookClient` | `src/shad/notebook/client.py` | REST client for external Open Notebook service (lfnovo/open-notebook) at `http://localhost:5055` |\n| `NotebookStore` | `src/shad/notebook/store.py` | Local file-based implementation using JSON storage |\n\n### Data Model (`src/shad/models/notebook.py`)\n\nThe knowledge graph consists of:\n\n**Node Types:**\n- `Notebook` - A contextual container/lens over the graph (has description, policies)\n- `Source` - External artifacts like PDFs, web pages, transcripts, code\n- `Note` - Derived artifacts authored by humans or AI (has confidence, provisional flag)\n\n**Edge Types:**\n- `DERIVED_FROM`, `SUMMARIZES`, `CONTRADICTS`, `SUPPORTS`, `REFERENCES`, `PART_OF`, `INCLUDED_IN`\n\n### Key Features\n\n1. **Context Retrieval** - The `retrieve()` method is used by `RLMEngine` to fetch relevant knowledge during recursive decomposition\n\n2. **Text Search** - Simple word-overlap relevance scoring (can be upgraded to vector search)\n\n3. **Source Ingestion** - Import text files, directories, or add sources from URLs\n\n4. **Storage** - JSON files in `settings.notebooks_path`:\n   - `notebooks.json`, `sources.json`, `notes.json`, `edges.json`\n\n### Usage in RLM Engine\n\nPer the CLAUDE.md, each subtask in the recursive reasoning flow:\n1. Checks cache\n2. **Retrieves context from OpenNotebookLM**\n3. Executes via LLM\n4. Caches result",
+      "children": [],
+      "cache_key": "9c539554a5a28cb6",
+      "cache_hit": false,
+      "tokens_used": 428,
+      "start_time": "2026-01-12T22:15:37.742627",
+      "end_time": "2026-01-12T22:15:57.296275",
+      "error": null,
+      "stop_reason": null
+    }
+  ]
+}

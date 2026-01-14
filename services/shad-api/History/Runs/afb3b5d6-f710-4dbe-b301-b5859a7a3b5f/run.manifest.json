@@ -1,0 +1,24 @@
+{
+  "run_id": "afb3b5d6-f710-4dbe-b301-b5859a7a3b5f",
+  "version": "1.0",
+  "config": {
+    "goal": "notebooks",
+    "notebook_id": null,
+    "budget": {
+      "max_wall_time": 300,
+      "max_tokens": 100000,
+      "max_nodes": 50,
+      "max_depth": 3,
+      "max_branching_factor": 7
+    },
+    "voice": null
+  },
+  "status": "complete",
+  "created_at": "2026-01-12T22:15:37.742564",
+  "started_at": "2026-01-12T22:15:37.742580",
+  "completed_at": "2026-01-12T22:15:57.296294",
+  "total_tokens": 428,
+  "stop_reason": null,
+  "error": null,
+  "final_result": "## Notebooks in Shad\n\nThe **notebooks** system in Shad is based on **OpenNotebookLM**, a graph-based knowledge substrate used for context retrieval during reasoning tasks.\n\n### Architecture\n\nThere are two implementations:\n\n| Component | Location | Purpose |\n|-----------|----------|---------|\n| `OpenNotebookClient` | `src/shad/notebook/client.py` | REST client for external Open Notebook service (lfnovo/open-notebook) at `http://localhost:5055` |\n| `NotebookStore` | `src/shad/notebook/store.py` | Local file-based implementation using JSON storage |\n\n### Data Model (`src/shad/models/notebook.py`)\n\nThe knowledge graph consists of:\n\n**Node Types:**\n- `Notebook` - A contextual container/lens over the graph (has description, policies)\n- `Source` - External artifacts like PDFs, web pages, transcripts, code\n- `Note` - Derived artifacts authored by humans or AI (has confidence, provisional flag)\n\n**Edge Types:**\n- `DERIVED_FROM`, `SUMMARIZES`, `CONTRADICTS`, `SUPPORTS`, `REFERENCES`, `PART_OF`, `INCLUDED_IN`\n\n### Key Features\n\n1. **Context Retrieval** - The `retrieve()` method is used by `RLMEngine` to fetch relevant knowledge during recursive decomposition\n\n2. **Text Search** - Simple word-overlap relevance scoring (can be upgraded to vector search)\n\n3. **Source Ingestion** - Import text files, directories, or add sources from URLs\n\n4. **Storage** - JSON files in `settings.notebooks_path`:\n   - `notebooks.json`, `sources.json`, `notes.json`, `edges.json`\n\n### Usage in RLM Engine\n\nPer the CLAUDE.md, each subtask in the recursive reasoning flow:\n1. Checks cache\n2. **Retrieves context from OpenNotebookLM**\n3. Executes via LLM\n4. Caches result"
+}

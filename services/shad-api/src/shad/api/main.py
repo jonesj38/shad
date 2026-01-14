@@ -16,9 +16,9 @@ from shad.engine import LLMProvider, RLMEngine
 from shad.history import HistoryManager
 from shad.integrations import N8NClient
 from shad.learnings import LearningsStore
+from shad.mcp import ObsidianMCPClient
 from shad.models import Budget, RunConfig
 from shad.models.run import Run, RunStatus
-from shad.notebook import OpenNotebookClient
 from shad.skills import SkillRouter
 from shad.utils.config import get_settings
 from shad.verification import HITLQueue
@@ -35,14 +35,16 @@ voice_renderer: VoiceRenderer | None = None
 n8n_client: N8NClient | None = None
 hitl_queue: HITLQueue | None = None
 learnings_store: LearningsStore | None = None
-notebook_client: OpenNotebookClient | None = None
+obsidian_client: ObsidianMCPClient | None = None
 
 
 @asynccontextmanager
 async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
     """Application lifespan manager."""
     global engine, history, cache, skill_router, voice_renderer
-    global n8n_client, hitl_queue, learnings_store, notebook_client
+    global n8n_client, hitl_queue, learnings_store, obsidian_client
+
+    settings = get_settings()
 
     # Initialize components
     llm_provider = LLMProvider()
@@ -51,12 +53,21 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
     cache = RedisCache()
     await cache.connect()
 
-    # Initialize Open Notebook client
-    notebook_client = OpenNotebookClient()
-    await notebook_client.connect()
+    # Initialize Obsidian MCP client
+    obsidian_client = ObsidianMCPClient(
+        base_url=settings.obsidian_base_url,
+        api_key=settings.obsidian_api_key,
+        vault_path=settings.obsidian_vault_path,
+        verify_ssl=settings.obsidian_verify_ssl,
+    )
+    await obsidian_client.connect()
 
-    # Initialize engine with cache and notebook
-    engine = RLMEngine(llm_provider=llm_provider, cache=cache, notebook_store=notebook_client)
+    # Initialize engine with cache and Obsidian client
+    engine = RLMEngine(
+        llm_provider=llm_provider,
+        cache=cache,
+        mcp_client=obsidian_client,
+    )
     history = HistoryManager()
 
     # Initialize skill router
@@ -85,8 +96,6 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
         await cache.disconnect()
     if n8n_client:
         await n8n_client.disconnect()
-    if notebook_client:
-        await notebook_client.disconnect()
 
     logger.info("Shad API shutting down")
 
@@ -101,8 +110,8 @@ class RunRequest(BaseModel):
     """Request model for creating a run."""
 
     goal: str = Field(..., description="The goal/task to accomplish")
-    notebook_id: str | None = Field(default=None, description="Notebook ID for context")
-    budgets: dict[str, int] | None = Field(default=None, description="Budget overrides")
+    vault_path: str | None = Field(default=None, description="Obsidian vault path for context")
+    budget: dict[str, int] | None = Field(default=None, description="Budget overrides")
     voice: str | None = Field(default=None, description="Voice for output rendering")
 
 
@@ -175,12 +184,12 @@ async def create_run(request: RunRequest, background_tasks: BackgroundTasks) -> 
         "max_tokens": settings.default_max_tokens,
     }
 
-    if request.budgets:
-        budget_dict.update(request.budgets)
+    if request.budget:
+        budget_dict.update(request.budget)
 
     config = RunConfig(
         goal=request.goal,
-        notebook_id=request.notebook_id,
+        vault_path=request.vault_path,
         budget=Budget(**budget_dict),
         voice=request.voice,
     )
@@ -263,6 +272,7 @@ async def list_runs(limit: int = 50) -> dict[str, Any]:
 # Additional routers
 skills_router = APIRouter(prefix="/v1/skills", tags=["Skills"])
 admin_router = APIRouter(prefix="/v1/admin", tags=["Admin"])
+vault_router = APIRouter(prefix="/v1/vault", tags=["Vault"])
 
 
 @skills_router.get("")
@@ -350,145 +360,68 @@ async def list_voices() -> dict[str, Any]:
     return {"voices": voice_renderer.list_voices()}
 
 
-# Notebook router - exposes Open Notebook operations
-notebooks_router = APIRouter(prefix="/v1/notebooks", tags=["Notebooks"])
-
-
-@notebooks_router.get("")
-async def list_notebooks() -> dict[str, Any]:
-    """List all available notebooks from Open Notebook."""
-    if notebook_client is None:
-        raise HTTPException(status_code=503, detail="Service not initialized")
-
-    if not notebook_client.is_connected:
-        return {"notebooks": [], "connected": False}
-
-    notebooks = await notebook_client.list_notebooks()
-    return {"notebooks": notebooks, "connected": True}
-
-
-@notebooks_router.get("/{notebook_id}")
-async def get_notebook(notebook_id: str) -> dict[str, Any]:
-    """Get a specific notebook by ID."""
-    if notebook_client is None:
-        raise HTTPException(status_code=503, detail="Service not initialized")
-
-    notebook = await notebook_client.get_notebook(notebook_id)
-    if notebook is None:
-        raise HTTPException(status_code=404, detail=f"Notebook {notebook_id} not found")
-
-    return notebook
-
-
-@notebooks_router.post("")
-async def create_notebook(name: str, description: str = "") -> dict[str, Any]:
-    """Create a new notebook."""
-    if notebook_client is None:
-        raise HTTPException(status_code=503, detail="Service not initialized")
-
-    notebook = await notebook_client.create_notebook(name, description)
-    if notebook is None:
-        raise HTTPException(status_code=500, detail="Failed to create notebook")
-
-    return notebook
-
-
-@notebooks_router.get("/{notebook_id}/sources")
-async def list_sources(notebook_id: str) -> dict[str, Any]:
-    """List sources in a notebook."""
-    if notebook_client is None:
-        raise HTTPException(status_code=503, detail="Service not initialized")
-
-    sources = await notebook_client.list_sources(notebook_id)
-    return {"sources": sources}
-
-
-@notebooks_router.post("/{notebook_id}/sources")
-async def add_source(
-    notebook_id: str,
-    content: str,
-    title: str = "",
-    source_type: str = "text",
-    url: str | None = None,
-) -> dict[str, Any]:
-    """Add a source to a notebook."""
-    if notebook_client is None:
-        raise HTTPException(status_code=503, detail="Service not initialized")
-
-    source = await notebook_client.add_source(
-        notebook_id, content, title, source_type, url
-    )
-    if source is None:
-        raise HTTPException(status_code=500, detail="Failed to add source")
-
-    return source
-
-
-@notebooks_router.post("/{notebook_id}/sources/url")
-async def add_source_from_url(notebook_id: str, url: str) -> dict[str, Any]:
-    """Add a source from a URL (web page, PDF, etc.)."""
-    if notebook_client is None:
-        raise HTTPException(status_code=503, detail="Service not initialized")
-
-    source = await notebook_client.add_source_from_url(notebook_id, url)
-    if source is None:
-        raise HTTPException(status_code=500, detail="Failed to add URL source")
-
-    return source
-
-
-@notebooks_router.post("/{notebook_id}/search")
-async def search_notebook(notebook_id: str, query: str, limit: int = 10) -> dict[str, Any]:
-    """Search for content in a notebook."""
-    if notebook_client is None:
-        raise HTTPException(status_code=503, detail="Service not initialized")
-
-    results = await notebook_client.search(notebook_id, query, limit)
-    return {"results": results, "query": query}
-
-
-@notebooks_router.get("/{notebook_id}/notes")
-async def list_notes(notebook_id: str) -> dict[str, Any]:
-    """List notes in a notebook."""
-    if notebook_client is None:
-        raise HTTPException(status_code=503, detail="Service not initialized")
-
-    notes = await notebook_client.list_notes(notebook_id)
-    return {"notes": notes}
-
-
-@notebooks_router.post("/{notebook_id}/notes")
-async def create_note(
-    notebook_id: str,
-    title: str,
-    content: str,
-    source_ids: list[str] | None = None,
-) -> dict[str, Any]:
-    """Create a note in a notebook."""
-    if notebook_client is None:
-        raise HTTPException(status_code=503, detail="Service not initialized")
-
-    note = await notebook_client.create_note(notebook_id, title, content, source_ids)
-    if note is None:
-        raise HTTPException(status_code=500, detail="Failed to create note")
-
-    return note
-
-
-@notebooks_router.get("/stats")
-async def notebook_stats() -> dict[str, Any]:
-    """Get Open Notebook statistics."""
-    if notebook_client is None:
+# Vault router - Obsidian vault operations
+@vault_router.get("/status")
+async def vault_status() -> dict[str, Any]:
+    """Get Obsidian vault connection status."""
+    if obsidian_client is None:
         return {"connected": False}
 
-    return await notebook_client.get_stats()
+    return {
+        "connected": obsidian_client.is_connected,
+        "vault_path": str(obsidian_client.vault_path) if obsidian_client.vault_path else None,
+    }
+
+
+@vault_router.get("/search")
+async def search_vault(query: str, limit: int = 10) -> dict[str, Any]:
+    """Search the Obsidian vault."""
+    if obsidian_client is None or not obsidian_client.is_connected:
+        raise HTTPException(status_code=503, detail="Obsidian not connected")
+
+    results = await obsidian_client.search(query, limit=limit)
+    return {
+        "results": [r.to_dict() for r in results],
+        "query": query,
+        "count": len(results),
+    }
+
+
+@vault_router.get("/note/{path:path}")
+async def read_note(path: str) -> dict[str, Any]:
+    """Read a note from the vault."""
+    if obsidian_client is None or not obsidian_client.is_connected:
+        raise HTTPException(status_code=503, detail="Obsidian not connected")
+
+    note = await obsidian_client.read_note(path)
+    if note is None:
+        raise HTTPException(status_code=404, detail=f"Note {path} not found")
+
+    return {
+        "path": note.path,
+        "content": note.content,
+        "metadata": note.metadata.to_frontmatter() if note.metadata else {},
+    }
+
+
+@vault_router.get("/notes")
+async def list_vault_notes(directory: str = "", recursive: bool = False) -> dict[str, Any]:
+    """List notes in the vault."""
+    if obsidian_client is None or not obsidian_client.is_connected:
+        raise HTTPException(status_code=503, detail="Obsidian not connected")
+
+    files = await obsidian_client.list_notes(directory, recursive=recursive)
+    return {
+        "files": [{"path": f.relative_path, "exists": f.exists} for f in files],
+        "count": len(files),
+    }
 
 
 def create_app() -> FastAPI:
     """Create and configure the FastAPI application."""
     application = FastAPI(
         title="Shad API",
-        description="Shannon's Daemon - Personal AI Infrastructure for long-context reasoning",
+        description="Shannon's Daemon - Personal AI Infrastructure for long-context reasoning with Obsidian",
         version=__version__,
         lifespan=lifespan,
     )
@@ -498,7 +431,7 @@ def create_app() -> FastAPI:
     application.include_router(run_router)
     application.include_router(skills_router)
     application.include_router(admin_router)
-    application.include_router(notebooks_router)
+    application.include_router(vault_router)
 
     return application
 

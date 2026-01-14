@@ -1,0 +1,19 @@
+{
+  "run_id": "7d3fa3e6-9711-4c1e-a914-e1e2ecd645ed",
+  "config": {
+    "goal": "What is 2+2?",
+    "vault_path": null,
+    "budget": {
+      "max_wall_time": 300,
+      "max_tokens": 100000,
+      "max_nodes": 50,
+      "max_depth": 3,
+      "max_branching_factor": 7
+    },
+    "voice": null
+  },
+  "node_count": 1,
+  "cache_keys": [
+    "2364ce58a6fdfb7e"
+  ]
+}

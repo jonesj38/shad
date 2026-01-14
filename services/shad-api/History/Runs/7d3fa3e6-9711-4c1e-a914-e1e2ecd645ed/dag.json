@@ -1,0 +1,21 @@
+{
+  "root_node_id": "9cc24f5b",
+  "nodes": [
+    {
+      "node_id": "9cc24f5b",
+      "parent_id": null,
+      "depth": 0,
+      "task": "What is 2+2?",
+      "status": "succeeded",
+      "result": "2+2 = 4",
+      "children": [],
+      "cache_key": "2364ce58a6fdfb7e",
+      "cache_hit": false,
+      "tokens_used": 6,
+      "start_time": "2026-01-14T21:01:10.955609",
+      "end_time": "2026-01-14T21:01:14.880344",
+      "error": null,
+      "stop_reason": null
+    }
+  ]
+}

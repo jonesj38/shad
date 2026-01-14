@@ -1,0 +1,19 @@
+{
+  "run_id": "67b441f0-ee1f-4cc7-853b-45143dc324c7",
+  "config": {
+    "goal": "What are three benefits of using git?",
+    "notebook_id": null,
+    "budget": {
+      "max_wall_time": 300,
+      "max_tokens": 100000,
+      "max_nodes": 50,
+      "max_depth": 3,
+      "max_branching_factor": 7
+    },
+    "voice": null
+  },
+  "node_count": 1,
+  "cache_keys": [
+    "0c60e223647e8ec2"
+  ]
+}

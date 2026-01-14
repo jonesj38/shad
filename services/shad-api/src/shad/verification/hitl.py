@@ -339,8 +339,8 @@ class HITLQueue:
 
     def get_stats(self) -> dict[str, Any]:
         """Get queue statistics."""
-        by_status = {}
-        by_priority = {}
+        by_status: dict[str, int] = {}
+        by_priority: dict[str, int] = {}
 
         for item in self._items.values():
             status = item.status.value

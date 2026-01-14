@@ -1,0 +1,19 @@
+{
+  "run_id": "cd9ff4e2-59e2-4b94-9a06-572ee9544743",
+  "config": {
+    "goal": "What are the trade-offs between microservices and monolithic architecture?",
+    "notebook_id": null,
+    "budget": {
+      "max_wall_time": 300,
+      "max_tokens": 100000,
+      "max_nodes": 10,
+      "max_depth": 2,
+      "max_branching_factor": 7
+    },
+    "voice": null
+  },
+  "node_count": 1,
+  "cache_keys": [
+    "a9f20113e173a16c"
+  ]
+}

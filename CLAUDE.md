@@ -4,9 +4,13 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Project Overview
 
-Shad (Shannon's Daemon) is a personal AI infrastructure for long-context reasoning. It recursively decomposes problems, retrieves knowledge from OpenNotebookLM, caches subtrees in Redis, and recomposes results.
+Shad (Shannon's Daemon) is a personal AI infrastructure for long-context reasoning. It recursively decomposes problems, retrieves knowledge from an Obsidian vault via MCP, caches subtrees in Redis, and recomposes results.
 
 **Core premise**: Long-context reasoning is an inference problem, not a prompting problem.
+
+**Storage backend**: Local-first Markdown via **Obsidian**, accessed via **Model Context Protocol (MCP)**.
+
+> See `OBSIDIAN_PIVOT.md` for the complete Obsidian integration specification.
 
 ## Architecture
 

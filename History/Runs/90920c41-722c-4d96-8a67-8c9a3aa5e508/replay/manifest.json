@@ -1,0 +1,19 @@
+{
+  "run_id": "90920c41-722c-4d96-8a67-8c9a3aa5e508",
+  "config": {
+    "goal": "create a proof-of-concept project that uses BSV micropayments as payment gateways for a SOLID pod",
+    "notebook_id": "gfyg0jts6tuxs5oxandi",
+    "budget": {
+      "max_wall_time": 300,
+      "max_tokens": 100000,
+      "max_nodes": 50,
+      "max_depth": 3,
+      "max_branching_factor": 7
+    },
+    "voice": null
+  },
+  "node_count": 1,
+  "cache_keys": [
+    "2d94ba5f541a0b79"
+  ]
+}

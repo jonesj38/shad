@@ -112,7 +112,7 @@ class HistoryManager:
 
         config = RunConfig(
             goal=manifest["config"]["goal"],
-            notebook_id=manifest["config"].get("notebook_id"),
+            vault_path=manifest["config"].get("vault_path"),
             budget=Budget(**manifest["config"].get("budget", {})),
             voice=manifest["config"].get("voice"),
         )
@@ -206,7 +206,7 @@ class HistoryManager:
             "version": "1.0",
             "config": {
                 "goal": run.config.goal,
-                "notebook_id": run.config.notebook_id,
+                "vault_path": run.config.vault_path,
                 "budget": run.config.budget.model_dump(),
                 "voice": run.config.voice,
             },
@@ -350,7 +350,7 @@ class HistoryManager:
 
     def _save_final_summary(self, run: Run, run_path: Path) -> None:
         """Save machine-readable final summary."""
-        summary = {
+        summary: dict[str, Any] = {
             "run_id": run.run_id,
             "status": run.status.value,
             "goal": run.config.goal,
@@ -364,22 +364,24 @@ class HistoryManager:
                 "failed_nodes": len(run.failed_nodes()),
                 "total_tokens": run.total_tokens,
             },
-            "suggested_next_actions": [],
+            "suggested_next_actions": []
         }
 
         # Add suggested actions based on status
+        actions: list[dict[str, str]] = []
         if run.status.value == "partial":
-            summary["suggested_next_actions"].append({
+            actions.append({
                 "action": "resume",
                 "command": f"shad resume {run.run_id}",
                 "reason": run.stop_reason.value if run.stop_reason else "partial completion",
             })
         elif run.status.value == "failed":
-            summary["suggested_next_actions"].append({
+            actions.append({
                 "action": "retry",
                 "command": f"shad run \"{run.config.goal}\" --max-depth {run.config.budget.max_depth + 1}",
                 "reason": "previous run failed",
             })
+        summary["suggested_next_actions"] = actions
 
         summary_path = run_path / "final.summary.json"
         with summary_path.open("w") as f:

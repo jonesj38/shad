@@ -1,0 +1,19 @@
+{
+  "run_id": "afb3b5d6-f710-4dbe-b301-b5859a7a3b5f",
+  "config": {
+    "goal": "notebooks",
+    "notebook_id": null,
+    "budget": {
+      "max_wall_time": 300,
+      "max_tokens": 100000,
+      "max_nodes": 50,
+      "max_depth": 3,
+      "max_branching_factor": 7
+    },
+    "voice": null
+  },
+  "node_count": 1,
+  "cache_keys": [
+    "9c539554a5a28cb6"
+  ]
+}

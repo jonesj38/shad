@@ -6,6 +6,7 @@ import asyncio
 import json
 import logging
 from enum import Enum
+from typing import Any
 
 from shad.utils.config import get_settings
 
@@ -28,8 +29,8 @@ class LLMProvider:
     def __init__(self, use_claude_code: bool = True) -> None:
         self.settings = get_settings()
         self.use_claude_code = use_claude_code
-        self._anthropic_client = None
-        self._openai_client = None
+        self._anthropic_client: Any = None
+        self._openai_client: Any = None
 
     def get_model_for_tier(self, tier: ModelTier) -> str:
         """Get the model name for a given tier."""
@@ -94,13 +95,27 @@ class LLMProvider:
         system: str | None = None,
     ) -> tuple[str, int]:
         """Complete using Claude Code CLI (uses subscription, not API costs)."""
-        # Combine system prompt and user prompt
+        # Combine system prompt and user prompt with clear structure
         full_prompt = prompt
         if system:
-            full_prompt = f"{system}\n\n{prompt}"
+            full_prompt = f"""<system>
+{system}
+</system>
+
+<task>
+{prompt}
+</task>"""
+
+        # Log prompt details
+        logger.info("[CLAUDE_CODE] Preparing to call Claude Code CLI")
+        logger.info(f"[CLAUDE_CODE] Prompt length: {len(full_prompt)} chars")
+        if "Context:" in prompt:
+            logger.info("[CLAUDE_CODE] Prompt contains context section")
+        logger.debug(f"[CLAUDE_CODE] Full prompt preview:\n{full_prompt[:1000]}...")
 
         # Run claude CLI in non-interactive mode
         try:
+            logger.info("[CLAUDE_CODE] Executing: claude -p <prompt> --output-format text")
             process = await asyncio.create_subprocess_exec(
                 "claude",
                 "-p", full_prompt,
@@ -113,15 +128,18 @@ class LLMProvider:
 
             if process.returncode != 0:
                 error_msg = stderr.decode() if stderr else "Unknown error"
-                logger.error(f"Claude Code CLI error: {error_msg}")
+                logger.error(f"[CLAUDE_CODE] CLI error: {error_msg}")
                 raise RuntimeError(f"Claude Code CLI failed: {error_msg}")
 
             response = stdout.decode().strip()
             # Claude Code doesn't report token usage, estimate based on length
             estimated_tokens = len(response.split()) * 2
+            logger.info(f"[CLAUDE_CODE] Success - response length: {len(response)} chars, ~{estimated_tokens} tokens")
+            logger.debug(f"[CLAUDE_CODE] Response preview: {response[:500]}...")
             return response, estimated_tokens
 
         except FileNotFoundError as e:
+            logger.error("[CLAUDE_CODE] claude CLI not found in PATH")
             raise RuntimeError(
                 "Claude Code CLI not found. Install it or set use_claude_code=False"
             ) from e
@@ -177,7 +195,7 @@ class LLMProvider:
 
         response = self._openai_client.chat.completions.create(
             model=model,
-            messages=messages,  # type: ignore
+            messages=messages,
             max_tokens=max_tokens,
             temperature=temperature,
         )
@@ -198,16 +216,27 @@ class LLMProvider:
         Returns:
             List of subtask strings
         """
+        logger.info(f"[DECOMPOSE] Starting decomposition: {task[:100]}...")
+        logger.info(f"[DECOMPOSE] Context provided: {len(context)} chars")
+        logger.info(f"[DECOMPOSE] Max subtasks: {max_subtasks}")
+
         system = """You are a task decomposition expert. Break down complex tasks into smaller,
 actionable subtasks. Return ONLY a JSON array of subtask strings, no explanation.
 Each subtask should be self-contained and specific.
 Limit to the requested number of subtasks."""
 
-        prompt = f"""Decompose this task into {max_subtasks} or fewer subtasks:
+        context_section = ""
+        if context:
+            context_section = f"""<retrieved_context>
+{context}
+</retrieved_context>
+
+"""
+            logger.info("[DECOMPOSE] Including retrieved context")
+
+        prompt = f"""{context_section}Decompose this task into {max_subtasks} or fewer subtasks:
 
 Task: {task}
-
-{"Context: " + context if context else ""}
 
 Return a JSON array of subtask strings. Example: ["subtask 1", "subtask 2", "subtask 3"]"""
 
@@ -263,6 +292,10 @@ Return a JSON array of subtask strings. Example: ["subtask 1", "subtask 2", "sub
         Returns:
             Synthesized answer
         """
+        logger.info(f"[SYNTHESIZE] Starting synthesis for: {task[:100]}...")
+        logger.info(f"[SYNTHESIZE] Subtask results: {len(subtask_results)}")
+        logger.info(f"[SYNTHESIZE] Context provided: {len(context)} chars")
+
         system = """You are a synthesis expert. Combine subtask results into a coherent,
 comprehensive answer. Cite sources using [N] notation where N is the subtask number.
 Be concise but thorough."""
@@ -272,11 +305,17 @@ Be concise but thorough."""
             for i, (subtask, result) in enumerate(subtask_results)
         )
 
-        prompt = f"""Synthesize these subtask results into a comprehensive answer for the original task.
+        context_section = ""
+        if context:
+            context_section = f"""<retrieved_context>
+{context}
+</retrieved_context>
+
+"""
+
+        prompt = f"""{context_section}Synthesize these subtask results into a comprehensive answer for the original task.
 
 Original Task: {task}
-
-{"Context: " + context if context else ""}
 
 Subtask Results:
 {results_text}
@@ -304,16 +343,31 @@ Provide a coherent synthesis with citations [N] to the relevant subtask results.
         Returns:
             Tuple of (answer, tokens_used)
         """
+        logger.info(f"[ANSWER_TASK] Starting task: {task[:100]}...")
+        logger.info(f"[ANSWER_TASK] Context provided: {len(context)} chars")
+
         system = """You are a knowledgeable assistant. Answer the question or complete the task
 directly and concisely. If context is provided, use it to inform your answer.
 Always cite relevant sources if available."""
 
-        context_section = f"Context:\n{context}" if context else ""
-        prompt = f"""Task: {task}
+        if context:
+            context_section = f"""<retrieved_context>
+The following information was retrieved from the user's knowledge base and is highly relevant to this task:
 
-{context_section}
+{context}
+</retrieved_context>"""
+            logger.info("[ANSWER_TASK] Including retrieved context in prompt")
+        else:
+            context_section = ""
+            logger.info("[ANSWER_TASK] No context to include")
 
-Provide a direct, informative answer."""
+        prompt = f"""{context_section}
+
+<task>
+{task}
+</task>
+
+Provide a direct, informative answer. If the retrieved context is relevant, use it and cite the sources."""
 
         return await self.complete(
             prompt=prompt,

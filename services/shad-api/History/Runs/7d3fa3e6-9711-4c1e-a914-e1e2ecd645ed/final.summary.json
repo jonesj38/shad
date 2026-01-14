@@ -1,0 +1,16 @@
+{
+  "run_id": "7d3fa3e6-9711-4c1e-a914-e1e2ecd645ed",
+  "status": "complete",
+  "goal": "What is 2+2?",
+  "result": "2+2 = 4",
+  "citations": [],
+  "stop_reason": null,
+  "error": null,
+  "metrics": {
+    "total_nodes": 1,
+    "completed_nodes": 1,
+    "failed_nodes": 0,
+    "total_tokens": 6
+  },
+  "suggested_next_actions": []
+}

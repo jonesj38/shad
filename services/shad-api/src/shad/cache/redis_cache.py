@@ -4,6 +4,11 @@ Implements hierarchical key scheme per SPEC.md:
 - (goal_type, intent, entities, key_slots...) → stable key
 - Fallback: exact string hash
 - Main cache + staging cache for provisional results
+
+Per OBSIDIAN_PIVOT.md Section 6: Caching Strategy
+- Hash validation: Cache keys include context_hash derived from file content/mtime
+- Before cache lookup: query MCP server for current file hash
+- If hash mismatch: cache miss, re-compute reasoning
 """
 
 from __future__ import annotations
@@ -342,3 +347,138 @@ class RedisCache:
         """Generate a simple hash-based cache key."""
         key_data = f"{task}::{context[:500] if context else ''}"
         return hashlib.sha256(key_data.encode()).hexdigest()[:16]
+
+    async def get_with_hash_validation(
+        self,
+        key: str | CacheKey,
+        current_hash: str,
+    ) -> str | None:
+        """Get cached result with hash validation.
+
+        Per OBSIDIAN_PIVOT.md Section 6.2: Hash Validation
+        - Before cache lookup: query for current file hash
+        - If hash mismatch: cache miss, re-compute
+
+        Args:
+            key: Cache key
+            current_hash: Current content hash to validate against
+
+        Returns:
+            Cached result if hash matches, None otherwise
+        """
+        if not self._connected or not self._client:
+            return None
+
+        str_key = key.to_string() if isinstance(key, CacheKey) else key
+        full_key = self.MAIN_PREFIX + str_key
+
+        try:
+            data = await self._client.get(full_key)
+            if data:
+                entry = json.loads(data)
+                stored_hash = entry.get("metadata", {}).get("context_hash")
+
+                # Validate hash
+                if stored_hash and stored_hash != current_hash:
+                    logger.debug(f"Cache invalidated by hash mismatch for {str_key}")
+                    # Hash mismatch - treat as cache miss
+                    await self.invalidate(key)
+                    return None
+
+                logger.debug(f"Cache hit with valid hash for {str_key}")
+                return entry.get("value")
+        except Exception as e:
+            logger.warning(f"Cache get with hash validation error: {e}")
+
+        return None
+
+    async def set_with_hash(
+        self,
+        key: str | CacheKey,
+        value: str,
+        context_hash: str,
+        tokens_used: int = 0,
+        ttl: timedelta | None = None,
+        provisional: bool = False,
+    ) -> bool:
+        """Set cached result with context hash for validation.
+
+        Per OBSIDIAN_PIVOT.md Section 6.2:
+        Cache keys include context_hash derived from file content/mtime.
+
+        Args:
+            key: Cache key
+            value: Result to cache
+            context_hash: Hash of context for validation
+            tokens_used: Tokens used
+            ttl: Time-to-live
+            provisional: If True, store in staging cache
+
+        Returns:
+            True if cached successfully
+        """
+        return await self.set(
+            key=key,
+            value=value,
+            tokens_used=tokens_used,
+            ttl=ttl,
+            provisional=provisional,
+            metadata={"context_hash": context_hash},
+        )
+
+    # ==================== Budget Ledger Operations ====================
+    # Per OBSIDIAN_PIVOT.md Section 7.2: Central Ledger (Redis)
+
+    BUDGET_PREFIX = "shad:budget:"
+
+    async def init_budget(self, run_id: str, token_budget: int) -> bool:
+        """Initialize budget counter for a run.
+
+        Per OBSIDIAN_PIVOT.md Section 7.2:
+        Sub-agents decrement shared Redis counter atomically.
+        """
+        if not self._connected or not self._client:
+            return False
+
+        key = f"{self.BUDGET_PREFIX}{run_id}:tokens"
+        try:
+            await self._client.set(key, token_budget)
+            await self._client.expire(key, timedelta(hours=24))
+            return True
+        except Exception as e:
+            logger.error(f"Failed to init budget: {e}")
+            return False
+
+    async def deduct_budget(self, run_id: str, tokens: int) -> int | None:
+        """Atomically deduct from budget and return remaining.
+
+        Per OBSIDIAN_PIVOT.md Section 7.2:
+        Atomic check-and-deduct before each LLM call.
+
+        Returns:
+            Remaining budget, or None if error
+            Negative value means budget exhausted
+        """
+        if not self._connected or not self._client:
+            return None
+
+        key = f"{self.BUDGET_PREFIX}{run_id}:tokens"
+        try:
+            remaining = await self._client.decrby(key, tokens)
+            return remaining
+        except Exception as e:
+            logger.error(f"Failed to deduct budget: {e}")
+            return None
+
+    async def get_remaining_budget(self, run_id: str) -> int | None:
+        """Get remaining budget for a run."""
+        if not self._connected or not self._client:
+            return None
+
+        key = f"{self.BUDGET_PREFIX}{run_id}:tokens"
+        try:
+            value = await self._client.get(key)
+            return int(value) if value else None
+        except Exception as e:
+            logger.error(f"Failed to get budget: {e}")
+            return None
