@@ -1,391 +1,295 @@
 # Shad (Shannon's Daemon)
 
-**Shad** is a personal AI infrastructure (PAI) designed to operate over *arbitrarily large knowledge environments* using **Recursive Language Models (RLMs)**, **Obsidian via MCP**, and **workflow orchestration via n8n**.
+**Shad enables AI to utilize virtually unlimited context.**
 
-Shad is not a chatbot.
-Shad is not a prompt collection.
-Shad is not a single model.
+Load an Obsidian vault with curated knowledge — documentation, code examples, architecture patterns, best practices — then accomplish complex tasks that would be impossible with a single context window.
 
-Shad is a **self-orchestrating cognitive system** that treats context as an environment, not a prompt.
+```bash
+# Load a vault with mobile dev knowledge, then build an app
+shad run "Build a task management app with auth, offline sync, and push notifications" \
+  --vault ~/MobileDevVault \
+  --max-depth 4
+```
 
-**Storage backend:** Local-first Markdown via **Obsidian**, accessed via **Model Context Protocol (MCP)**.
+Shad recursively decomposes the task, retrieves targeted context for each subtask, generates output informed by your vault's examples, and assembles coherent results.
+
+---
+
+## The Problem
+
+AI systems break down when:
+- Context grows beyond the model's window
+- Tasks require reasoning over many documents
+- Output quality depends on following specific patterns
+- You need consistent, reproducible results
+
+Current solutions (RAG, long-context models) help but don't scale. You can't fit a 100MB documentation vault into any context window.
+
+## The Solution
+
+> **Long-context reasoning is an inference problem, not a prompting problem.**
+
+Shad treats your vault as an **explorable environment**, not a fixed input:
+
+1. **Decompose**: Break complex tasks into subtasks recursively
+2. **Retrieve**: For each subtask, generate custom retrieval code that searches your vault
+3. **Generate**: Produce output informed by relevant examples from your vault
+4. **Assemble**: Synthesize subtask results into coherent output
+
+This allows Shad to effectively utilize **gigabytes** of context — not by loading it all at once, but by intelligently retrieving what's needed for each subtask.
 
 ---
 
 ## Quick Start
 
 ### Prerequisites
-
-- Docker and Docker Compose
-- An Anthropic API key (or OpenAI API key)
+- Python 3.11+
+- An Obsidian vault with relevant content
 
 ### Installation
 
 ```bash
-# Clone the repository
+# Clone
 git clone https://github.com/yourusername/shad.git
-cd shad
+cd shad/services/shad-api
 
-# Copy environment template
-cp .env.example .env
-
-# Edit .env with your API key
-# ANTHROPIC_API_KEY=your_key_here
-
-# Deploy
-./scripts/deploy.sh
+# Install
+python -m venv .venv
+source .venv/bin/activate
+pip install -e .
 ```
 
-### CLI Usage
+### Basic Usage
 
 ```bash
-# Install CLI (from services/shad-api directory)
-cd services/shad-api
-pip install -e .
+# Run a task with vault context
+shad run "Summarize the key concepts in my notes" --vault ~/MyVault
 
-# Run a reasoning task
-shad run "What are the key themes in quantum computing?" --max-depth 2
+# More complex task with deeper recursion
+shad run "Compare all authentication approaches documented in my vault" \
+  --vault ~/DevDocs \
+  --max-depth 3
 
-# Check run status
+# Check results
+shad status <run_id>
+shad trace tree <run_id>
+```
+
+---
+
+## How It Works
+
+### Code Mode: Intelligent Retrieval
+
+Instead of simple keyword search, Shad uses **Code Mode** — the LLM writes Python scripts to retrieve exactly what it needs:
+
+```python
+# For task: "How should I implement OAuth?"
+# LLM generates:
+
+results = obsidian.search("OAuth implementation", limit=10)
+patterns = obsidian.read_note("Patterns/Authentication/OAuth.md")
+
+relevant = []
+for r in results:
+    if "refresh token" in r["content"].lower():
+        relevant.append(r["content"][:2000])
+
+__result__ = f"""
+## OAuth Patterns
+{patterns[:3000]}
+
+## Relevant Examples
+{"---".join(relevant)}
+"""
+```
+
+This enables:
+- **Multi-step retrieval**: Search → read specific notes → filter → aggregate
+- **Query-specific logic**: Different retrieval strategies per subtask
+- **Context efficiency**: Return only what's needed, not entire documents
+
+### Recursive Decomposition
+
+Complex tasks are broken into manageable subtasks:
+
+```
+"Build a mobile app with auth"
+         ↓
+├── "Set up project structure"
+├── "Implement navigation"
+├── "Build authentication flow"
+│   ├── "Create login screen"
+│   ├── "Implement OAuth integration"
+│   └── "Add session management"
+├── "Create main features"
+│   ├── "Task list view"
+│   ├── "Task detail screen"
+│   └── "Create/edit task form"
+└── "Add offline sync"
+```
+
+Each leaf node retrieves its own context from the vault, ensuring targeted, relevant information.
+
+---
+
+## Example Use Cases
+
+### 1. Build Software with Your Patterns
+
+```bash
+# Vault contains: Your team's code standards, architecture docs, example projects
+shad run "Build a REST API for user management following our patterns" \
+  --vault ~/TeamDocs \
+  --max-depth 4
+```
+
+### 2. Research with Your Knowledge Base
+
+```bash
+# Vault contains: Research papers, notes, bookmarks
+shad run "What are the key arguments for and against microservices in my notes?" \
+  --vault ~/Research
+```
+
+### 3. Generate Documentation
+
+```bash
+# Vault contains: Codebase documentation, API specs
+shad run "Write a getting started guide based on our API documentation" \
+  --vault ~/ProjectDocs
+```
+
+### 4. Analysis with Domain Knowledge
+
+```bash
+# Vault contains: Industry reports, competitor analysis, market data
+shad run "Analyze market trends based on my collected research" \
+  --vault ~/MarketResearch \
+  --max-depth 3
+```
+
+---
+
+## Architecture
+
+```
+User
+   |
+   v
+Shad CLI / API
+   |
+   +-- RLM Engine
+   |       |
+   |       +-- Decomposition (break task into subtasks)
+   |       |
+   |       +-- Code Mode (LLM generates retrieval scripts)
+   |       |       |
+   |       |       v
+   |       +-- CodeExecutor ──> ObsidianTools ──> Your Vault
+   |       |
+   |       +-- Generation (produce output with context)
+   |       |
+   |       +-- Synthesis (combine subtask results)
+   |
+   +-- Redis (cache subtrees)
+   +-- History (run artifacts)
+```
+
+### Key Components
+
+| Component | Purpose |
+|-----------|---------|
+| **RLM Engine** | Recursive decomposition and execution |
+| **Code Mode** | LLM-generated retrieval scripts |
+| **CodeExecutor** | Sandboxed Python execution |
+| **ObsidianTools** | Vault operations (`search`, `read_note`, `list_notes`) |
+| **Redis Cache** | Cache subtask results for reuse |
+
+---
+
+## CLI Reference
+
+```bash
+# Execute a task
+shad run "Your task" --vault /path/to/vault [options]
+
+Options:
+  --vault, -v       Path to Obsidian vault
+  --max-depth, -d   Maximum recursion depth (default: 3)
+  --max-nodes       Maximum DAG nodes (default: 50)
+  --max-time, -t    Maximum wall time in seconds (default: 300)
+  --no-code-mode    Disable Code Mode (use direct search)
+  --output, -o      Write result to file
+
+# Check status
 shad status <run_id>
 
 # View execution tree
 shad trace tree <run_id>
 
-# Resume a partial run
-shad resume <run_id>
-```
-
-### API Usage
-
-```bash
-# Health check
-curl http://localhost:8000/v1/health
-
-# Execute a run
-curl -X POST http://localhost:8000/v1/run \
-  -H "Content-Type: application/json" \
-  -d '{"goal": "Explain the key concepts in machine learning"}'
-
-# Get run results
-curl http://localhost:8000/v1/run/<run_id>
-
-# Resume a partial run
-curl -X POST http://localhost:8000/v1/run/<run_id>/resume
-```
-
----
-
-## Why Shad Exists
-
-Most AI systems break down when:
-
-* context grows too large
-* reasoning requires multiple passes
-* answers need to be verifiable
-* workflows need to run unattended
-* knowledge must persist and compound over time
-
-Shad is built around a different premise:
-
-> **Long-context reasoning is an inference problem, not a prompting problem.**
-
-Shad combines:
-
-* **Recursive Language Models (RLMs)** for inference-time scaling
-* **OpenNotebookLM** as a persistent memory and retrieval substrate
-* **n8n** for scheduling, fan-out, and workflow orchestration
-* **Caching + verification** to make recursion efficient and safe
-
----
-
-## Core Concepts
-
-### 1. Prompt-as-Environment (RLM)
-
-Shad does not shove massive context into a single prompt.
-
-Instead:
-
-* the "prompt" is treated as an **external environment**
-* the model writes code to inspect, slice, and query that environment
-* the system recursively calls itself on sub-problems
-* results are cached, verified, and recomposed
-
-This allows Shad to reason over **millions of tokens** without exceeding model context windows.
-
----
-
-### 2. Obsidian as Memory OS
-
-Obsidian provides a local-first knowledge substrate accessed via MCP (Model Context Protocol):
-
-* **Vault** - Local Markdown files with full filesystem control
-* **Frontmatter** - YAML metadata for structured queries
-* **Bases** - Database-like views over notes (Obsidian 1.10+)
-* **Full-text search** - Via Local REST API plugin
-
-Shad uses Obsidian for:
-
-* Long-term memory and evidence storage
-* Full-path wikilink citations (`[[Folder/Note]]`)
-* Knowledge reuse across runs
-* Progressive note standardization ("Gardener" pattern)
-
-**Code Mode:** Instead of chat-based tool calling, Shad writes Python scripts that import MCP tools (`obsidian.search()`, `obsidian.read_note()`), execute in a sandboxed container, and return distilled results. This reduces context pollution.
-
----
-
-### 3. Budget Controls
-
-Every run enforces hard limits:
-
-| Budget | Description |
-|--------|-------------|
-| `max_wall_time` | Total execution time |
-| `max_tokens` | Per tier + total token budget |
-| `max_nodes` | Maximum DAG nodes |
-| `max_depth` | Maximum recursion depth |
-| `max_branching_factor` | Maximum children per node |
-
-When budgets are exhausted, Shad returns partial results with:
-- Completed subtrees
-- Missing branches list
-- Suggested next run plan
-- Resume commands
-
----
-
-### 4. Skills (Personalization Layer)
-
-Shad is extended through **Skills** — modular, composable units of domain expertise.
-
-Each skill contains:
-
-```
-Skills/<SkillName>/
-├── SKILL.md        # routing rules + domain knowledge
-├── workflows/      # step-by-step procedures
-├── tools/          # deterministic helpers
-└── tests/          # evals and regressions
-```
-
-Skills allow Shad to:
-
-* behave consistently across runs
-* encode your preferences once
-* improve without rewriting prompts
-
----
-
-### 5. History & Artifacts
-
-Every run produces structured artifacts:
-
-```
-History/Runs/<run_id>/
-├── run.manifest.json      # Inputs, versions, config
-├── events.jsonl           # Node lifecycle events
-├── dag.json               # DAG structure with statuses
-├── metrics/
-│   ├── nodes.jsonl        # Per-node metrics
-│   └── summary.json       # Rollup metrics
-├── replay/
-│   └── manifest.json      # Deterministic replay bundle
-├── final.report.md        # Human-readable output
-└── final.summary.json     # Machine-readable output
-```
-
-Nothing important is lost. Shad compounds.
-
----
-
-## High-Level Architecture
-
-```
-User / n8n
-   |
-   v
-Shad API / CLI (:8000)
-   |
-   +-- Skill Router (GoalSpec → Skill selection)
-   |
-   +-- RLM Engine (recursive DAG execution)
-   |       |
-   |       +-- MCP Client ──────────────────────┐
-   |       |                                    v
-   |       +-- Code Sandbox ──> Obsidian MCP Server
-   |       |   (Docker)             |
-   |       |                        v
-   |       |                    Obsidian Vault
-   |       |                    (Local REST API)
-   |       +-- Redis (:6379)
-   |       +-- LLM Providers (Claude Code CLI)
-   |
-   +-- History/ (inside Obsidian vault)
-   |
-   +-- Voice Renderer (persona layer)
-```
-
-### Obsidian Integration
-
-| Component | Purpose |
-|-----------|---------|
-| **Obsidian Local REST API** | HTTPS API for vault operations |
-| **cyanheads/obsidian-mcp-server** | MCP server bridge |
-| **Shad MCP Client** | Python client for vault access |
-| **Code Sandbox** | Docker container for script execution |
-
----
-
-## Repository Structure
-
-```
-shad/
-├── docker-compose.yml
-├── services/
-│   └── shad-api/              # RLM engine + orchestration API
-│       ├── src/shad/
-│       │   ├── api/           # FastAPI endpoints
-│       │   ├── cache/         # Redis caching
-│       │   ├── cli/           # Click CLI
-│       │   ├── engine/        # RLM + LLM providers
-│       │   ├── history/       # Artifact management
-│       │   ├── integrations/  # n8n integration
-│       │   ├── learnings/     # Learning extraction
-│       │   ├── models/        # Pydantic models
-│       │   ├── mcp/           # Obsidian MCP client
-│       │   ├── notebook/      # Open Notebook client (legacy)
-│       │   ├── sandbox/       # Code execution sandbox
-│       │   ├── skills/        # Skill router
-│       │   ├── utils/         # Configuration
-│       │   ├── verification/  # Validators, HITL
-│       │   └── voice/         # Voice rendering
-│       ├── Dockerfile
-│       └── pyproject.toml
-├── Skills/                    # Personalization modules
-│   └── research/              # Example skill
-├── CORE/                      # Constitution, policies, invariants
-│   ├── invariants.md
-│   ├── invariants.yaml
-│   └── Voices/
-├── History/                   # Generated at runtime (volume)
-├── scripts/
-│   └── deploy.sh
-├── .env.example
-├── CLAUDE.md
-├── PLAN.md
-├── SPEC.md
-└── README.md
-```
-
----
-
-## API Endpoints
-
-### Runs
-| Endpoint | Description |
-|----------|-------------|
-| `POST /v1/run` | Execute a reasoning task |
-| `GET /v1/run/:id` | Get run status and results |
-| `POST /v1/run/:id/resume` | Resume a partial/failed run |
-| `GET /v1/runs` | List recent runs |
-
-### Notebooks (Open Notebook)
-| Endpoint | Description |
-|----------|-------------|
-| `GET /v1/notebooks` | List all notebooks |
-| `GET /v1/notebooks/:id` | Get notebook details |
-| `POST /v1/notebooks` | Create a new notebook |
-| `GET /v1/notebooks/:id/sources` | List sources in a notebook |
-| `POST /v1/notebooks/:id/sources` | Add a source to a notebook |
-| `POST /v1/notebooks/:id/sources/url` | Add source from URL |
-| `POST /v1/notebooks/:id/search` | Search notebook content |
-| `GET /v1/notebooks/:id/notes` | List notes in a notebook |
-| `POST /v1/notebooks/:id/notes` | Create a note |
-
-### Admin & Health
-| Endpoint | Description |
-|----------|-------------|
-| `GET /v1/health` | Health check |
-| `GET /v1/skills` | List available skills |
-| `GET /v1/admin/cache/stats` | Cache statistics |
-| `GET /v1/admin/hitl/queue` | HITL review queue |
-
----
-
-## CLI Commands
-
-```bash
-# Start a run
-shad run "goal text" --notebook <id> --max-depth 3
-
-# Check status
-shad status <run_id>
-
-# Inspect the trace
-shad trace tree <run_id>
+# Inspect specific node
 shad trace node <run_id> <node_id>
 
-# Resume / replay
+# Resume partial run
 shad resume <run_id>
-
-# Debug mode
-shad debug <run_id>
 ```
 
 ---
 
-## Current Status
+## Vault Preparation
 
-Shad is **fully implemented** with all planned features:
+The quality of Shad's output depends on your vault's content. Good vaults include:
 
-### MVP Features (Complete)
-- [x] Infrastructure scaffold (Docker, services)
-- [x] Shad API v0 (`/v1/run`, `/v1/health`)
-- [x] CLI commands (run, status, trace, resume, debug)
-- [x] RLM recursion loop with decomposition
-- [x] Budget controls with partial results
-- [x] History artifacts generation
-- [x] Resume from checkpoint
-- [x] OpenNotebookLM data model
+### For Software Development
+- Framework documentation (converted to markdown)
+- Code examples with explanations
+- Architecture decision records
+- Common patterns and anti-patterns
+- Your team's coding standards
 
-### Post-MVP Features (Complete)
-- [x] Redis caching with hierarchical keys
-- [x] Skill router + skill composition
-- [x] n8n webhook integration
-- [x] Verification loops / validators / entailment checking
-- [x] HITL review queues
-- [x] Novelty detection for pruning
-- [x] Voice rendering system
-- [x] Learnings extraction and promotion pipeline
+### For Research
+- Paper summaries and notes
+- Key quotes and citations
+- Concept explanations
+- Related work connections
 
-### Obsidian Integration (Complete)
-- [x] MCP client for Obsidian vault operations
-- [x] Code Mode execution sandbox (Docker)
-- [x] Hash-based cache validation
-- [x] Full-path wikilink citations
-- [x] Progressive note standardization
-- [x] HITL queue for delete operations
+### For Any Domain
+- Authoritative sources
+- Worked examples
+- Best practices
+- Common pitfalls and solutions
 
-### Legacy Open Notebook Support
-- [x] Open Notebook client (deprecated, use Obsidian)
+### Tips
+- Use consistent frontmatter for better filtering
+- Include code examples with context, not just snippets
+- Link related notes for better discovery
+- Keep notes focused (one concept per note)
 
-**Future work:**
+---
 
-- [ ] Payment/entitlement system
-- [ ] Multi-tenant support
-- [ ] Offline mode with local LLMs
+## Roadmap
+
+See [PLAN.md](PLAN.md) for the full roadmap. Current focus:
+
+- [x] **Phase 1**: Foundation (CLI, API, RLM engine)
+- [x] **Phase 2**: Obsidian integration (Code Mode, per-subtask retrieval)
+- [ ] **Phase 3**: Task-aware decomposition (software architecture, research, etc.)
+- [ ] **Phase 4**: File output mode (generate actual codebases)
+- [ ] **Phase 5**: Verification layer (syntax check, type check, tests)
+- [ ] **Phase 6**: Iterative refinement (error feedback, HITL checkpoints)
 
 ---
 
 ## Philosophy
 
 > Solve a problem once.
-> Encode it as infrastructure.
+> Encode it as knowledge.
 > Never solve it again.
 
-Shad is built to **augment a human**, not replace one.
+Shad compounds your knowledge. Every document you add to your vault makes Shad more capable. The vault is the "how" — patterns, examples, documentation. Shad is the "engine" — decomposition, retrieval, generation, assembly.
+
+Together: complex tasks that learn from your accumulated knowledge.
 
 ---
 
