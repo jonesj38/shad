@@ -1,36 +1,10 @@
 services:
   # =============================================================================
-  # Shad API - Run locally to use Claude Code CLI
-  # Start with: cd services/shad-api && .venv/bin/uvicorn shad.api.main:app --reload
-  # =============================================================================
-  # shad-api:
-  #   build:
-  #     context: ./services/shad-api
-  #     dockerfile: Dockerfile
-  #   ports:
-  #     - "8000:8000"
-  #   environment:
-  #     - REDIS_URL=redis://redis:6379/0
-  #     - OPEN_NOTEBOOK_URL=http://open-notebook:5055
-  #   volumes:
-  #     - ./History:/data/history
-  #     - ./Notebooks:/data/notebooks
-  #     - ./Skills:/data/skills:ro
-  #     - ./CORE:/data/core:ro
-  #   depends_on:
-  #     redis:
-  #       condition: service_healthy
-  #     open-notebook:
-  #       condition: service_started
-  #   restart: unless-stopped
-  #   networks:
-  #     - shad-network
-
-  # =============================================================================
-  # Redis - Subtree caching
+  # Redis - Required for Shad caching
   # =============================================================================
   redis:
     image: redis:7-alpine
+    container_name: shad-redis
     ports:
       - "6379:6379"
     volumes:
@@ -43,50 +17,5 @@ services:
       timeout: 5s
       retries: 3
 
-  # =============================================================================
-  # Open Notebook - Knowledge management & retrieval (OpenNotebookLM)
-  # =============================================================================
-  open-notebook:
-    image: lfnovo/open_notebook:v1-latest
-    ports:
-      - "8502:8502"  # Web UI
-      - "5055:5055"  # REST API
-    volumes:
-      - notebook-data:/app/data
-    environment:
-      - GOOGLE_API_KEY=REDACTED_GOOGLE_API_KEY
-      - OPENAI_API_KEY=REDACTED_OPENAI_API_KEY
-      - SURREAL_URL=ws://surrealdb:8000/rpc
-      - SURREAL_USER=root
-      - SURREAL_PASSWORD=root
-      - SURREAL_NAMESPACE=open_notebook
-      - SURREAL_DATABASE=open_notebook
-      - DATA_DIR=/app/data
-    depends_on:
-      surrealdb:
-        condition: service_started
-    restart: unless-stopped
-
-  # =============================================================================
-  # SurrealDB - Database for Open Notebook
-  # =============================================================================
-  surrealdb:
-    image: surrealdb/surrealdb:v2
-    ports:
-      - "8001:8000"  # Remapped to avoid conflict with shad-api
-    volumes:
-      - surreal-data:/data
-    command: start --user root --pass root --bind 0.0.0.0:8000 file:/data/database.db
-    user: root
-    restart: unless-stopped
-    healthcheck:
-      test: ["CMD", "curl", "-f", "http://localhost:8000/health"]
-      interval: 10s
-      timeout: 5s
-      retries: 5
-      start_period: 10s
-
 volumes:
   redis-data:
-  notebook-data:
-  surreal-data:

@@ -620,6 +620,279 @@ def ingest_github(url: str, vault: str, preset: str) -> None:
     console.print(f"[dim]Files: {result.file_count}[/dim]")
 
 
+# =============================================================================
+# Server Management
+# =============================================================================
+
+
+@cli.group()
+def server() -> None:
+    """Manage Shad server (Redis + API).
+
+    \b
+    Commands:
+        shad server start   - Start Redis and API server
+        shad server stop    - Stop all services
+        shad server status  - Check service status
+    """
+    pass
+
+
+@server.command("start")
+@click.option("--foreground", "-f", is_flag=True, help="Run API in foreground (don't daemonize)")
+def server_start(foreground: bool) -> None:
+    """Start the Shad server (Redis + API)."""
+    import os
+    import subprocess
+    import time
+
+    shad_home = os.environ.get("SHAD_HOME", os.path.expanduser("~/.shad"))
+    repo_dir = os.path.join(shad_home, "repo")
+    pid_file = os.path.join(shad_home, "shad-api.pid")
+
+    # Check if already running
+    if os.path.exists(pid_file):
+        with open(pid_file) as f:
+            pid = int(f.read().strip())
+        try:
+            os.kill(pid, 0)  # Check if process exists
+            console.print(f"[yellow]Shad API already running (PID {pid})[/yellow]")
+            console.print("[dim]Use 'shad server stop' to stop it first[/dim]")
+            return
+        except OSError:
+            os.remove(pid_file)  # Stale PID file
+
+    # Start Redis via Docker Compose
+    console.print("[blue]Starting Redis...[/blue]")
+    compose_file = os.path.join(repo_dir, "docker-compose.yml")
+
+    if os.path.exists(compose_file):
+        result = subprocess.run(
+            ["docker", "compose", "-f", compose_file, "up", "-d", "redis"],
+            capture_output=True,
+            text=True,
+        )
+        if result.returncode != 0:
+            console.print(f"[red]Failed to start Redis: {result.stderr}[/red]")
+            sys.exit(1)
+        console.print("[green]✓ Redis started[/green]")
+    else:
+        console.print("[yellow]docker-compose.yml not found, assuming Redis is already running[/yellow]")
+
+    # Wait for Redis to be ready
+    time.sleep(1)
+
+    # Start API server
+    console.print("[blue]Starting Shad API...[/blue]")
+
+    api_dir = os.path.join(repo_dir, "services", "shad-api")
+    venv_python = os.path.join(shad_home, "venv", "bin", "python")
+
+    if not os.path.exists(venv_python):
+        # Fallback to system python if venv doesn't exist
+        venv_python = sys.executable
+
+    env = os.environ.copy()
+    env["PYTHONPATH"] = os.path.join(api_dir, "src")
+
+    if foreground:
+        # Run in foreground
+        console.print("[dim]Running in foreground. Press Ctrl+C to stop.[/dim]")
+        try:
+            subprocess.run(
+                [venv_python, "-m", "uvicorn", "shad.api.main:app",
+                 "--host", "0.0.0.0", "--port", "8000"],
+                cwd=api_dir,
+                env=env,
+            )
+        except KeyboardInterrupt:
+            console.print("\n[yellow]Stopping...[/yellow]")
+    else:
+        # Run in background
+        log_file = os.path.join(shad_home, "shad-api.log")
+
+        with open(log_file, "a") as log:
+            proc = subprocess.Popen(
+                [venv_python, "-m", "uvicorn", "shad.api.main:app",
+                 "--host", "0.0.0.0", "--port", "8000"],
+                cwd=api_dir,
+                env=env,
+                stdout=log,
+                stderr=log,
+                start_new_session=True,
+            )
+
+        # Save PID
+        with open(pid_file, "w") as f:
+            f.write(str(proc.pid))
+
+        console.print(f"[green]✓ Shad API started (PID {proc.pid})[/green]")
+        console.print(f"[dim]Log file: {log_file}[/dim]")
+        console.print("[dim]API URL: http://localhost:8000[/dim]")
+
+    console.print("\n[green]Shad is ready![/green]")
+    console.print("[dim]Try: shad run \"Hello, Shad!\"[/dim]")
+
+
+@server.command("stop")
+def server_stop() -> None:
+    """Stop the Shad server (Redis + API)."""
+    import os
+    import signal
+    import subprocess
+
+    shad_home = os.environ.get("SHAD_HOME", os.path.expanduser("~/.shad"))
+    repo_dir = os.path.join(shad_home, "repo")
+    pid_file = os.path.join(shad_home, "shad-api.pid")
+
+    stopped_api = False
+    stopped_redis = False
+
+    # Stop API server
+    if os.path.exists(pid_file):
+        with open(pid_file) as f:
+            pid = int(f.read().strip())
+        try:
+            os.kill(pid, signal.SIGTERM)
+            console.print(f"[green]✓ Stopped Shad API (PID {pid})[/green]")
+            stopped_api = True
+        except OSError:
+            console.print("[dim]API was not running[/dim]")
+        os.remove(pid_file)
+    else:
+        console.print("[dim]No API PID file found[/dim]")
+
+    # Stop Redis via Docker Compose
+    compose_file = os.path.join(repo_dir, "docker-compose.yml")
+    if os.path.exists(compose_file):
+        result = subprocess.run(
+            ["docker", "compose", "-f", compose_file, "stop", "redis"],
+            capture_output=True,
+            text=True,
+        )
+        if result.returncode == 0:
+            console.print("[green]✓ Stopped Redis[/green]")
+            stopped_redis = True
+        else:
+            console.print(f"[yellow]Could not stop Redis: {result.stderr}[/yellow]")
+
+    if stopped_api or stopped_redis:
+        console.print("\n[green]Shad server stopped[/green]")
+    else:
+        console.print("\n[dim]Nothing to stop[/dim]")
+
+
+@server.command("status")
+def server_status() -> None:
+    """Check Shad server status."""
+    import os
+    import subprocess
+
+    shad_home = os.environ.get("SHAD_HOME", os.path.expanduser("~/.shad"))
+    pid_file = os.path.join(shad_home, "shad-api.pid")
+
+    table = Table(title="Shad Server Status")
+    table.add_column("Service", style="cyan")
+    table.add_column("Status")
+    table.add_column("Details")
+
+    # Check API
+    api_running = False
+    api_details = ""
+    if os.path.exists(pid_file):
+        with open(pid_file) as f:
+            pid = int(f.read().strip())
+        try:
+            os.kill(pid, 0)
+            api_running = True
+            api_details = f"PID {pid}, http://localhost:8000"
+        except OSError:
+            api_details = "Stale PID file"
+    else:
+        api_details = "Not started"
+
+    table.add_row(
+        "Shad API",
+        "[green]Running[/green]" if api_running else "[red]Stopped[/red]",
+        api_details,
+    )
+
+    # Check Redis
+    redis_running = False
+    redis_details = ""
+    try:
+        result = subprocess.run(
+            ["docker", "ps", "--filter", "name=shad-redis", "--format", "{{.Status}}"],
+            capture_output=True,
+            text=True,
+        )
+        if result.stdout.strip():
+            redis_running = True
+            redis_details = result.stdout.strip()
+        else:
+            redis_details = "Container not running"
+    except Exception as e:
+        redis_details = f"Docker error: {e}"
+
+    table.add_row(
+        "Redis",
+        "[green]Running[/green]" if redis_running else "[red]Stopped[/red]",
+        redis_details,
+    )
+
+    # Check Claude CLI
+    claude_available = False
+    claude_details = ""
+    try:
+        result = subprocess.run(["claude", "--version"], capture_output=True, text=True)
+        if result.returncode == 0:
+            claude_available = True
+            claude_details = result.stdout.strip().split("\n")[0]
+        else:
+            claude_details = "Not configured"
+    except FileNotFoundError:
+        claude_details = "Not installed"
+
+    table.add_row(
+        "Claude CLI",
+        "[green]Available[/green]" if claude_available else "[yellow]Missing[/yellow]",
+        claude_details,
+    )
+
+    console.print(table)
+
+    # Overall status
+    if api_running and redis_running:
+        console.print("\n[green]All services running. Shad is ready![/green]")
+    elif api_running or redis_running:
+        console.print("\n[yellow]Some services are not running.[/yellow]")
+        console.print("[dim]Run 'shad server start' to start all services.[/dim]")
+    else:
+        console.print("\n[red]Shad is not running.[/red]")
+        console.print("[dim]Run 'shad server start' to start.[/dim]")
+
+
+@server.command("logs")
+@click.option("--follow", "-f", is_flag=True, help="Follow log output")
+@click.option("--lines", "-n", default=50, help="Number of lines to show")
+def server_logs(follow: bool, lines: int) -> None:
+    """View Shad API logs."""
+    import os
+    import subprocess
+
+    shad_home = os.environ.get("SHAD_HOME", os.path.expanduser("~/.shad"))
+    log_file = os.path.join(shad_home, "shad-api.log")
+
+    if not os.path.exists(log_file):
+        console.print("[dim]No log file found. Start the server first.[/dim]")
+        return
+
+    if follow:
+        subprocess.run(["tail", "-f", log_file])
+    else:
+        subprocess.run(["tail", "-n", str(lines), log_file])
+
+
 def _display_run_result(run: Run) -> None:
     """Display run result with formatting."""
     status_colors = {
