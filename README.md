@@ -46,20 +46,47 @@ This allows Shad to effectively utilize **gigabytes** of context — not by load
 ## Quick Start
 
 ### Prerequisites
+
 - Python 3.11+
+- Docker (for Redis)
+- [Claude CLI](https://claude.ai/code) installed and authenticated
 - An Obsidian vault with relevant content
+- (Optional) [Obsidian Local REST API](https://github.com/coddingtonbear/obsidian-local-rest-api) plugin
 
 ### Installation
 
 ```bash
-# Clone
-git clone https://github.com/yourusername/shad.git
-cd shad/services/shad-api
+# One-liner install
+curl -fsSL https://raw.githubusercontent.com/jonesj38/shad/main/install.sh | bash
 
-# Install
-python -m venv .venv
-source .venv/bin/activate
-pip install -e .
+# Or clone and run manually
+git clone https://github.com/jonesj38/shad.git
+cd shad
+./install.sh
+```
+
+The installer will:
+- Clone the repo to `~/.shad`
+- Create a Python virtual environment
+- Install dependencies
+- Add `shad` to your PATH
+
+After installation, restart your terminal or run:
+```bash
+source ~/.zshrc  # or ~/.bashrc
+```
+
+### Start the Server
+
+```bash
+# Start Redis and the Shad API
+shad server start
+
+# Check status
+shad server status
+
+# View logs
+shad server logs -f
 ```
 
 ### Basic Usage
@@ -89,6 +116,15 @@ shad run "Build auth system" \
 # Check results
 shad status <run_id>
 shad trace tree <run_id>
+
+# Resume a partial run
+shad resume <run_id>
+```
+
+### Stop the Server
+
+```bash
+shad server stop
 ```
 
 ---
@@ -243,6 +279,18 @@ Shad CLI / API
 
 ## CLI Reference
 
+### Server Management
+
+```bash
+shad server start     # Start Redis + API server
+shad server stop      # Stop all services
+shad server status    # Check service status
+shad server logs      # View API logs
+shad server logs -f   # Follow logs
+```
+
+### Task Execution
+
 ```bash
 # Execute a task
 shad run "Your task" --vault /path/to/vault [options]
@@ -254,12 +302,9 @@ Options:
   --max-nodes       Maximum DAG nodes (default: 50)
   --max-time, -t    Maximum wall time in seconds (default: 300)
   --verify          Verification level (off|basic|build|strict)
-  --profile         Sandbox profile (strict|local|extended)
   --write-files     Write output files to disk
   --output, -o      Output directory (requires --write-files)
   --no-code-mode    Disable Code Mode (use direct search)
-  --no-cache        Bypass cache
-  --no-checkpoints  Disable non-safety checkpoints
 
 # Check status
 shad status <run_id>
@@ -276,10 +321,37 @@ shad resume <run_id> --replay stale
 
 # Export files from completed run
 shad export <run_id> --output ./out
+```
 
-# Ingest external content (Phase 7)
+### Vault Management
+
+```bash
+# Ingest external content into vault
 shad ingest github <url> --preset docs --vault ~/MyVault
-shad vault analyze --llm-audit
+
+# Presets: mirror (all files), docs (documentation only), deep (with code)
+```
+
+---
+
+## Configuration
+
+Copy `.env.example` to `.env` and configure:
+
+```bash
+# Required
+REDIS_URL=redis://localhost:6379/0
+
+# Optional: Obsidian Local REST API
+OBSIDIAN_API_KEY=your_key_here
+OBSIDIAN_BASE_URL=https://127.0.0.1:27124
+OBSIDIAN_VAULT_PATH=/path/to/your/vault
+
+# Optional: Budget defaults
+DEFAULT_MAX_DEPTH=3
+DEFAULT_MAX_NODES=50
+DEFAULT_MAX_WALL_TIME=300
+DEFAULT_MAX_TOKENS=100000
 ```
 
 ---
@@ -315,19 +387,19 @@ The quality of Shad's output depends on your vault's content. Good vaults includ
 
 ---
 
-## Roadmap
+## Project Status
 
-See [PLAN.md](PLAN.md) for the full roadmap. Current focus:
+All phases complete:
 
-- [x] **Phase 1**: Foundation (CLI, API, RLM engine)
+- [x] **Phase 1**: Foundation (CLI, API, RLM engine, Redis caching)
 - [x] **Phase 2**: Obsidian integration (Code Mode, per-subtask retrieval)
-- [ ] **Phase 3**: Task-aware decomposition (strategy skeletons, soft deps)
-- [ ] **Phase 4**: File output mode (two-pass imports, contracts-first)
-- [ ] **Phase 5**: Verification layer (progressive strictness, repair loops)
-- [ ] **Phase 6**: Iterative refinement (HITL checkpoints, delta resume)
-- [ ] **Phase 7**: Vault curation tools (ingestion, gap detection)
+- [x] **Phase 3**: Task-aware decomposition (strategy skeletons, soft dependencies)
+- [x] **Phase 4**: File output mode (two-pass imports, contracts-first)
+- [x] **Phase 5**: Verification layer (progressive strictness, repair loops)
+- [x] **Phase 6**: Iterative refinement (HITL checkpoints, delta resume)
+- [x] **Phase 7**: Vault curation tools (ingestion, gap detection)
 
-See [SPEC.md](SPEC.md) for detailed technical specification and design decisions.
+See [SPEC.md](SPEC.md) for detailed technical specification and [PLAN.md](PLAN.md) for implementation details.
 
 ---
 
@@ -342,6 +414,10 @@ Shad compounds your knowledge. Every document you add to your vault makes Shad m
 Together: complex tasks that learn from your accumulated knowledge.
 
 ---
+
+## Contributing
+
+Contributions welcome! Please read the [SPEC.md](SPEC.md) to understand the architecture before submitting PRs.
 
 ## License
 
