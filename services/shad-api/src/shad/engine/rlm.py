@@ -15,6 +15,7 @@ Per OBSIDIAN_PIVOT.md Section 3: Code Execution (The RLM Pattern)
 
 from __future__ import annotations
 
+import asyncio
 import hashlib
 import logging
 from datetime import UTC, datetime
@@ -494,12 +495,12 @@ class RLMEngine:
             await self._execute_leaf(run, node, context)
             return
 
-        # Create child nodes with dependency tracking
-        child_results: list[tuple[str, str]] = []
+        # Phase 1: Create all child nodes and build dependency graph
         stage_to_node: dict[str, str] = {}  # stage_name -> node_id
+        node_to_stage: dict[str, str] = {}  # node_id -> stage_name
+        pending_nodes: dict[str, tuple[str, list[str], list[str]]] = {}  # node_id -> (task, hard_deps, soft_deps)
 
         for stage_name, task, hard_deps, soft_deps in subtasks:
-            # Check budgets
             self._check_budgets(run, node)
 
             child = DAGNode(
@@ -515,46 +516,89 @@ class RLMEngine:
             run.add_node(child)
             node.children.append(child.node_id)
             stage_to_node[stage_name] = child.node_id
+            node_to_stage[child.node_id] = stage_name
+            pending_nodes[child.node_id] = (task, hard_deps, soft_deps)
 
-            # Wait for hard dependencies to complete
-            # (simple sequential execution for now - TODO: parallel execution with dep tracking)
+        # Phase 2: Execute nodes in parallel waves based on dependency satisfaction
+        completed_stages: set[str] = set()
+        child_results: list[tuple[str, str]] = []
 
-            # Inject context from soft dependencies (Phase 3)
-            subtask_context = context  # Start with parent context
-            if soft_deps:
-                soft_dep_context = self.context_manager.inject_soft_dep_context(
-                    soft_deps=soft_deps,
-                    task=task,
-                )
-                if soft_dep_context:
-                    subtask_context = f"{soft_dep_context}\n\n{context}"
-                    logger.info(f"[CONTEXT] Injected {len(soft_dep_context)} chars from soft deps: {soft_deps}")
+        while pending_nodes:
+            # Find nodes whose hard dependencies are all satisfied
+            ready_nodes: list[str] = []
+            for node_id, (_task, hard_deps, _soft_deps) in pending_nodes.items():
+                if all(dep in completed_stages for dep in hard_deps):
+                    ready_nodes.append(node_id)
 
-            # Retrieve subtask-specific context from vault
-            if self.mcp_client:
-                fresh_context = await self._retrieve_vault_context(task, limit=5)
-                if fresh_context:
-                    logger.info(f"[CONTEXT] Retrieved {len(fresh_context)} chars for subtask: {task[:50]}...")
-                    subtask_context = f"{subtask_context}\n\n{fresh_context}"
+            if not ready_nodes:
+                # No nodes ready - circular dependency or all remaining have unmet deps
+                logger.warning("[PARALLEL] No ready nodes - possible circular dependency")
+                break
 
-            # Execute child with its own context
-            await self._execute_node(run, child, subtask_context)
+            logger.info(f"[PARALLEL] Executing {len(ready_nodes)} nodes in parallel")
 
-            # Create context packet for completed node (Phase 3)
-            if child.status == NodeStatus.SUCCEEDED and child.result:
-                packet = self.context_manager.create_packet(
-                    node_id=child.node_id,
-                    stage_name=stage_name,
-                    result=child.result,
-                    artifacts=child.metadata.get("artifacts", []),
-                )
-                self.context_manager.store.add(packet)
-                logger.info(f"[CONTEXT_PACKET] Created packet for {stage_name}: {len(packet.keywords)} keywords")
+            # Execute ready nodes in parallel
+            async def execute_single_node(nid: str) -> tuple[str, DAGNode]:
+                """Execute a single node and return (node_id, node)."""
+                child = run.get_node(nid)
+                if not child:
+                    return (nid, child)  # type: ignore
 
-                child_results.append((task, child.result))
+                task, hard_deps, soft_deps = pending_nodes[nid]
 
-            # Update token count
-            run.total_tokens += child.tokens_used
+                # Inject context from soft dependencies
+                subtask_context = context
+                if soft_deps:
+                    soft_dep_context = self.context_manager.inject_soft_dep_context(
+                        soft_deps=soft_deps,
+                        task=task,
+                    )
+                    if soft_dep_context:
+                        subtask_context = f"{soft_dep_context}\n\n{context}"
+                        logger.info(f"[CONTEXT] Injected {len(soft_dep_context)} chars from soft deps: {soft_deps}")
+
+                # Retrieve subtask-specific context from vault
+                if self.mcp_client:
+                    fresh_context = await self._retrieve_vault_context(task, limit=5)
+                    if fresh_context:
+                        logger.info(f"[CONTEXT] Retrieved {len(fresh_context)} chars for subtask: {task[:50]}...")
+                        subtask_context = f"{subtask_context}\n\n{fresh_context}"
+
+                # Execute the node
+                await self._execute_node(run, child, subtask_context)
+                return (nid, child)
+
+            # Run all ready nodes in parallel
+            results = await asyncio.gather(*[execute_single_node(nid) for nid in ready_nodes])
+
+            # Process results
+            for node_id, child in results:
+                if child is None:
+                    continue
+
+                stage_name = node_to_stage[node_id]
+
+                # Create context packet for completed node
+                if child.status == NodeStatus.SUCCEEDED and child.result:
+                    packet = self.context_manager.create_packet(
+                        node_id=child.node_id,
+                        stage_name=stage_name,
+                        result=child.result,
+                        artifacts=child.metadata.get("artifacts", []),
+                    )
+                    self.context_manager.store.add(packet)
+                    logger.info(f"[CONTEXT_PACKET] Created packet for {stage_name}: {len(packet.keywords)} keywords")
+
+                    child_results.append((child.task, child.result))
+
+                # Update token count
+                run.total_tokens += child.tokens_used
+
+                # Mark stage as completed
+                completed_stages.add(stage_name)
+
+                # Remove from pending
+                del pending_nodes[node_id]
 
         # Synthesize results
         if child_results:
