@@ -1,9 +1,0 @@
-{
-  "total_nodes": 1,
-  "completed_nodes": 1,
-  "failed_nodes": 0,
-  "max_depth_reached": 0,
-  "total_tokens": 1062,
-  "cache_hits": 0,
-  "total_duration_ms": 26492
-}
