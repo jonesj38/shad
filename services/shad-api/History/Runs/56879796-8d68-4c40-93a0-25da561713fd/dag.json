@@ -1,0 +1,21 @@
+{
+  "root_node_id": "4046514d",
+  "nodes": [
+    {
+      "node_id": "4046514d",
+      "parent_id": null,
+      "depth": 0,
+      "task": "What classes and methods does the BSV ts-sdk provide for transaction signing?",
+      "status": "succeeded",
+      "result": "Based on my knowledge of the BSV TypeScript SDK (ts-sdk), here are the key classes and methods for transaction signing:\n\n## Core Signing Classes\n\n### **Transaction**\nThe main class for building and signing transactions:\n- `sign()` - Signs all inputs using provided private keys\n- `addInput()` / `addOutput()` - Build the transaction structure\n\n### **PrivateKey**\nUsed for cryptographic signing operations:\n- `sign(message)` - Signs a message/hash with the private key\n- `toPublicKey()` - Derives the corresponding public key\n- `fromWif(wifString)` - Creates from Wallet Import Format\n\n### **PublicKey**\nFor signature verification:\n- `verify(message, signature)` - Verifies a signature against a message\n\n### **Signature**\nRepresents ECDSA signatures:\n- `toDER()` - Serializes to DER format\n- `fromDER()` - Parses from DER format\n\n### **TransactionSignature**\nSpecialized for transaction input signing:\n- Combines the signature with sighash flags (e.g., `SIGHASH_ALL`, `SIGHASH_FORKID`)\n\n## Unlocking Script Templates\n\nThe SDK uses a template pattern for different script types:\n\n### **P2PKH (Pay-to-Public-Key-Hash)**\n- `UnlockingScript.fromP2PKH(privateKey)` - Creates standard unlocking script\n\n### **Custom Script Signing**\n- `Script.fromASM()` / `Script.fromHex()` - For custom locking/unlocking scripts\n\n## Sighash Flags\nConstants for controlling what parts of the transaction are signed:\n- `Signature.SIGHASH_ALL` - Sign all inputs and outputs\n- `Signature.SIGHASH_NONE` - Sign inputs only\n- `Signature.SIGHASH_SINGLE` - Sign corresponding output only\n- `Signature.SIGHASH_ANYONECANPAY` - Only sign the current input\n- `Signature.SIGHASH_FORKID` - BSV-specific fork ID (required for BSV)\n\n## Typical Signing Flow\n\n```typescript\nimport { PrivateKey, Transaction, P2PKH } from '@bsv/sdk'\n\nconst privateKey = PrivateKey.fromWif('...')\nconst tx = new Transaction()\ntx.addInput({\n  sourceTXID: '...',\n  sourceOutputIndex: 0,\n  unlockingScriptTemplate: new P2PKH().unlock(privateKey)\n})\ntx.addOutput({\n  lockingScript: new P2PKH().lock(address),\n  satoshis: 1000\n})\nawait tx.sign()\n```\n\nFor the most current and detailed API documentation, I recommend checking the official BSV ts-sdk repository at https://github.com/bitcoin-sv/ts-sdk or the official documentation site, as the SDK may have evolved since my knowledge cutoff.",
+      "children": [],
+      "cache_key": "8f9ff20eb0e28e2e",
+      "cache_hit": false,
+      "tokens_used": 598,
+      "start_time": "2026-01-14T23:58:55.348433",
+      "end_time": "2026-01-14T23:59:16.163685",
+      "error": null,
+      "stop_reason": null
+    }
+  ]
+}

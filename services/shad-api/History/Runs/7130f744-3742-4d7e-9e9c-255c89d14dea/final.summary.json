@@ -1,0 +1,22 @@
+{
+  "run_id": "7130f744-3742-4d7e-9e9c-255c89d14dea",
+  "status": "failed",
+  "goal": "How do we use the BSV ts-sdk library to build a BRC-100 compliant transaction?",
+  "result": null,
+  "citations": [],
+  "stop_reason": null,
+  "error": null,
+  "metrics": {
+    "total_nodes": 1,
+    "completed_nodes": 0,
+    "failed_nodes": 0,
+    "total_tokens": 0
+  },
+  "suggested_next_actions": [
+    {
+      "action": "retry",
+      "command": "shad run \"How do we use the BSV ts-sdk library to build a BRC-100 compliant transaction?\" --max-depth 2",
+      "reason": "previous run failed"
+    }
+  ]
+}

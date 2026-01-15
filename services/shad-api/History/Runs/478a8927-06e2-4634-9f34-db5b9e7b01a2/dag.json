@@ -1,0 +1,21 @@
+{
+  "root_node_id": "ced0e195",
+  "nodes": [
+    {
+      "node_id": "ced0e195",
+      "parent_id": null,
+      "depth": 0,
+      "task": "Show me how to create a P2PKH transaction using the BSV ts-sdk",
+      "status": "succeeded",
+      "result": "# Creating a P2PKH Transaction with BSV ts-sdk\n\nBased on the BSV blockchain TypeScript SDK structure, here's how to create a Pay-to-Public-Key-Hash (P2PKH) transaction:\n\n## Basic P2PKH Transaction\n\n```typescript\nimport { PrivateKey, P2PKH, Transaction } from '@bsv/sdk'\n\n// 1. Create or import your private key\nconst privateKey = PrivateKey.fromWif('your-WIF-private-key')\n// Or generate a new one:\n// const privateKey = PrivateKey.fromRandom()\n\n// 2. Get the public key and address\nconst publicKey = privateKey.toPublicKey()\n\n// 3. Create a P2PKH template\nconst p2pkh = new P2PKH()\n\n// 4. Build the transaction\nconst tx = new Transaction()\n\n// 5. Add input (spending from a previous UTXO)\ntx.addInput({\n  sourceTXID: 'previous-transaction-id-hex',\n  sourceOutputIndex: 0,\n  unlockingScriptTemplate: p2pkh.unlock(privateKey)\n})\n\n// 6. Add output (sending to a recipient)\ntx.addOutput({\n  lockingScript: p2pkh.lock(recipientPublicKeyHash),\n  satoshis: 1000\n})\n\n// 7. Sign and finalize the transaction\nawait tx.sign()\n\n// 8. Get the raw transaction hex for broadcasting\nconst rawTx = tx.toHex()\n```\n\n## Complete Example with UTXO\n\n```typescript\nimport { PrivateKey, P2PKH, Transaction, Hash } from '@bsv/sdk'\n\nasync function createP2PKHTransaction() {\n  // Sender's private key\n  const senderPrivateKey = PrivateKey.fromWif('L1...')\n  const senderPublicKey = senderPrivateKey.toPublicKey()\n  \n  // Recipient's public key hash (address)\n  const recipientPubKeyHash = Hash.hash160(recipientPublicKey.toBytes())\n  \n  // P2PKH template\n  const p2pkh = new P2PKH()\n  \n  // Create transaction\n  const tx = new Transaction()\n  \n  // Add input from UTXO you want to spend\n  tx.addInput({\n    sourceTXID: 'abc123...', // Previous tx ID\n    sourceOutputIndex: 0,    // Output index in previous tx\n    unlockingScriptTemplate: p2pkh.unlock(senderPrivateKey),\n    sequence: 0xffffffff\n  })\n  \n  // Add output to recipient\n  tx.addOutput({\n    lockingScript: p2pkh.lock(recipientPubKeyHash),\n    satoshis: 5000\n  })\n  \n  // Add change output back to sender (optional)\n  tx.addOutput({\n    lockingScript: p2pkh.lock(Hash.hash160(senderPublicKey.toBytes())),\n    satoshis: 4500 // Original amount minus payment minus fee\n  })\n  \n  // Sign the transaction\n  await tx.sign()\n  \n  return tx\n}\n```\n\n## Key Components\n\n| Component | File Location | Purpose |\n|-----------|---------------|---------|\n| `P2PKH` | `src/script/templates/P2PKH.ts` | P2PKH locking/unlocking template |\n| `PrivateKey` | `src/primitives/PrivateKey.ts` | Key management |\n| `Transaction` | `src/transaction/` | Transaction building |\n\n## Broadcasting\n\nAfter creating the transaction, broadcast it using the ARC broadcaster:\n\n```typescript\nimport { ARC } from '@bsv/sdk'\n\nconst broadcaster = new ARC('https://arc.taal.com')\nconst result = await broadcaster.broadcast(tx)\n```\n\n**Source**: [[github.com_bsv-blockchain_ts-sdk]] - The SDK provides P2PKH templates in `src/script/templates/P2PKH.ts` along with transaction building utilities in the `transaction` module and cryptographic primitives in `src/primitives/`.",
+      "children": [],
+      "cache_key": "324a409d23583fbc",
+      "cache_hit": false,
+      "tokens_used": 732,
+      "start_time": "2026-01-15T00:03:35.444743",
+      "end_time": "2026-01-15T00:03:52.903225",
+      "error": null,
+      "stop_reason": null
+    }
+  ]
+}

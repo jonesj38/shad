@@ -1,0 +1,16 @@
+{
+  "run_id": "b6fb7428-4ea7-4dac-a1c5-609c8ab5fb89",
+  "status": "complete",
+  "goal": "How do we use the BSV ts-sdk library to build a BRC-100 compliant transaction?",
+  "result": "I don't have web access enabled to fetch the latest documentation. However, I can provide you with guidance based on my knowledge of the BSV ts-sdk and BRC-100 standard.\n\n## Building a BRC-100 Compliant Transaction with BSV ts-sdk\n\n**BRC-100** defines the standard transaction format for the BSV ecosystem, focusing on proper input/output construction, signature handling, and transaction serialization.\n\n### Basic Transaction Building Pattern\n\n```typescript\nimport { \n  Transaction, \n  PrivateKey, \n  P2PKH,\n  SatoshisPerKilobyte\n} from '@bsv/sdk'\n\n// 1. Create a new transaction\nconst tx = new Transaction()\n\n// 2. Add inputs (UTXOs you're spending)\ntx.addInput({\n  sourceTXID: 'previous_txid_hex',\n  sourceOutputIndex: 0,\n  sourceSatoshis: 10000,\n  unlockingScriptTemplate: new P2PKH().unlock(privateKey)\n})\n\n// 3. Add outputs\ntx.addOutput({\n  lockingScript: new P2PKH().lock(recipientAddress),\n  satoshis: 5000\n})\n\n// 4. Set fee model (BRC-100 compliant fee calculation)\ntx.fee(new SatoshisPerKilobyte(1)) // 1 sat/kb is standard\n\n// 5. Sign the transaction\nawait tx.sign()\n\n// 6. Serialize for broadcast\nconst rawTx = tx.toHex()\n```\n\n### Key BRC-100 Compliance Points\n\n1. **Proper TXID Format**: Use 64-character lowercase hex strings for transaction IDs\n2. **Correct Satoshi Values**: Use integer satoshis, not decimal BSV\n3. **Standard Fee Calculation**: Use `SatoshisPerKilobyte` fee model\n4. **Canonical Signatures**: The SDK handles low-S signatures automatically\n5. **Input Validation**: Always specify `sourceSatoshis` for proper fee calculation\n\n### With Source Transaction Lookup\n\n```typescript\nimport { Transaction, WhatsOnChain } from '@bsv/sdk'\n\n// Use a chain tracker for automatic UTXO resolution\nconst chainTracker = new WhatsOnChain('main')\n\nconst tx = new Transaction()\nawait tx.addInput({\n  sourceTXID: 'txid_here',\n  sourceOutputIndex: 0,\n  unlockingScriptTemplate: new P2PKH().unlock(privateKey)\n}, chainTracker) // Automatically fetches source tx details\n\n// ... add outputs and sign\n```\n\n### Resources\n\nFor the latest API details, check:\n- **GitHub**: `github.com/bitcoin-sv/ts-sdk`\n- **NPM**: `@bsv/sdk`\n- **BRC Specs**: `github.com/bitcoin-sv/BRCs` (contains all BRC standards)\n\nWould you like me to elaborate on any specific aspect, such as OP_RETURN data outputs, multi-signature transactions, or custom locking scripts?",
+  "citations": [],
+  "stop_reason": null,
+  "error": null,
+  "metrics": {
+    "total_nodes": 1,
+    "completed_nodes": 0,
+    "failed_nodes": 0,
+    "total_tokens": 0
+  },
+  "suggested_next_actions": []
+}

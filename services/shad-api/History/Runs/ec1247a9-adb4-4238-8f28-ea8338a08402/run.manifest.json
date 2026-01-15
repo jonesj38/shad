@@ -1,0 +1,24 @@
+{
+  "run_id": "ec1247a9-adb4-4238-8f28-ea8338a08402",
+  "version": "1.0",
+  "config": {
+    "goal": "Show me how to create a P2PKH transaction using the BSV ts-sdk",
+    "vault_path": "/home/jake/Desktop/test_vault",
+    "budget": {
+      "max_wall_time": 300,
+      "max_tokens": 100000,
+      "max_nodes": 5,
+      "max_depth": 1,
+      "max_branching_factor": 7
+    },
+    "voice": null
+  },
+  "status": "complete",
+  "created_at": "2026-01-15T00:02:44.430715",
+  "started_at": "2026-01-15T00:02:44.430827",
+  "completed_at": "2026-01-15T00:03:17.680462",
+  "total_tokens": 886,
+  "stop_reason": null,
+  "error": null,
+  "final_result": "I'll provide you with a comprehensive example of creating a P2PKH (Pay-to-Public-Key-Hash) transaction using the BSV TypeScript SDK based on my knowledge of the library.\n\n## Creating a P2PKH Transaction with BSV ts-sdk\n\n```typescript\nimport {\n  PrivateKey,\n  Transaction,\n  P2PKH,\n  TransactionInput,\n  TransactionOutput,\n  SatoshisPerKilobyte\n} from '@bsv/sdk'\n\n// 1. Create or import your private key\nconst privateKey = PrivateKey.fromWif('your-WIF-private-key-here')\n// Or generate a new one: const privateKey = PrivateKey.fromRandom()\n\n// 2. Get the public key and address\nconst publicKey = privateKey.toPublicKey()\nconst address = publicKey.toAddress()\n\n// 3. Define your source transaction (UTXO you're spending from)\nconst sourceTransaction = Transaction.fromHex('raw-hex-of-source-tx')\nconst sourceOutputIndex = 0 // The output index you're spending\n\n// 4. Create the P2PKH unlock template\nconst p2pkh = new P2PKH()\n\n// 5. Build the transaction\nconst tx = new Transaction()\n\n// Add input (the UTXO you're spending)\ntx.addInput({\n  sourceTransaction,\n  sourceOutputIndex,\n  unlockingScriptTemplate: p2pkh.unlock(privateKey),\n  sequence: 0xffffffff\n})\n\n// Add output(s) - sending to another P2PKH address\nconst recipientAddress = '1RecipientAddressHere...'\ntx.addOutput({\n  lockingScript: p2pkh.lock(recipientAddress),\n  satoshis: 10000 // Amount to send\n})\n\n// 6. Add change output (optional - handled by fee model)\ntx.addOutput({\n  lockingScript: p2pkh.lock(address), // Send change back to yourself\n  change: true // Mark as change output\n})\n\n// 7. Set fee model and sign\nawait tx.fee(new SatoshisPerKilobyte(1)) // 1 sat/kb fee rate\nawait tx.sign()\n\n// 8. Get the raw transaction hex for broadcast\nconst rawTx = tx.toHex()\nconsole.log('Raw transaction:', rawTx)\n\n// 9. Broadcast (using your preferred method)\n// await tx.broadcast()\n```\n\n## Simplified Version with `createTransaction`\n\nThe SDK also provides a higher-level helper:\n\n```typescript\nimport { PrivateKey, P2PKH, Transaction, SatoshisPerKilobyte } from '@bsv/sdk'\n\nasync function sendBSV(\n  privateKeyWif: string,\n  recipientAddress: string,\n  amountSatoshis: number,\n  utxo: { txid: string; vout: number; satoshis: number; script: string }\n) {\n  const privateKey = PrivateKey.fromWif(privateKeyWif)\n  const p2pkh = new P2PKH()\n  \n  const tx = new Transaction()\n  \n  // Add the UTXO as input\n  tx.addInput({\n    sourceTXID: utxo.txid,\n    sourceOutputIndex: utxo.vout,\n    sourceSatoshis: utxo.satoshis,\n    lockingScript: utxo.script,\n    unlockingScriptTemplate: p2pkh.unlock(privateKey)\n  })\n  \n  // Add recipient output\n  tx.addOutput({\n    lockingScript: p2pkh.lock(recipientAddress),\n    satoshis: amountSatoshis\n  })\n  \n  // Add change output back to sender\n  tx.addOutput({\n    lockingScript: p2pkh.lock(privateKey.toPublicKey().toAddress()),\n    change: true\n  })\n  \n  await tx.fee(new SatoshisPerKilobyte(1))\n  await tx.sign()\n  \n  return tx.toHex()\n}\n```\n\n## Key Points\n\n1. **P2PKH Class**: The `P2PKH` class provides both `lock()` (for creating outputs) and `unlock()` (for spending inputs) templates\n\n2. **Fee Calculation**: Use `SatoshisPerKilobyte` to automatically calculate fees based on transaction size\n\n3. **Change Output**: Mark one output with `change: true` to automatically calculate the change amount\n\n4. **Signing**: Call `tx.sign()` after adding all inputs/outputs - the unlock templates handle signature generation\n\n5. **Source Transaction**: You need either the full source transaction (`sourceTransaction`) or the TXID + script + satoshis (`sourceTXID`, `lockingScript`, `sourceSatoshis`)\n\nFor the latest API details, check the official documentation at https://github.com/bitcoin-sv/ts-sdk."
+}

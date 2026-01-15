@@ -1,0 +1,19 @@
+{
+  "run_id": "56879796-8d68-4c40-93a0-25da561713fd",
+  "config": {
+    "goal": "What classes and methods does the BSV ts-sdk provide for transaction signing?",
+    "vault_path": "/home/jake/Desktop/test_vault",
+    "budget": {
+      "max_wall_time": 300,
+      "max_tokens": 100000,
+      "max_nodes": 5,
+      "max_depth": 1,
+      "max_branching_factor": 7
+    },
+    "voice": null
+  },
+  "node_count": 1,
+  "cache_keys": [
+    "8f9ff20eb0e28e2e"
+  ]
+}

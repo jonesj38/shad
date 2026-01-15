@@ -1,0 +1,24 @@
+{
+  "run_id": "7130f744-3742-4d7e-9e9c-255c89d14dea",
+  "version": "1.0",
+  "config": {
+    "goal": "How do we use the BSV ts-sdk library to build a BRC-100 compliant transaction?",
+    "vault_path": "/home/jake/Desktop/test_vault",
+    "budget": {
+      "max_wall_time": 300,
+      "max_tokens": 100000,
+      "max_nodes": 5,
+      "max_depth": 1,
+      "max_branching_factor": 7
+    },
+    "voice": null
+  },
+  "status": "failed",
+  "created_at": "2026-01-14T23:44:37.562566",
+  "started_at": "2026-01-14T23:44:37.562579",
+  "completed_at": "2026-01-14T23:44:37.787071",
+  "total_tokens": 0,
+  "stop_reason": null,
+  "error": null,
+  "final_result": null
+}

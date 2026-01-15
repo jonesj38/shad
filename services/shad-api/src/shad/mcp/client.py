@@ -387,7 +387,16 @@ class ObsidianMCPClient:
             List of SearchResult objects
         """
         results: list[SearchResult] = []
+
+        # Split query into words for flexible matching
         query_lower = query.lower()
+        # Filter out common stop words and short words
+        stop_words = {'the', 'a', 'an', 'is', 'are', 'was', 'were', 'be', 'been',
+                      'do', 'does', 'did', 'have', 'has', 'had', 'to', 'of', 'in',
+                      'for', 'on', 'with', 'at', 'by', 'from', 'we', 'how', 'what',
+                      'which', 'who', 'when', 'where', 'why', 'and', 'or', 'not'}
+        query_words = [w for w in re.split(r'\W+', query_lower)
+                       if w and len(w) > 2 and w not in stop_words]
 
         try:
             for md_file in self.vault_path.rglob("*.md"):
@@ -412,17 +421,25 @@ class ObsidianMCPClient:
                     if type_filter and metadata.note_type != type_filter:
                         continue
 
-                    # Simple text matching
-                    if query_lower in content.lower():
-                        # Find matched line for context
+                    content_lower = content.lower()
+
+                    # Count how many query words appear in content
+                    matched_words = [w for w in query_words if w in content_lower]
+
+                    if matched_words:
+                        # Find matched line for context (use first matched word)
                         matched_line = None
                         for line in content.split("\n"):
-                            if query_lower in line.lower():
+                            line_lower = line.lower()
+                            if any(w in line_lower for w in matched_words):
                                 matched_line = line.strip()
                                 break
 
-                        # Calculate simple relevance score
-                        score = content.lower().count(query_lower) / len(content) * 100
+                        # Score based on percentage of query words matched
+                        word_match_ratio = len(matched_words) / len(query_words) if query_words else 0
+                        # Bonus for word frequency
+                        freq_score = sum(content_lower.count(w) for w in matched_words) / len(content)
+                        score = (word_match_ratio * 0.7) + (min(freq_score * 100, 0.3))
 
                         results.append(SearchResult(
                             path=relative_path,
@@ -431,9 +448,6 @@ class ObsidianMCPClient:
                             matched_line=matched_line,
                             metadata=metadata,
                         ))
-
-                        if len(results) >= limit:
-                            break
 
                 except Exception as e:
                     logger.debug(f"Error reading file {md_file}: {e}")

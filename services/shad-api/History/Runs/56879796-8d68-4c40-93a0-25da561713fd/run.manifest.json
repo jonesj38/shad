@@ -1,0 +1,24 @@
+{
+  "run_id": "56879796-8d68-4c40-93a0-25da561713fd",
+  "version": "1.0",
+  "config": {
+    "goal": "What classes and methods does the BSV ts-sdk provide for transaction signing?",
+    "vault_path": "/home/jake/Desktop/test_vault",
+    "budget": {
+      "max_wall_time": 300,
+      "max_tokens": 100000,
+      "max_nodes": 5,
+      "max_depth": 1,
+      "max_branching_factor": 7
+    },
+    "voice": null
+  },
+  "status": "complete",
+  "created_at": "2026-01-14T23:58:55.062605",
+  "started_at": "2026-01-14T23:58:55.062630",
+  "completed_at": "2026-01-14T23:59:16.163731",
+  "total_tokens": 598,
+  "stop_reason": null,
+  "error": null,
+  "final_result": "Based on my knowledge of the BSV TypeScript SDK (ts-sdk), here are the key classes and methods for transaction signing:\n\n## Core Signing Classes\n\n### **Transaction**\nThe main class for building and signing transactions:\n- `sign()` - Signs all inputs using provided private keys\n- `addInput()` / `addOutput()` - Build the transaction structure\n\n### **PrivateKey**\nUsed for cryptographic signing operations:\n- `sign(message)` - Signs a message/hash with the private key\n- `toPublicKey()` - Derives the corresponding public key\n- `fromWif(wifString)` - Creates from Wallet Import Format\n\n### **PublicKey**\nFor signature verification:\n- `verify(message, signature)` - Verifies a signature against a message\n\n### **Signature**\nRepresents ECDSA signatures:\n- `toDER()` - Serializes to DER format\n- `fromDER()` - Parses from DER format\n\n### **TransactionSignature**\nSpecialized for transaction input signing:\n- Combines the signature with sighash flags (e.g., `SIGHASH_ALL`, `SIGHASH_FORKID`)\n\n## Unlocking Script Templates\n\nThe SDK uses a template pattern for different script types:\n\n### **P2PKH (Pay-to-Public-Key-Hash)**\n- `UnlockingScript.fromP2PKH(privateKey)` - Creates standard unlocking script\n\n### **Custom Script Signing**\n- `Script.fromASM()` / `Script.fromHex()` - For custom locking/unlocking scripts\n\n## Sighash Flags\nConstants for controlling what parts of the transaction are signed:\n- `Signature.SIGHASH_ALL` - Sign all inputs and outputs\n- `Signature.SIGHASH_NONE` - Sign inputs only\n- `Signature.SIGHASH_SINGLE` - Sign corresponding output only\n- `Signature.SIGHASH_ANYONECANPAY` - Only sign the current input\n- `Signature.SIGHASH_FORKID` - BSV-specific fork ID (required for BSV)\n\n## Typical Signing Flow\n\n```typescript\nimport { PrivateKey, Transaction, P2PKH } from '@bsv/sdk'\n\nconst privateKey = PrivateKey.fromWif('...')\nconst tx = new Transaction()\ntx.addInput({\n  sourceTXID: '...',\n  sourceOutputIndex: 0,\n  unlockingScriptTemplate: new P2PKH().unlock(privateKey)\n})\ntx.addOutput({\n  lockingScript: new P2PKH().lock(address),\n  satoshis: 1000\n})\nawait tx.sign()\n```\n\nFor the most current and detailed API documentation, I recommend checking the official BSV ts-sdk repository at https://github.com/bitcoin-sv/ts-sdk or the official documentation site, as the SDK may have evolved since my knowledge cutoff."
+}

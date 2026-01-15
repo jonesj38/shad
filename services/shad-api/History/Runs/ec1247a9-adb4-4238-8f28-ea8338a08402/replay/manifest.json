@@ -1,0 +1,19 @@
+{
+  "run_id": "ec1247a9-adb4-4238-8f28-ea8338a08402",
+  "config": {
+    "goal": "Show me how to create a P2PKH transaction using the BSV ts-sdk",
+    "vault_path": "/home/jake/Desktop/test_vault",
+    "budget": {
+      "max_wall_time": 300,
+      "max_tokens": 100000,
+      "max_nodes": 5,
+      "max_depth": 1,
+      "max_branching_factor": 7
+    },
+    "voice": null
+  },
+  "node_count": 1,
+  "cache_keys": [
+    "7d0450792ef188da"
+  ]
+}
