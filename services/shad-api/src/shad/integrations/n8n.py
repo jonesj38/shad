@@ -18,7 +18,7 @@ from __future__ import annotations
 
 import logging
 from dataclasses import dataclass, field
-from datetime import datetime
+from datetime import UTC, datetime
 from enum import Enum
 from typing import Any
 
@@ -61,7 +61,7 @@ class WebhookPayload(BaseModel):
         return cls(
             event=event,
             run_id=run.run_id,
-            timestamp=datetime.utcnow().isoformat(),
+            timestamp=datetime.now(UTC).isoformat(),
             status=run.status.value if hasattr(run.status, "value") else str(run.status),
             goal=run.config.goal,
             result=run.final_result,

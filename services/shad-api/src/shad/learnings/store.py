@@ -12,7 +12,7 @@ from __future__ import annotations
 import json
 import logging
 from dataclasses import dataclass, field
-from datetime import datetime
+from datetime import UTC, datetime, timedelta
 from enum import Enum
 from pathlib import Path
 from typing import Any
@@ -171,7 +171,7 @@ class LearningsStore:
         try:
             data = {
                 "learnings": [learning.to_dict() for learning in self._learnings.values()],
-                "updated_at": datetime.utcnow().isoformat(),
+                "updated_at": datetime.now(UTC).isoformat(),
             }
             with self._store_file.open("w") as f:
                 json.dump(data, f, indent=2)
@@ -271,7 +271,7 @@ class LearningsStore:
             return False
 
         learning.status = LearningStatus.STAGED
-        learning.staged_at = datetime.utcnow()
+        learning.staged_at = datetime.now(UTC)
         self._save()
 
         logger.info(f"Staged learning {learning_id}")
@@ -314,7 +314,7 @@ class LearningsStore:
             return False
 
         learning.status = LearningStatus.APPROVED
-        learning.approved_at = datetime.utcnow()
+        learning.approved_at = datetime.now(UTC)
         learning.reviewer = reviewer
         learning.review_notes = notes
         self._save()
@@ -353,7 +353,7 @@ class LearningsStore:
             return False
 
         learning.status = LearningStatus.PROMOTED
-        learning.promoted_at = datetime.utcnow()
+        learning.promoted_at = datetime.now(UTC)
         self._save()
 
         logger.info(f"Promoted learning {learning_id}")
@@ -398,9 +398,7 @@ class LearningsStore:
 
     def cleanup_old(self, days: int = 90) -> int:
         """Archive learnings older than specified days that weren't promoted."""
-        from datetime import timedelta
-
-        cutoff = datetime.utcnow() - timedelta(days=days)
+        cutoff = datetime.now(UTC) - timedelta(days=days)
         archived = 0
 
         for learning in self._learnings.values():

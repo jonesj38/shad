@@ -17,7 +17,7 @@ from __future__ import annotations
 
 import hashlib
 import logging
-from datetime import datetime
+from datetime import UTC, datetime
 from pathlib import Path
 from typing import TYPE_CHECKING
 
@@ -103,7 +103,7 @@ class RLMEngine:
         """
         run = Run(config=config)
         run.status = RunStatus.RUNNING
-        run.started_at = datetime.utcnow()
+        run.started_at = datetime.now(UTC)
 
         logger.info(f"Starting run {run.run_id} with goal: {config.goal}")
 
@@ -159,7 +159,7 @@ class RLMEngine:
             logger.exception(f"Run {run.run_id} failed: {e}")
 
         finally:
-            run.completed_at = datetime.utcnow()
+            run.completed_at = datetime.now(UTC)
 
         return run
 
@@ -212,7 +212,7 @@ class RLMEngine:
             logger.exception(f"Resume failed: {e}")
 
         finally:
-            run.completed_at = datetime.utcnow()
+            run.completed_at = datetime.now(UTC)
 
         return run
 
@@ -224,7 +224,7 @@ class RLMEngine:
     ) -> None:
         """Execute a single node in the DAG."""
         node.status = NodeStatus.STARTED
-        node.start_time = datetime.utcnow()
+        node.start_time = datetime.now(UTC)
 
         # Check budgets before execution
         self._check_budgets(run, node)
@@ -266,7 +266,7 @@ class RLMEngine:
             logger.error(f"Node {node.node_id} failed: {e}")
 
         finally:
-            node.end_time = datetime.utcnow()
+            node.end_time = datetime.now(UTC)
 
     async def _decompose_and_execute(
         self,
@@ -375,7 +375,7 @@ class RLMEngine:
 
         # Check wall time
         if run.started_at:
-            elapsed = (datetime.utcnow() - run.started_at).total_seconds()
+            elapsed = (datetime.now(UTC) - run.started_at).total_seconds()
             if elapsed >= budget.max_wall_time:
                 run.stop_reason = StopReason.BUDGET_TIME
                 raise BudgetExhausted(
