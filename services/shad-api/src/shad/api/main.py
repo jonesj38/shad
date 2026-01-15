@@ -113,6 +113,10 @@ class RunRequest(BaseModel):
     vault_path: str | None = Field(default=None, description="Obsidian vault path for context")
     budget: dict[str, int] | None = Field(default=None, description="Budget overrides")
     voice: str | None = Field(default=None, description="Voice for output rendering")
+    strategy: str | None = Field(default=None, description="Strategy override: software, research, analysis, planning")
+    verify: str | None = Field(default="basic", description="Verification level: off, basic, build, strict")
+    write_files: bool = Field(default=False, description="Write output files to disk")
+    output_path: str | None = Field(default=None, description="Output directory for files")
 
 
 class RunResponse(BaseModel):
@@ -151,6 +155,9 @@ class ResumeRequest(BaseModel):
 
     budget_overrides: dict[str, int] | None = Field(
         default=None, description="Budget overrides for resumed run"
+    )
+    replay: str | None = Field(
+        default=None, description="Replay mode: 'stale', node_id, or 'subtree:node_id'"
     )
 
 
@@ -192,6 +199,10 @@ async def create_run(request: RunRequest, background_tasks: BackgroundTasks) -> 
         vault_path=request.vault_path,
         budget=Budget(**budget_dict),
         voice=request.voice,
+        strategy_override=request.strategy,
+        verify_level=request.verify,
+        write_files=request.write_files,
+        output_path=request.output_path,
     )
 
     # Execute run
@@ -248,7 +259,7 @@ async def resume_run(
 
     # Resume execution
     try:
-        run = await engine.resume(run)
+        run = await engine.resume(run, replay_mode=request.replay)
     except Exception as e:
         logger.exception(f"Run resume failed: {e}")
         raise HTTPException(status_code=500, detail=str(e)) from e
