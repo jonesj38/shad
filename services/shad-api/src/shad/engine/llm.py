@@ -375,3 +375,100 @@ Provide a direct, informative answer. If the retrieved context is relevant, use 
             system=system,
             temperature=0.5,
         )
+
+    async def generate_retrieval_script(
+        self,
+        task: str,
+        vault_info: str = "",
+    ) -> tuple[str, int]:
+        """
+        Generate a Python script to retrieve relevant context from the vault.
+
+        Per OBSIDIAN_PIVOT.md Section 3.1: The LLM writes Python scripts
+        that import MCP tools to dynamically query the vault.
+
+        Args:
+            task: The task requiring context retrieval
+            vault_info: Optional info about vault structure
+
+        Returns:
+            Tuple of (script, tokens_used)
+        """
+        logger.info(f"[CODE_MODE] Generating retrieval script for: {task[:100]}...")
+
+        system = """You are a code generation expert specializing in knowledge retrieval.
+Generate Python scripts that query an Obsidian vault to gather context for a task.
+
+You have access to an 'obsidian' object with these methods:
+- obsidian.search(query: str, limit: int = 10, path_filter: str | None = None) -> list[dict]
+  Returns: [{"path": "...", "content": "...", "score": float, "matched_line": "..."}]
+- obsidian.read_note(path: str) -> str | None
+  Returns the full content of a note
+- obsidian.list_notes(directory: str = "", recursive: bool = False) -> list[str]
+  Returns list of note paths
+- obsidian.get_frontmatter(path: str) -> dict | None
+  Returns YAML frontmatter as dict
+
+IMPORTANT: Store your final result in __result__ variable. This should be a string
+containing the most relevant context for the task, formatted clearly.
+
+Example script:
+```python
+# Search for relevant notes
+results = obsidian.search("machine learning", limit=5)
+
+# Extract and combine relevant content
+context_parts = []
+for r in results:
+    path = r["path"]
+    content = r["content"][:2000]  # Limit size
+    context_parts.append(f"## {path}\\n{content}")
+
+# Store final result
+__result__ = "\\n\\n---\\n\\n".join(context_parts)
+```
+
+Generate ONLY the Python code, no explanations."""
+
+        prompt = f"""Generate a Python retrieval script for this task:
+
+Task: {task}
+
+{f"Vault structure hint: {vault_info}" if vault_info else ""}
+
+The script should:
+1. Search for relevant notes using keywords from the task
+2. Read additional detail from the most relevant notes if needed
+3. Extract and format the most useful content
+4. Store the result in __result__ as a formatted string
+
+Generate only the Python code."""
+
+        response, tokens = await self.complete(
+            prompt=prompt,
+            tier=ModelTier.WORKER,
+            system=system,
+            temperature=0.3,
+        )
+
+        # Extract code from markdown code blocks if present
+        script = response.strip()
+        if "```" in script:
+            # Extract content between code blocks
+            parts = script.split("```")
+            for part in parts:
+                part = part.strip()
+                if part.startswith("python"):
+                    script = part[6:].strip()
+                    break
+                elif part.startswith("py"):
+                    script = part[2:].strip()
+                    break
+                elif "obsidian." in part or "__result__" in part:
+                    script = part.strip()
+                    break
+
+        logger.info(f"[CODE_MODE] Generated script ({len(script)} chars)")
+        logger.debug(f"[CODE_MODE] Script:\n{script[:500]}...")
+
+        return script, tokens
