@@ -8,8 +8,8 @@ The goal: Load an Obsidian vault with curated, up-to-date knowledge (documentati
 
 **Example**: Build a production-quality mobile app in one shot by:
 1. Loading a vault with React Native docs, great app examples, UI/UX patterns, API design guides
-2. Running: `shad run "Build a task management app with auth, offline sync, and push notifications" --vault ~/MobileDevVault`
-3. Shad recursively decomposes, retrieves targeted context for each subtask, generates code, and assembles a complete codebase
+2. Running: `shad run "Build a task management app with auth, offline sync, and push notifications" --vault ~/MobileDevVault --strategy software --write-files`
+3. Shad recursively decomposes, retrieves targeted context for each subtask, generates code with contracts-first consistency, verifies outputs, and assembles a complete codebase
 
 This is not prompt engineering. This is **inference-time scaling** — treating context as an explorable environment, not a fixed input.
 
@@ -38,101 +38,159 @@ This is not prompt engineering. This is **inference-time scaling** — treating 
 
 ### Phase 3 — Task-Aware Decomposition (IN PROGRESS)
 
-The current decomposition is naive (length-based heuristic). For complex tasks like "build an app", we need **domain-aware decomposition**:
+**Decision**: Hybrid template skeletons + LLM refinement (see SPEC.md D10)
 
-- [ ] **Software Architecture Decomposition**
-  - Recognize software tasks and decompose by component/layer
-  - Example: "Build mobile app" → Project structure, Navigation, State management, UI components, Data layer, Features...
-  - Each feature → Screens, Components, Hooks, API calls, Tests
+- [ ] **Strategy Skeletons**
+  - Define required stages, optional stages, constraints per strategy
+  - `software`: contracts-first, imports-must-resolve, schema-first when DB involved
+  - `research`: must-cite-vault, max-claims-per-source
+  - `analysis`: criteria-coverage, explicit-tradeoffs
+  - `planning`: milestones, dependencies
 
-- [ ] **Decomposition Strategies**
-  - `software`: By architecture layer and feature
-  - `research`: By question and sub-question
-  - `analysis`: By data source and dimension
-  - `creative`: By section and element
+- [ ] **Heuristic Strategy Selection** (no LLM call for obvious cases)
+  - Pattern-match task text against keyword sets
+  - Output: `strategy_guess` + `guess_confidence`
+  - confidence ≥ 0.7 → proceed; < 0.7 → default to `analysis`
+  - User can override with `--strategy X`
 
-- [ ] **Smart Depth Control**
-  - Decompose until subtasks are "atomic" (directly answerable)
-  - LLM decides decomposition, not hardcoded heuristics
-  - Budget-aware: stop decomposing when approaching limits
+- [ ] **LLM Refinement**
+  - LLM fills in task-specific nodes within skeleton constraints
+  - Can add/remove optional stages, split implementation into modules
+  - Cannot violate required stages without explicit waiver
+  - May request strategy switch mid-execution with evidence
+
+- [ ] **Soft Dependencies & Context Packets**
+  - Decomposition emits `hard_deps` (must complete) and `soft_deps` (useful if available)
+  - Completed nodes produce context packets (summary, artifacts, keywords)
+  - Scheduler injects packets into pending nodes' retrieval
+  - Limited rerun gate when soft dep completes and node would benefit
 
 ### Phase 4 — Code Generation Output
 
-Currently Shad outputs markdown. For software tasks, it should output **actual files**:
+**Decision**: Two-pass with manifest + convention-based validation (see SPEC.md D3)
 
-- [ ] **File Output Mode**
-  - Detect when task requires code generation
-  - Output structured file manifest: `{path, content, language}`
-  - Write files to output directory or return as artifact
+- [ ] **File Manifest Output**
+  - All code-producing runs emit structured manifest: `{path, content, language, hash, source_nodes}`
+  - Writing to filesystem is always explicit (`--write-files`)
+  - CLI and API share same manifest contract
+  - `shad export <run_id> --output ./out` to materialize later
 
-- [ ] **Multi-File Assembly**
-  - Collect code from all subtasks
-  - Resolve imports and dependencies
-  - Generate project structure (package.json, requirements.txt, etc.)
-  - Handle file conflicts (same path from different subtasks)
+- [ ] **Two-Pass Import Resolution**
+  - **Pass 1**: Build export index (symbol → file mapping) via early contracts node
+  - **Pass 2**: Generate implementations using export index as ground truth
+  - Post-generation validation: check all imports resolve to existing files/symbols
+  - Output structured report: `{missing_modules, missing_symbols}`
 
-- [ ] **Code Context Awareness**
-  - When generating file B, include relevant parts of file A as context
-  - Track dependencies between generated files
-  - Ensure consistent naming, imports, types across files
+- [ ] **Contracts-First Type Consistency**
+  - `Types & Contracts` node produces canonical type artifacts
+  - Implementation nodes import from canonical artifacts only
+  - New type needs emit `contract_change_request` artifacts
+  - Reconciliation step merges identical proposals, flags conflicts
+  - For DB/API/Auth tasks: enforce schema-first (data model → contracts → impl)
+
+- [ ] **Write Semantics**
+  - Only write under `output_root` (no `../` traversal)
+  - `--overwrite` flag for conflicts (default: fail)
+  - Emit write report with paths, skipped conflicts, hashes
 
 ### Phase 5 — Verification Layer
 
-Generated code should be verified before returning:
+**Decision**: Progressive strictness with configurable per-check (see SPEC.md D7)
 
-- [ ] **Syntax Validation**
-  - Parse generated code (AST for Python/JS/TS)
-  - Catch syntax errors before returning
+- [ ] **Verification Checks**
+  - Import resolution: all imports resolve to existing files/symbols
+  - Syntax/parse: code is syntactically valid
+  - Manifest integrity: no path traversal, no duplicates, within output root
+  - Type check: TypeScript/Flow errors via `tsc --noEmit`
+  - Unit tests: tests pass
+  - Lint: style conformance
 
-- [ ] **Type Checking** (for TypeScript)
-  - Run `tsc --noEmit` on generated code
-  - Feed errors back for correction
+- [ ] **Verification Levels**
+  - `--verify=off`: No checks
+  - `--verify=basic` (default): Imports + syntax + manifest blocking
+  - `--verify=build`: Basic + typecheck blocking
+  - `--verify=strict`: Build + tests blocking
+  - Per-check override: `--block-on typecheck` / `--warn-only lint`
 
-- [ ] **Test Generation**
-  - Generate tests alongside implementation
-  - Run tests as verification step
+- [ ] **Error Classification & Repair**
+  - Syntax/lint → local repair only
+  - Type errors → local repair with sibling context (contracts/types)
+  - Unit tests → local repair with sibling outputs
+  - Integration tests → escalate to parent coordinator immediately
+  - Contract mismatch → parent coordination + contract update node
+  - Error signature hashing prevents infinite loops
+  - Max 2 local retries per node, max 10 escalations per run
 
-- [ ] **Example Conformance**
-  - Compare generated code structure to vault examples
-  - Flag deviations from patterns in the vault
+- [ ] **Test Generation** (software strategy)
+  - Spec-first stubs: after contracts, generate `TEST_PLAN.md` + test stubs
+  - Post-implementation pass: generate full test suite with complete codebase context
+  - Tests advisory by default, blocking in `--verify=strict`
+  - Override: `--tests off|stubs|post|tdd|co`
 
 ### Phase 6 — Iterative Refinement
 
-Single-pass generation won't always succeed. Enable iteration:
+**Decision**: Tiered fallback with NEEDS_HUMAN as default for high-impact (see SPEC.md D8)
 
-- [ ] **Error Feedback Loop**
-  - If verification fails, create correction subtask
-  - Include error message and relevant context
-  - Re-generate with learned constraints
+- [ ] **Run States**
+  - `SUCCESS`: Meets acceptance criteria
+  - `PARTIAL`: Produced artifacts but did not meet criteria
+  - `FAILED`: Could not produce meaningful artifacts or safety stop
+  - `NEEDS_HUMAN`: Paused, context preserved, awaiting human input
+
+- [ ] **Max Iterations Policy (Tiered Fallback)**
+  - High-impact task OR substantial artifacts → `NEEDS_HUMAN`
+  - Low-risk task, verification advisory → `PARTIAL`
+  - Cannot proceed safely OR no artifacts → `FAILED`
+  - Same run hits max iterations twice without human input → `FAILED_WITH_DIAGNOSTIC`
+  - Always return: best artifacts + failure report + suggested next inputs
+
+- [ ] **Delta Verification on Resume**
+  - Store per completed node: `used_notes[]`, `used_note_hashes{}`, `subset_fingerprint`
+  - On resume: check vault manifest against stored hashes
+  - Node is stale if any `used_note_hash` differs
+  - Stale nodes undergo re-verification (or re-execution for contracts nodes)
+  - Unchanged nodes are trusted
+  - Selective replay: `--replay node_id`, `--replay subtree:X`, `--replay stale`
 
 - [ ] **Human-in-the-Loop Checkpoints**
-  - Pause at configurable points for human review
-  - Accept corrections and continue
-  - Learn from corrections for future runs
-
-- [ ] **Progressive Output**
-  - Stream partial results as subtasks complete
-  - Allow early termination with partial output
-  - Resume from any checkpoint
+  - Explicit markers: `[REVIEW]`, `[APPROVE]` in prompts
+  - Auto-triggers: high-impact node at depth ≤ 1, low confidence + high fan-out
+  - Hard safety (non-negotiable): file writes outside sandbox, network beyond allowlist
+  - `--no-checkpoints` disables all except hard safety
+  - Max 5 checkpoints per run, then degrade to batch review at end
+  - Checkpoint presents: node summary, decision to approve, confidence signals, options
 
 ### Phase 7 — Vault Curation Tools
 
-The vault quality determines output quality. Provide tools for vault curation:
+**Decision**: Combined scoring for gap detection, configurable ingestion presets (see SPEC.md D14)
 
 - [ ] **Ingestion Pipeline**
-  - `shad ingest <url>` — Fetch and convert docs/repos to vault notes
-  - `shad ingest <github-repo>` — Clone and index a repository
-  - Auto-extract: README, API docs, code examples, patterns
+  - `shad ingest github <url>` — Clone and process repository
+  - Presets: `mirror` (raw files), `docs` (default, README/docs/metadata), `deep` (semantic index)
+  - Immutable timestamped snapshots: `Sources/<domain>/<source_id>/<YYYY-MM-DD>/`
+  - Required frontmatter: `source_url`, `source_type`, `ingested_at`, `source_revision`, `content_hash`
+  - Post-hoc enrichment: `shad enrich <snapshot_id> --deep`
 
-- [ ] **Vault Analysis**
-  - `shad vault analyze` — Report on vault coverage
-  - Identify gaps (e.g., "no examples for authentication")
-  - Suggest additions based on common queries
+- [ ] **Shadow Index** (outside vault, in `~/.shad/index.sqlite`)
+  - Maps `source_url → latest_snapshot`
+  - Schema: `sources`, `snapshots`, `latest` tables
+  - Update policies: `manual`, `notify`, `auto`
+  - Export: `shad sources export --format yaml --out <path>`
+  - Pin snapshots: `shad sources pin <url> --snapshot <id>`
+
+- [ ] **Vault Analysis & Gap Detection**
+  - `shad vault analyze [--llm-audit]`
+  - Combined scoring: `0.55 * history_pain + 0.25 * coverage_miss + 0.20 * llm_score`
+  - History pain: query frequency, median retrieval_score, fallback rate, downstream failures
+  - Coverage miss: missing anchor notes for common topics, missing templates
+  - LLM audit (optional): send vault summary, ask for top 10 gaps
+  - Output: ranked gaps with evidence, suggested additions, priority
 
 - [ ] **Note Standardization**
   - Enforce consistent frontmatter
   - Extract and tag code examples
   - Link related notes automatically
+  - Progressive standardization ("Gardener Pattern")
 
 ---
 
@@ -145,9 +203,13 @@ The vault quality determines output quality. Provide tools for vault curation:
 - Per-subtask context retrieval
 - Budget enforcement and partial results
 - History artifacts and resume
+- Redis caching with hash validation
 
 ### In Progress
 - Task-aware decomposition (Phase 3)
+  - Strategy skeletons
+  - Heuristic selection + LLM refinement
+  - Soft dependencies and context packets
 
 ### Next Up
 - File output mode (Phase 4)
@@ -162,6 +224,8 @@ The vault quality determines output quality. Provide tools for vault curation:
 3. **Code Quality**: Generated code passes linting, type-checking, basic tests
 4. **One-Shot Success**: Complex tasks complete without human intervention
 5. **Iteration Efficiency**: When iteration needed, converge in ≤3 passes
+6. **Type Consistency**: Generated multi-file codebases have zero import resolution errors
+7. **Resume Efficiency**: Delta verification re-executes only changed nodes
 
 ---
 
@@ -169,8 +233,8 @@ The vault quality determines output quality. Provide tools for vault curation:
 
 ```bash
 # 1. Prepare vault with mobile dev knowledge
-shad ingest https://reactnative.dev/docs --vault ~/MobileVault
-shad ingest https://github.com/excellent-app/example --vault ~/MobileVault
+shad ingest github https://github.com/facebook/react-native --preset docs --vault ~/MobileVault
+shad ingest github https://github.com/excellent-app/example --preset deep --vault ~/MobileVault
 shad ingest ~/notes/mobile-patterns.md --vault ~/MobileVault
 
 # 2. Run the build task
@@ -181,10 +245,38 @@ shad run "Build a task management mobile app with:
   - Push notifications for reminders
   - Clean, modern UI following Material Design" \
   --vault ~/MobileVault \
-  --output ./TaskApp \
+  --strategy software \
+  --verify strict \
+  --write-files --output ./TaskApp \
   --max-depth 5
 
 # 3. Result: Complete React Native project in ./TaskApp/
+#    - Types & contracts generated first
+#    - All imports resolve correctly
+#    - Passes type checking and tests
 ```
 
-The vault contains the "how" (patterns, examples, docs). Shad provides the "engine" (decomposition, retrieval, generation, assembly). Together: complex tasks in one shot.
+The vault contains the "how" (patterns, examples, docs). Shad provides the "engine" (decomposition, retrieval, generation, verification, assembly). Together: complex tasks in one shot.
+
+---
+
+## Key Design Decisions
+
+See [SPEC.md](SPEC.md) Section 4 (Decision Log) for full rationale on each decision:
+
+| ID | Decision | Choice |
+|----|----------|--------|
+| D1 | Retrieval recovery | Confidence-gated 3-tier fallback |
+| D2 | Cross-subtask deps | Soft deps + context packets |
+| D3 | Type consistency | Contracts-first + convention merge |
+| D4 | Sandbox security | Configurable profiles (strict default) |
+| D5 | Vault versioning | Immutable snapshots + shadow index |
+| D6 | Token budget | Hierarchical reserves (25% parent) |
+| D7 | Verification | Progressive strictness levels |
+| D8 | Resume | Delta verification |
+| D9 | Concurrency | Tiered adaptive (separate LLM/local) |
+| D10 | Decomposition | Template skeletons + LLM refinement |
+| D11 | Test generation | Spec-first stubs + post-impl pass |
+| D12 | Multi-vault | Layered with priority + namespacing |
+| D13 | Conflict resolution | Preserve both + reconcile + checkpoint |
+| D14 | Gap detection | Combined scoring (history + patterns) |
