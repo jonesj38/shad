@@ -8,8 +8,35 @@
 
 set -euo pipefail
 
-ORG="${1:-bsv-blockchain}"
-VAULT="${2:-$HOME/Desktop/test_vault}"
+# Find shad command
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+SHAD_CMD="${SCRIPT_DIR}/../services/shad-api/.venv/bin/shad"
+
+if [ ! -x "$SHAD_CMD" ]; then
+  # Try ~/.shad/bin/shad
+  SHAD_CMD="$HOME/.shad/bin/shad"
+fi
+
+if [ ! -x "$SHAD_CMD" ]; then
+  # Fall back to PATH
+  SHAD_CMD="shad"
+fi
+
+# Verify shad is available
+if ! command -v "$SHAD_CMD" &> /dev/null && [ ! -x "$SHAD_CMD" ]; then
+  echo "Error: shad command not found"
+  echo "Run the installer first: ./install.sh"
+  exit 1
+fi
+
+if [ $# -lt 2 ]; then
+  echo "Usage: $0 <org-name> <vault-path> [preset]"
+  echo "Example: $0 bsv-blockchain ~/MyVault docs"
+  exit 1
+fi
+
+ORG="$1"
+VAULT="$2"
 PRESET="${3:-docs}"
 
 echo "Fetching repos from github.com/$ORG..."
@@ -32,7 +59,7 @@ for repo in $REPOS; do
   REPO_NAME=$(basename "$repo" .git)
   echo "[$CURRENT/$COUNT] Ingesting $REPO_NAME..."
 
-  if shad ingest github "$repo" --preset "$PRESET" --vault "$VAULT" 2>/dev/null; then
+  if "$SHAD_CMD" ingest github "$repo" --preset "$PRESET" --vault "$VAULT"; then
     echo "  ✓ Done"
   else
     echo "  ✗ Failed (continuing...)"
