@@ -28,12 +28,7 @@ console = Console()
 
 def run_async(coro: Any) -> Any:
     """Run an async coroutine synchronously."""
-    try:
-        loop = asyncio.get_event_loop()
-    except RuntimeError:
-        loop = asyncio.new_event_loop()
-        asyncio.set_event_loop(loop)
-    return loop.run_until_complete(coro)
+    return asyncio.run(coro)
 
 
 def get_api_url() -> str:
