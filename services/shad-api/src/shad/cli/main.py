@@ -616,8 +616,8 @@ def ingest_github(url: str, vault: str, preset: str) -> None:
             console.print(f"[red]Error: {e}[/red]")
             sys.exit(1)
 
-    console.print(f"[green]✓ Ingested to {result.snapshot_path}[/green]")
-    console.print(f"[dim]Files: {result.file_count}[/dim]")
+    console.print(f"[green]✓ Ingested: {result.snapshot_id}[/green]")
+    console.print(f"[dim]Files: {len(result.files_processed)}[/dim]")
 
 
 # =============================================================================
