@@ -1,0 +1,16 @@
+{
+  "run_id": "6d45cb8b-fd94-49b9-a257-16976b700029",
+  "status": "complete",
+  "goal": "Explain the key components of the Shad architecture",
+  "result": "# Shad Architecture Overview\n\nShad is a system that enables AI to utilize virtually unlimited context by treating knowledge vaults as explorable environments rather than cramming everything into a single prompt.\n\n## Core Components\n\n### 1. **RLM Engine** (`engine/rlm.py`)\nThe recursive decomposition and execution engine. It:\n- Decomposes complex tasks into subtasks using strategy skeletons\n- Manages DAG (directed acyclic graph) execution\n- Orchestrates Code Mode retrieval\n\n### 2. **Strategy System** (`engine/strategies/`)\nDomain-specific decomposition strategies (software, research, analysis) that define:\n- Required and optional stages\n- Constraints (e.g., contracts-first for software)\n- Selection via heuristic + LLM refinement\n\n### 3. **Code Mode** (Key Innovation)\nInstead of simple keyword search, the LLM generates custom Python retrieval scripts:\n```python\nresults = obsidian.search(\"authentication React Native\", limit=10)\nauth_patterns = obsidian.read_note(\"Patterns/Authentication.md\")\n```\nThis enables intelligent, context-aware retrieval with confidence scoring and recovery tiers.\n\n### 4. **CodeExecutor** (`sandbox/executor.py`)\nSandboxed Python execution with configurable security profiles:\n- **strict** (default): Vault access only, no network\n- **local**: Adds allowlisted file roots\n- **extended**: Adds HTTP GET to allowlisted domains\n\n### 5. **ObsidianTools** (`sandbox/tools.py`)\nThe API available to Code Mode scripts: `search()`, `read_note()`, and other vault operations.\n\n### 6. **Verification Layer** (`verification/`)\nProgressive strictness checking:\n- `off` \u2192 `basic` (imports/syntax) \u2192 `build` (typecheck) \u2192 `strict` (tests)\n- Includes repair loops for failures\n\n### 7. **Supporting Infrastructure**\n- **Redis** (`cache/redis_cache.py`): Caching with hash validation + TTL\n- **History Manager** (`history/manager.py`): Run artifacts, DAG state, metrics\n- **Shadow Index** (`~/.shad/index.sqlite`): Local indexing\n\n## Data Flow\n\n```\nUser Task \u2192 Strategy Selection \u2192 RLM Decomposition \u2192 Code Mode Retrieval\n    \u2192 LLM Generation \u2192 Verification \u2192 Repair (if needed) \u2192 Synthesis\n```\n\n## Key Design Decisions\n\n| Area | Choice | Why |\n|------|--------|-----|\n| Decomposition | Template skeletons + LLM refinement | Enforces invariants while staying flexible |\n| Type consistency | Contracts-first node | Single source of truth for types |\n| Token budget | Hierarchical reserves (25% parent) | Guarantees synthesis completes |\n| Cross-subtask deps | Soft deps + context packets | Enables parallelism with context sharing |\n\nThe architecture prioritizes **correctness** (contracts-first, verification layers), **safety** (sandboxed execution, hard invariants), and **practicality** (configurable strictness, resume/replay support).",
+  "citations": [],
+  "stop_reason": null,
+  "error": null,
+  "metrics": {
+    "total_nodes": 1,
+    "completed_nodes": 1,
+    "failed_nodes": 0,
+    "total_tokens": 714
+  },
+  "suggested_next_actions": []
+}

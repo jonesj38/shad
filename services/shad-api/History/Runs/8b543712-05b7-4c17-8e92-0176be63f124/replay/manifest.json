@@ -1,0 +1,23 @@
+{
+  "run_id": "8b543712-05b7-4c17-8e92-0176be63f124",
+  "config": {
+    "goal": "Build a simple REST API with user registration, login, and profile endpoints using Flask",
+    "vault_path": null,
+    "budget": {
+      "max_wall_time": 300,
+      "max_tokens": 100000,
+      "max_nodes": 50,
+      "max_depth": 3,
+      "max_branching_factor": 7
+    },
+    "voice": null,
+    "strategy_override": "software",
+    "verify_level": "basic",
+    "write_files": false,
+    "output_path": null
+  },
+  "node_count": 1,
+  "cache_keys": [
+    "9a60d51442b1eeff"
+  ]
+}

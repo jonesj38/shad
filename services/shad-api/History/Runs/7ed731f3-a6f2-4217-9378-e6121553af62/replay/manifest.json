@@ -1,0 +1,23 @@
+{
+  "run_id": "7ed731f3-a6f2-4217-9378-e6121553af62",
+  "config": {
+    "goal": "Create a simple Python function that validates email addresses",
+    "vault_path": null,
+    "budget": {
+      "max_wall_time": 300,
+      "max_tokens": 100000,
+      "max_nodes": 50,
+      "max_depth": 2,
+      "max_branching_factor": 7
+    },
+    "voice": null,
+    "strategy_override": "software",
+    "verify_level": "basic",
+    "write_files": false,
+    "output_path": null
+  },
+  "node_count": 1,
+  "cache_keys": [
+    "80a7947dbd9597a8"
+  ]
+}

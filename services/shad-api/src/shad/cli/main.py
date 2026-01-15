@@ -657,14 +657,16 @@ def _display_run_status(run: Run) -> None:
     table.add_column("Value")
 
     table.add_row("Goal", run.config.goal[:80] + "..." if len(run.config.goal) > 80 else run.config.goal)
-    table.add_row("Status", f"[bold]{run.status.value}[/bold]")
+    status_str = run.status.value if hasattr(run.status, 'value') else run.status
+    table.add_row("Status", f"[bold]{status_str}[/bold]")
     table.add_row("Nodes", f"{len(run.completed_nodes())}/{len(run.nodes)}")
     table.add_row("Tokens", str(run.total_tokens))
 
     if run.created_at:
         table.add_row("Created", run.created_at.isoformat())
     if run.stop_reason:
-        table.add_row("Stop Reason", run.stop_reason.value)
+        stop_reason_str = run.stop_reason.value if hasattr(run.stop_reason, 'value') else run.stop_reason
+        table.add_row("Stop Reason", stop_reason_str)
 
     console.print(table)
 

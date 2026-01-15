@@ -1,0 +1,23 @@
+{
+  "run_id": "6d45cb8b-fd94-49b9-a257-16976b700029",
+  "config": {
+    "goal": "Explain the key components of the Shad architecture",
+    "vault_path": null,
+    "budget": {
+      "max_wall_time": 300,
+      "max_tokens": 100000,
+      "max_nodes": 50,
+      "max_depth": 2,
+      "max_branching_factor": 7
+    },
+    "voice": null,
+    "strategy_override": "research",
+    "verify_level": "basic",
+    "write_files": false,
+    "output_path": null
+  },
+  "node_count": 1,
+  "cache_keys": [
+    "8325efed6cfca86c"
+  ]
+}
