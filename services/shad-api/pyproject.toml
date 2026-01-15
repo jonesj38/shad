@@ -34,6 +34,14 @@ dev = [
     "ruff>=0.1.0",
     "mypy>=1.8.0",
 ]
+sources = [
+    "trafilatura>=1.6.0",
+    "feedparser>=6.0.0",
+    "markdownify>=0.11.0",
+]
+all = [
+    "shad[dev,sources]",
+]
 
 [project.scripts]
 shad = "shad.cli.main:cli"

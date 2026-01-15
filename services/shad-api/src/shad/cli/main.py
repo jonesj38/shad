@@ -893,6 +893,250 @@ def server_logs(follow: bool, lines: int) -> None:
         subprocess.run(["tail", "-n", str(lines), log_file])
 
 
+# =============================================================================
+# Sources Management
+# =============================================================================
+
+
+@cli.group()
+def sources() -> None:
+    """Manage content sources for automated ingestion.
+
+    \b
+    Commands:
+        shad sources add       - Add a new source
+        shad sources list      - List all sources
+        shad sources remove    - Remove a source
+        shad sources sync      - Sync sources now
+        shad sources status    - Show scheduler status
+    """
+    pass
+
+
+@sources.command("add")
+@click.argument("source_type", type=click.Choice(["github", "url", "feed", "folder"]))
+@click.argument("location")
+@click.option("--vault", "-v", required=True, help="Target vault path")
+@click.option("--schedule", "-s", type=click.Choice(["manual", "hourly", "daily", "weekly", "monthly"]),
+              default="daily", help="Sync schedule")
+@click.option("--preset", "-p", default="docs", help="Ingestion preset (for github)")
+def sources_add(
+    source_type: str,
+    location: str,
+    vault: str,
+    schedule: str,
+    preset: str,
+) -> None:
+    """Add a new content source.
+
+    \b
+    Examples:
+        shad sources add github https://github.com/org/repo --vault ~/MyVault
+        shad sources add url https://docs.example.com --vault ~/MyVault --schedule weekly
+        shad sources add feed https://blog.example.com/rss --vault ~/MyVault --schedule hourly
+        shad sources add folder ~/Projects/docs --vault ~/MyVault
+    """
+    from shad.sources import SourceManager, SourceSchedule, SourceType
+
+    manager = SourceManager()
+
+    type_map = {
+        "github": SourceType.GITHUB,
+        "url": SourceType.URL,
+        "feed": SourceType.FEED,
+        "folder": SourceType.FOLDER,
+    }
+    schedule_map = {
+        "manual": SourceSchedule.MANUAL,
+        "hourly": SourceSchedule.HOURLY,
+        "daily": SourceSchedule.DAILY,
+        "weekly": SourceSchedule.WEEKLY,
+        "monthly": SourceSchedule.MONTHLY,
+    }
+
+    is_folder = source_type == "folder"
+    source = manager.add_source(
+        source_type=type_map[source_type],
+        url=None if is_folder else location,
+        path=location if is_folder else None,
+        vault_path=vault,
+        schedule=schedule_map[schedule],
+        preset=preset,
+    )
+
+    console.print(f"[green]✓ Added source: {source.id}[/green]")
+    console.print(f"[dim]Type: {source_type}, Schedule: {schedule}[/dim]")
+
+
+@sources.command("list")
+def sources_list() -> None:
+    """List all configured sources."""
+    from shad.sources import SourceManager
+
+    manager = SourceManager()
+    source_list = manager.list_sources()
+
+    if not source_list:
+        console.print("[dim]No sources configured.[/dim]")
+        console.print("[dim]Add one with: shad sources add github <url> --vault <path>[/dim]")
+        return
+
+    table = Table(title="Configured Sources")
+    table.add_column("ID", style="cyan")
+    table.add_column("Type")
+    table.add_column("Location")
+    table.add_column("Schedule")
+    table.add_column("Last Sync")
+    table.add_column("Status")
+
+    for s in source_list:
+        location = s.url or s.path or ""
+        if len(location) > 40:
+            location = "..." + location[-37:]
+
+        last_sync = s.last_sync.strftime("%Y-%m-%d %H:%M") if s.last_sync else "Never"
+
+        if not s.enabled:
+            status = "[dim]Disabled[/dim]"
+        elif s.last_error:
+            status = "[red]Error[/red]"
+        elif s.is_due():
+            status = "[yellow]Due[/yellow]"
+        else:
+            status = "[green]OK[/green]"
+
+        table.add_row(
+            s.id[:8],
+            s.type.value,
+            location,
+            s.schedule.value,
+            last_sync,
+            status,
+        )
+
+    console.print(table)
+
+
+@sources.command("remove")
+@click.argument("source_id")
+def sources_remove(source_id: str) -> None:
+    """Remove a source by ID."""
+    from shad.sources import SourceManager
+
+    manager = SourceManager()
+
+    # Allow partial ID matching
+    for s in manager.list_sources():
+        if s.id.startswith(source_id):
+            source_id = s.id
+            break
+
+    if manager.remove_source(source_id):
+        console.print(f"[green]✓ Removed source: {source_id}[/green]")
+    else:
+        console.print(f"[red]Source not found: {source_id}[/red]")
+
+
+@sources.command("sync")
+@click.option("--all", "-a", "sync_all", is_flag=True, help="Sync all sources, not just due ones")
+@click.option("--daemon", "-d", is_flag=True, help="Run as daemon (continuous sync)")
+@click.option("--interval", "-i", default=60, help="Check interval in seconds (for daemon mode)")
+def sources_sync(sync_all: bool, daemon: bool, interval: int) -> None:
+    """Sync sources now.
+
+    \b
+    Examples:
+        shad sources sync           # Sync due sources
+        shad sources sync --all     # Sync all sources
+        shad sources sync --daemon  # Run continuously
+    """
+    from shad.sources import SourceManager, SourceScheduler
+
+    if daemon:
+        console.print(f"[blue]Starting source scheduler (interval: {interval}s)[/blue]")
+        console.print("[dim]Press Ctrl+C to stop[/dim]")
+
+        def on_sync(result: any) -> None:
+            console.print(
+                f"[dim]Sync: {result.successful} ok, {result.failed} failed, "
+                f"{result.skipped} skipped[/dim]"
+            )
+
+        scheduler = SourceScheduler(check_interval=interval, on_sync=on_sync)
+
+        try:
+            run_async(scheduler.start())
+        except KeyboardInterrupt:
+            console.print("\n[yellow]Scheduler stopped[/yellow]")
+    else:
+        manager = SourceManager()
+        sources_to_sync = manager.list_sources() if sync_all else manager.get_due_sources()
+
+        if not sources_to_sync:
+            console.print("[dim]No sources to sync[/dim]")
+            return
+
+        console.print(f"[blue]Syncing {len(sources_to_sync)} sources...[/blue]")
+
+        with Progress(
+            SpinnerColumn(),
+            TextColumn("[progress.description]{task.description}"),
+            console=console,
+        ) as progress:
+            for source in sources_to_sync:
+                task = progress.add_task(f"Syncing {source.type.value}: {source.url or source.path}...", total=None)
+                result = run_async(manager.sync_source(source))
+                if result.success:
+                    progress.update(task, description=f"[green]✓[/green] {source.url or source.path}")
+                else:
+                    progress.update(task, description=f"[red]✗[/red] {source.url or source.path}")
+                progress.remove_task(task)
+
+        console.print("[green]Sync complete[/green]")
+
+
+@sources.command("status")
+def sources_status() -> None:
+    """Show scheduler and sources status."""
+    from shad.sources import SourceScheduler
+
+    scheduler = SourceScheduler()
+    status = scheduler.get_status()
+
+    console.print("\n[bold]Sources Status[/bold]")
+    console.print(f"Total sources: {status['total_sources']}")
+    console.print(f"Due for sync: {status['due_sources']}")
+
+    if status["sources"]:
+        console.print()
+        table = Table(title="Source Details")
+        table.add_column("ID", style="cyan")
+        table.add_column("Type")
+        table.add_column("URL/Path", max_width=50)
+        table.add_column("Schedule")
+        table.add_column("Last Sync")
+        table.add_column("Next Sync")
+        table.add_column("Due")
+
+        for s in status["sources"]:
+            # Truncate long URLs
+            url = s["url"] or ""
+            if len(url) > 50:
+                url = url[:47] + "..."
+
+            table.add_row(
+                s["id"][:8],
+                s["type"],
+                url,
+                s["schedule"],
+                s["last_sync"][:16] if s["last_sync"] else "Never",
+                s["next_sync"][:16] if s["next_sync"] else "Manual",
+                "[yellow]Yes[/yellow]" if s["is_due"] else "[dim]No[/dim]",
+            )
+
+        console.print(table)
+
+
 def _display_run_result(run: Run) -> None:
     """Display run result with formatting."""
     status_colors = {
