@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import logging
 import sys
 from pathlib import Path
 from typing import Any
@@ -75,6 +76,7 @@ def cli() -> None:
               help="Verification level (default: basic)")
 @click.option("--write-files", is_flag=True, help="Write output files to disk (for software strategy)")
 @click.option("--output-dir", type=click.Path(), help="Output directory for files (requires --write-files)")
+@click.option("--quiet", "-q", is_flag=True, help="Suppress verbose output")
 def run(
     goal: str,
     vault: str | None,
@@ -90,6 +92,7 @@ def run(
     verify: str,
     write_files: bool,
     output_dir: str | None,
+    quiet: bool,
 ) -> None:
     """Execute a reasoning task.
 
@@ -99,6 +102,16 @@ def run(
         shad run "Summarize research" --vault ~/Notes
         shad run "Build REST API" --strategy software --verify strict --write-files
     """
+    # Configure logging (verbose by default, --quiet to suppress)
+    if not quiet:
+        logging.basicConfig(
+            level=logging.INFO,
+            format="%(asctime)s [%(levelname)s] %(name)s: %(message)s",
+            datefmt="%H:%M:%S",
+        )
+        # Set shad loggers to INFO
+        logging.getLogger("shad").setLevel(logging.INFO)
+
     # If API specified, use remote execution
     if api:
         _run_via_api(goal, vault, max_depth, api)
