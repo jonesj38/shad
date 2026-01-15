@@ -285,8 +285,16 @@ class RLMEngine:
             run.add_node(child)
             node.children.append(child.node_id)
 
-            # Execute child
-            await self._execute_node(run, child, context)
+            # Retrieve subtask-specific context from vault
+            subtask_context = context  # Fallback to parent context
+            if self.mcp_client:
+                fresh_context = await self._retrieve_vault_context(subtask, limit=5)
+                if fresh_context:
+                    logger.info(f"[CONTEXT] Retrieved {len(fresh_context)} chars for subtask: {subtask[:50]}...")
+                    subtask_context = fresh_context
+
+            # Execute child with its own context
+            await self._execute_node(run, child, subtask_context)
 
             if child.status == NodeStatus.SUCCEEDED and child.result:
                 child_results.append((subtask, child.result))
