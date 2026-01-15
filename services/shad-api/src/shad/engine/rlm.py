@@ -124,7 +124,7 @@ class RLMEngine:
             if run.stop_reason in (StopReason.BUDGET_DEPTH, StopReason.BUDGET_NODES,
                                    StopReason.BUDGET_TIME, StopReason.BUDGET_TOKENS):
                 run.status = RunStatus.PARTIAL
-            elif root_node.status == NodeStatus.SUCCEEDED:
+            elif root_node.status in (NodeStatus.SUCCEEDED, NodeStatus.CACHE_HIT):
                 run.status = RunStatus.COMPLETE
                 run.final_result = root_node.result
             else:
@@ -418,6 +418,7 @@ class RLMEngine:
         """Retrieve relevant context from the Obsidian vault.
 
         Uses the MCP client to search the vault and format results.
+        Extracts content around matched keywords rather than from file start.
         """
         if not self.mcp_client:
             logger.warning("[RETRIEVAL] No MCP client configured")
@@ -442,8 +443,12 @@ class RLMEngine:
                     path = path[:-3]
                 link = f"[[{path}]]"
 
-                title = result.title or result.path
-                content = result.content[:2000] if result.content else ""
+                title = result.path
+
+                # Extract content around matched keywords instead of file start
+                content = self._extract_relevant_sections(
+                    result.content, query, max_chars=4000
+                ) if result.content else ""
 
                 parts.append(f"[{title}] ({link})\n{content}")
 
@@ -452,6 +457,76 @@ class RLMEngine:
         except Exception as e:
             logger.error(f"[RETRIEVAL] Failed: {e}")
             return ""
+
+    def _extract_relevant_sections(
+        self, content: str, query: str, max_chars: int = 4000, context_lines: int = 10
+    ) -> str:
+        """Extract sections of content that contain query keywords.
+
+        Instead of taking the first N chars, finds sections around keyword matches.
+        """
+        import re
+
+        # Extract keywords from query (same logic as search)
+        stop_words = {'the', 'a', 'an', 'is', 'are', 'was', 'were', 'be', 'been',
+                      'do', 'does', 'did', 'have', 'has', 'had', 'to', 'of', 'in',
+                      'for', 'on', 'with', 'at', 'by', 'from', 'we', 'how', 'what',
+                      'which', 'who', 'when', 'where', 'why', 'and', 'or', 'not'}
+        keywords = [w.lower() for w in re.split(r'\W+', query)
+                    if w and len(w) > 2 and w.lower() not in stop_words]
+
+        if not keywords:
+            return content[:max_chars]
+
+        lines = content.split('\n')
+
+        # Find lines containing keywords
+        matched_indices: set[int] = set()
+        for i, line in enumerate(lines):
+            line_lower = line.lower()
+            if any(kw in line_lower for kw in keywords):
+                matched_indices.add(i)
+
+        if not matched_indices:
+            return content[:max_chars]
+
+        # Expand to include context around matches
+        expanded_indices: set[int] = set()
+        for idx in matched_indices:
+            for offset in range(-context_lines, context_lines + 1):
+                new_idx = idx + offset
+                if 0 <= new_idx < len(lines):
+                    expanded_indices.add(new_idx)
+
+        # Build sections from contiguous line groups
+        sorted_indices = sorted(expanded_indices)
+        sections: list[str] = []
+        current_section: list[str] = []
+        last_idx = -999
+
+        for idx in sorted_indices:
+            if idx > last_idx + 1 and current_section:
+                sections.append('\n'.join(current_section))
+                current_section = []
+            current_section.append(lines[idx])
+            last_idx = idx
+
+        if current_section:
+            sections.append('\n'.join(current_section))
+
+        # Join sections with separator, respecting max_chars
+        result_parts: list[str] = []
+        total_chars = 0
+        for section in sections:
+            if total_chars + len(section) > max_chars:
+                remaining = max_chars - total_chars
+                if remaining > 200:
+                    result_parts.append(section[:remaining] + "...")
+                break
+            result_parts.append(section)
+            total_chars += len(section) + 5  # +5 for separator
+
+        return "\n\n[...]\n\n".join(result_parts) if result_parts else content[:max_chars]
 
     async def _execute_code_mode(
         self,
