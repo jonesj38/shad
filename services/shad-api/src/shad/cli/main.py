@@ -18,6 +18,7 @@ from rich.tree import Tree
 from shad import __version__
 from shad.engine import LLMProvider, RLMEngine
 from shad.history import HistoryManager
+from shad.mcp import ObsidianMCPClient
 from shad.models import Budget, RunConfig
 from shad.models.run import NodeStatus, Run, RunStatus
 from shad.utils.config import get_settings
@@ -110,14 +111,21 @@ def run(
 
     console.print(Panel(f"[bold]Goal:[/bold] {goal}", title="Shad Run", border_style="blue"))
 
+    # Initialize MCP client if vault specified
+    mcp_client: ObsidianMCPClient | None = None
     if vault:
-        console.print(f"[dim][CONTEXT] Using vault: {vault}[/dim]")
+        # Resolve vault path (support relative paths)
+        vault_path = Path(vault).expanduser()
+        if not vault_path.is_absolute():
+            vault_path = Path.cwd() / vault_path
+        console.print(f"[dim][CONTEXT] Using vault: {vault_path}[/dim]")
+        mcp_client = ObsidianMCPClient(vault_path=vault_path)
     else:
         console.print("[dim][CONTEXT] No vault specified[/dim]")
 
     async def _execute_run() -> Run:
         """Execute run."""
-        engine = RLMEngine(llm_provider=LLMProvider())
+        engine = RLMEngine(llm_provider=LLMProvider(), mcp_client=mcp_client)
         return await engine.execute(config)
 
     history = HistoryManager()
