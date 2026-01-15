@@ -64,6 +64,16 @@ class RunConfig(BaseModel):
     budget: Budget = Field(default_factory=Budget)
     voice: str | None = Field(default=None, description="Voice to use for output rendering")
 
+    # Strategy configuration (Phase 3)
+    strategy_override: str | None = Field(default=None, description="Override automatic strategy selection")
+
+    # Verification configuration (Phase 5)
+    verify_level: str | None = Field(default=None, description="Verification level: off, basic, build, strict")
+
+    # Output configuration (Phase 4)
+    write_files: bool = Field(default=False, description="Write output files to disk")
+    output_path: str | None = Field(default=None, description="Output directory for files")
+
 
 class DAGNode(BaseModel):
     """A node in the execution DAG."""
@@ -107,6 +117,7 @@ class Run(BaseModel):
     error: str | None = None
     final_result: str | None = None
     citations: list[str] = Field(default_factory=list)
+    metadata: dict[str, Any] = Field(default_factory=dict, description="Additional run metadata")
 
     def get_node(self, node_id: str) -> DAGNode | None:
         """Get a node by ID."""

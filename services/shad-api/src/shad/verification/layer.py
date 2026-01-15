@@ -125,6 +125,17 @@ class CheckResult:
     is_blocking: bool = True
     metadata: dict[str, Any] = field(default_factory=dict)
 
+    def to_dict(self) -> dict[str, Any]:
+        """Convert to dictionary for serialization."""
+        return {
+            "check_name": self.check_name,
+            "status": self.status.value,
+            "message": self.message,
+            "errors": self.errors,
+            "is_blocking": self.is_blocking,
+            "metadata": self.metadata,
+        }
+
 
 @dataclass
 class VerificationResult:

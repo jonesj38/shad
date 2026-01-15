@@ -206,12 +206,24 @@ This is not prompt engineering. This is **inference-time scaling** — treating 
 - Phase 7: Vault Curation Tools (Ingestion pipeline, shadow index, gap detection)
 
 ### Test Coverage
-- 288 passing tests across all phases
+- 271 passing tests across all phases
 - No linter errors
 - No source code deprecation warnings
 
+### Integration Status
+All modules now integrated into RLMEngine:
+1. **Strategy Selection**: Automatic strategy selection with confidence scoring, override support
+2. **StrategyDecomposer**: Dependency-aware DAG generation with constraint validation
+3. **Context Packets**: Cross-subtask context sharing via NodeContextManager
+4. **File Manifests**: Synthesis produces structured output, not raw strings
+5. **Verification Layer**: Import/syntax/type checks run on generated code
+6. **Repair Loop**: Retry failed verifications with error context
+7. **Refinement Manager**: State tracking with delta verification on resume
+8. **CLI Commands**: `--strategy`, `--verify`, `--write-files`, `shad export`, `shad ingest github`
+
 ### Architecture
 All modules implemented per SPEC.md:
+- `engine/rlm.py`: Core engine with all integrations wired in
 - `engine/strategies.py`: Strategy skeletons and heuristic selection
 - `engine/decomposition.py`: LLM-driven decomposition with constraints
 - `engine/context_packets.py`: Cross-subtask context sharing
@@ -222,6 +234,7 @@ All modules implemented per SPEC.md:
 - `vault/ingestion.py`: Repository ingestion with presets
 - `vault/shadow_index.py`: SQLite-backed source/snapshot tracking
 - `vault/gap_detection.py`: Combined scoring for vault gaps
+- `cli/main.py`: Full CLI with all commands and options
 
 ---
 
