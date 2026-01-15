@@ -7,7 +7,7 @@ from __future__ import annotations
 
 import json
 import logging
-from datetime import datetime
+from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
@@ -194,7 +194,7 @@ class HistoryManager:
         run_path.mkdir(parents=True, exist_ok=True)
 
         events_path = run_path / "events.jsonl"
-        event["timestamp"] = datetime.utcnow().isoformat()
+        event["timestamp"] = datetime.now(UTC).isoformat()
 
         with events_path.open("a") as f:
             f.write(json.dumps(event) + "\n")

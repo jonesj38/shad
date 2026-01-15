@@ -12,7 +12,7 @@ from __future__ import annotations
 import json
 import logging
 from dataclasses import dataclass, field
-from datetime import datetime
+from datetime import UTC, datetime, timedelta
 from enum import Enum
 from pathlib import Path
 from typing import Any
@@ -161,7 +161,7 @@ class HITLQueue:
         try:
             data = {
                 "items": [item.to_dict() for item in self._items.values()],
-                "updated_at": datetime.utcnow().isoformat(),
+                "updated_at": datetime.now(UTC).isoformat(),
             }
             with self._queue_file.open("w") as f:
                 json.dump(data, f, indent=2)
@@ -269,7 +269,7 @@ class HITLQueue:
 
         item.status = ReviewStatus.APPROVED
         item.reviewer = reviewer
-        item.reviewed_at = datetime.utcnow()
+        item.reviewed_at = datetime.now(UTC)
         item.review_notes = notes
 
         self._save()
@@ -289,7 +289,7 @@ class HITLQueue:
 
         item.status = ReviewStatus.REJECTED
         item.reviewer = reviewer
-        item.reviewed_at = datetime.utcnow()
+        item.reviewed_at = datetime.now(UTC)
         item.review_notes = notes
 
         self._save()
@@ -310,7 +310,7 @@ class HITLQueue:
 
         item.status = ReviewStatus.MODIFIED
         item.reviewer = reviewer
-        item.reviewed_at = datetime.utcnow()
+        item.reviewed_at = datetime.now(UTC)
         item.review_notes = notes
         item.modified_result = modified_result
 
@@ -321,9 +321,7 @@ class HITLQueue:
     def expire_old(self, hours: int | None = None) -> int:
         """Expire items older than specified hours."""
         hours = hours or self.DEFAULT_EXPIRY_HOURS
-        cutoff = datetime.utcnow()
-        from datetime import timedelta
-        cutoff = cutoff - timedelta(hours=hours)
+        cutoff = datetime.now(UTC) - timedelta(hours=hours)
 
         expired_count = 0
         for item in self._items.values():
@@ -362,9 +360,7 @@ class HITLQueue:
 
     def clear_completed(self, keep_days: int = 30) -> int:
         """Remove completed items older than specified days."""
-        from datetime import timedelta
-
-        cutoff = datetime.utcnow() - timedelta(days=keep_days)
+        cutoff = datetime.now(UTC) - timedelta(days=keep_days)
         to_remove = []
 
         for item_id, item in self._items.items():

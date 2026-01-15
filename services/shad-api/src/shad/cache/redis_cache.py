@@ -17,7 +17,7 @@ import hashlib
 import json
 import logging
 from dataclasses import dataclass
-from datetime import timedelta
+from datetime import UTC, datetime, timedelta
 from typing import Any
 
 import redis.asyncio as redis
@@ -214,7 +214,7 @@ class RedisCache:
             "key": str_key,
             "value": value,
             "tokens_used": tokens_used,
-            "created_at": datetime.utcnow().isoformat(),
+            "created_at": datetime.now(UTC).isoformat(),
             "ttl_seconds": int(ttl.total_seconds()),
             "provisional": provisional,
             "metadata": metadata or {},
@@ -271,7 +271,7 @@ class RedisCache:
 
             entry = json.loads(data)
             entry["provisional"] = False
-            entry["promoted_at"] = __import__("datetime").datetime.utcnow().isoformat()
+            entry["promoted_at"] = datetime.now(UTC).isoformat()
 
             # Set in main cache with longer TTL
             await self._client.setex(

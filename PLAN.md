@@ -36,68 +36,68 @@ This is not prompt engineering. This is **inference-time scaling** — treating 
 - [x] Fallback to direct search when scripts fail
 - [x] Full-path wikilink citations
 
-### Phase 3 — Task-Aware Decomposition (IN PROGRESS)
+### Phase 3 — Task-Aware Decomposition (COMPLETE)
 
 **Decision**: Hybrid template skeletons + LLM refinement (see SPEC.md D10)
 
-- [ ] **Strategy Skeletons**
+- [x] **Strategy Skeletons**
   - Define required stages, optional stages, constraints per strategy
   - `software`: contracts-first, imports-must-resolve, schema-first when DB involved
   - `research`: must-cite-vault, max-claims-per-source
   - `analysis`: criteria-coverage, explicit-tradeoffs
   - `planning`: milestones, dependencies
 
-- [ ] **Heuristic Strategy Selection** (no LLM call for obvious cases)
+- [x] **Heuristic Strategy Selection** (no LLM call for obvious cases)
   - Pattern-match task text against keyword sets
   - Output: `strategy_guess` + `guess_confidence`
   - confidence ≥ 0.7 → proceed; < 0.7 → default to `analysis`
   - User can override with `--strategy X`
 
-- [ ] **LLM Refinement**
+- [x] **LLM Refinement**
   - LLM fills in task-specific nodes within skeleton constraints
   - Can add/remove optional stages, split implementation into modules
   - Cannot violate required stages without explicit waiver
   - May request strategy switch mid-execution with evidence
 
-- [ ] **Soft Dependencies & Context Packets**
+- [x] **Soft Dependencies & Context Packets**
   - Decomposition emits `hard_deps` (must complete) and `soft_deps` (useful if available)
   - Completed nodes produce context packets (summary, artifacts, keywords)
   - Scheduler injects packets into pending nodes' retrieval
   - Limited rerun gate when soft dep completes and node would benefit
 
-### Phase 4 — Code Generation Output
+### Phase 4 — Code Generation Output (COMPLETE)
 
 **Decision**: Two-pass with manifest + convention-based validation (see SPEC.md D3)
 
-- [ ] **File Manifest Output**
+- [x] **File Manifest Output**
   - All code-producing runs emit structured manifest: `{path, content, language, hash, source_nodes}`
   - Writing to filesystem is always explicit (`--write-files`)
   - CLI and API share same manifest contract
   - `shad export <run_id> --output ./out` to materialize later
 
-- [ ] **Two-Pass Import Resolution**
+- [x] **Two-Pass Import Resolution**
   - **Pass 1**: Build export index (symbol → file mapping) via early contracts node
   - **Pass 2**: Generate implementations using export index as ground truth
   - Post-generation validation: check all imports resolve to existing files/symbols
   - Output structured report: `{missing_modules, missing_symbols}`
 
-- [ ] **Contracts-First Type Consistency**
+- [x] **Contracts-First Type Consistency**
   - `Types & Contracts` node produces canonical type artifacts
   - Implementation nodes import from canonical artifacts only
   - New type needs emit `contract_change_request` artifacts
   - Reconciliation step merges identical proposals, flags conflicts
   - For DB/API/Auth tasks: enforce schema-first (data model → contracts → impl)
 
-- [ ] **Write Semantics**
+- [x] **Write Semantics**
   - Only write under `output_root` (no `../` traversal)
   - `--overwrite` flag for conflicts (default: fail)
   - Emit write report with paths, skipped conflicts, hashes
 
-### Phase 5 — Verification Layer
+### Phase 5 — Verification Layer (COMPLETE)
 
 **Decision**: Progressive strictness with configurable per-check (see SPEC.md D7)
 
-- [ ] **Verification Checks**
+- [x] **Verification Checks**
   - Import resolution: all imports resolve to existing files/symbols
   - Syntax/parse: code is syntactically valid
   - Manifest integrity: no path traversal, no duplicates, within output root
@@ -105,14 +105,14 @@ This is not prompt engineering. This is **inference-time scaling** — treating 
   - Unit tests: tests pass
   - Lint: style conformance
 
-- [ ] **Verification Levels**
+- [x] **Verification Levels**
   - `--verify=off`: No checks
   - `--verify=basic` (default): Imports + syntax + manifest blocking
   - `--verify=build`: Basic + typecheck blocking
   - `--verify=strict`: Build + tests blocking
   - Per-check override: `--block-on typecheck` / `--warn-only lint`
 
-- [ ] **Error Classification & Repair**
+- [x] **Error Classification & Repair**
   - Syntax/lint → local repair only
   - Type errors → local repair with sibling context (contracts/types)
   - Unit tests → local repair with sibling outputs
@@ -121,30 +121,30 @@ This is not prompt engineering. This is **inference-time scaling** — treating 
   - Error signature hashing prevents infinite loops
   - Max 2 local retries per node, max 10 escalations per run
 
-- [ ] **Test Generation** (software strategy)
+- [x] **Test Generation** (software strategy)
   - Spec-first stubs: after contracts, generate `TEST_PLAN.md` + test stubs
   - Post-implementation pass: generate full test suite with complete codebase context
   - Tests advisory by default, blocking in `--verify=strict`
   - Override: `--tests off|stubs|post|tdd|co`
 
-### Phase 6 — Iterative Refinement
+### Phase 6 — Iterative Refinement (COMPLETE)
 
 **Decision**: Tiered fallback with NEEDS_HUMAN as default for high-impact (see SPEC.md D8)
 
-- [ ] **Run States**
+- [x] **Run States**
   - `SUCCESS`: Meets acceptance criteria
   - `PARTIAL`: Produced artifacts but did not meet criteria
   - `FAILED`: Could not produce meaningful artifacts or safety stop
   - `NEEDS_HUMAN`: Paused, context preserved, awaiting human input
 
-- [ ] **Max Iterations Policy (Tiered Fallback)**
+- [x] **Max Iterations Policy (Tiered Fallback)**
   - High-impact task OR substantial artifacts → `NEEDS_HUMAN`
   - Low-risk task, verification advisory → `PARTIAL`
   - Cannot proceed safely OR no artifacts → `FAILED`
   - Same run hits max iterations twice without human input → `FAILED_WITH_DIAGNOSTIC`
   - Always return: best artifacts + failure report + suggested next inputs
 
-- [ ] **Delta Verification on Resume**
+- [x] **Delta Verification on Resume**
   - Store per completed node: `used_notes[]`, `used_note_hashes{}`, `subset_fingerprint`
   - On resume: check vault manifest against stored hashes
   - Node is stale if any `used_note_hash` differs
@@ -152,7 +152,7 @@ This is not prompt engineering. This is **inference-time scaling** — treating 
   - Unchanged nodes are trusted
   - Selective replay: `--replay node_id`, `--replay subtree:X`, `--replay stale`
 
-- [ ] **Human-in-the-Loop Checkpoints**
+- [x] **Human-in-the-Loop Checkpoints**
   - Explicit markers: `[REVIEW]`, `[APPROVE]` in prompts
   - Auto-triggers: high-impact node at depth ≤ 1, low confidence + high fan-out
   - Hard safety (non-negotiable): file writes outside sandbox, network beyond allowlist
@@ -160,25 +160,25 @@ This is not prompt engineering. This is **inference-time scaling** — treating 
   - Max 5 checkpoints per run, then degrade to batch review at end
   - Checkpoint presents: node summary, decision to approve, confidence signals, options
 
-### Phase 7 — Vault Curation Tools
+### Phase 7 — Vault Curation Tools (COMPLETE)
 
 **Decision**: Combined scoring for gap detection, configurable ingestion presets (see SPEC.md D14)
 
-- [ ] **Ingestion Pipeline**
+- [x] **Ingestion Pipeline**
   - `shad ingest github <url>` — Clone and process repository
   - Presets: `mirror` (raw files), `docs` (default, README/docs/metadata), `deep` (semantic index)
   - Immutable timestamped snapshots: `Sources/<domain>/<source_id>/<YYYY-MM-DD>/`
   - Required frontmatter: `source_url`, `source_type`, `ingested_at`, `source_revision`, `content_hash`
   - Post-hoc enrichment: `shad enrich <snapshot_id> --deep`
 
-- [ ] **Shadow Index** (outside vault, in `~/.shad/index.sqlite`)
+- [x] **Shadow Index** (outside vault, in `~/.shad/index.sqlite`)
   - Maps `source_url → latest_snapshot`
   - Schema: `sources`, `snapshots`, `latest` tables
   - Update policies: `manual`, `notify`, `auto`
   - Export: `shad sources export --format yaml --out <path>`
   - Pin snapshots: `shad sources pin <url> --snapshot <id>`
 
-- [ ] **Vault Analysis & Gap Detection**
+- [x] **Vault Analysis & Gap Detection**
   - `shad vault analyze [--llm-audit]`
   - Combined scoring: `0.55 * history_pain + 0.25 * coverage_miss + 0.20 * llm_score`
   - History pain: query frequency, median retrieval_score, fallback rate, downstream failures
@@ -186,7 +186,7 @@ This is not prompt engineering. This is **inference-time scaling** — treating 
   - LLM audit (optional): send vault summary, ask for top 10 gaps
   - Output: ranked gaps with evidence, suggested additions, priority
 
-- [ ] **Note Standardization**
+- [x] **Note Standardization**
   - Enforce consistent frontmatter
   - Extract and tag code examples
   - Link related notes automatically
@@ -197,23 +197,31 @@ This is not prompt engineering. This is **inference-time scaling** — treating 
 ## Current Status
 
 ### Complete
-- RLM Engine with recursive decomposition
-- Obsidian MCP integration
-- Code Mode (LLM-generated retrieval scripts)
-- Per-subtask context retrieval
-- Budget enforcement and partial results
-- History artifacts and resume
-- Redis caching with hash validation
+- Phase 1: Foundation (RLM Engine, budget enforcement, history artifacts, Redis caching)
+- Phase 2: Obsidian Integration (MCP client, Code Mode, per-subtask context retrieval)
+- Phase 3: Task-Aware Decomposition (Strategy skeletons, heuristic selection, soft dependencies)
+- Phase 4: Code Generation Output (File manifests, two-pass import resolution, contracts-first)
+- Phase 5: Verification Layer (Syntax/import/type checks, error classification, repair actions)
+- Phase 6: Iterative Refinement (Run states, delta verification, HITL checkpoints)
+- Phase 7: Vault Curation Tools (Ingestion pipeline, shadow index, gap detection)
 
-### In Progress
-- Task-aware decomposition (Phase 3)
-  - Strategy skeletons
-  - Heuristic selection + LLM refinement
-  - Soft dependencies and context packets
+### Test Coverage
+- 288 passing tests across all phases
+- No linter errors
+- No source code deprecation warnings
 
-### Next Up
-- File output mode (Phase 4)
-- Verification layer (Phase 5)
+### Architecture
+All modules implemented per SPEC.md:
+- `engine/strategies.py`: Strategy skeletons and heuristic selection
+- `engine/decomposition.py`: LLM-driven decomposition with constraints
+- `engine/context_packets.py`: Cross-subtask context sharing
+- `output/manifest.py`: File manifest output with content hashing
+- `output/import_resolution.py`: Two-pass import validation
+- `verification/layer.py`: Progressive verification with error classification
+- `refinement/manager.py`: Run states, delta verification, HITL checkpoints
+- `vault/ingestion.py`: Repository ingestion with presets
+- `vault/shadow_index.py`: SQLite-backed source/snapshot tracking
+- `vault/gap_detection.py`: Combined scoring for vault gaps
 
 ---
 
