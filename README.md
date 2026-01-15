@@ -8,10 +8,11 @@ Load an Obsidian vault with curated knowledge — documentation, code examples, 
 # Load a vault with mobile dev knowledge, then build an app
 shad run "Build a task management app with auth, offline sync, and push notifications" \
   --vault ~/MobileDevVault \
-  --max-depth 4
+  --strategy software \
+  --write-files --output ./TaskApp
 ```
 
-Shad recursively decomposes the task, retrieves targeted context for each subtask, generates output informed by your vault's examples, and assembles coherent results.
+Shad recursively decomposes the task, retrieves targeted context for each subtask, generates code with type consistency, verifies outputs, and assembles coherent results.
 
 ---
 
@@ -21,7 +22,8 @@ AI systems break down when:
 - Context grows beyond the model's window
 - Tasks require reasoning over many documents
 - Output quality depends on following specific patterns
-- You need consistent, reproducible results
+- Generated code needs consistent types across files
+- You need reproducible, verifiable results
 
 Current solutions (RAG, long-context models) help but don't scale. You can't fit a 100MB documentation vault into any context window.
 
@@ -31,10 +33,11 @@ Current solutions (RAG, long-context models) help but don't scale. You can't fit
 
 Shad treats your vault as an **explorable environment**, not a fixed input:
 
-1. **Decompose**: Break complex tasks into subtasks recursively
-2. **Retrieve**: For each subtask, generate custom retrieval code that searches your vault
-3. **Generate**: Produce output informed by relevant examples from your vault
-4. **Assemble**: Synthesize subtask results into coherent output
+1. **Decompose**: Break complex tasks into subtasks using domain-specific strategy skeletons
+2. **Retrieve**: For each subtask, generate custom retrieval code that searches your vault(s)
+3. **Generate**: Produce output with contracts-first type consistency
+4. **Verify**: Check syntax, types, and tests with configurable strictness
+5. **Assemble**: Synthesize subtask results into coherent output (file manifests for code)
 
 This allows Shad to effectively utilize **gigabytes** of context — not by loading it all at once, but by intelligently retrieving what's needed for each subtask.
 
@@ -70,6 +73,19 @@ shad run "Compare all authentication approaches documented in my vault" \
   --vault ~/DevDocs \
   --max-depth 3
 
+# Generate code with verification
+shad run "Build a REST API for user management" \
+  --vault ~/TeamDocs \
+  --strategy software \
+  --verify strict \
+  --write-files --output ./api
+
+# Use multiple vaults (priority order)
+shad run "Build auth system" \
+  --vault ~/Project \
+  --vault ~/Patterns \
+  --vault ~/Docs
+
 # Check results
 shad status <run_id>
 shad trace tree <run_id>
@@ -95,27 +111,27 @@ for r in results:
     if "refresh token" in r["content"].lower():
         relevant.append(r["content"][:2000])
 
-__result__ = f"""
-## OAuth Patterns
-{patterns[:3000]}
-
-## Relevant Examples
-{"---".join(relevant)}
-"""
+__result__ = {
+    "context": f"## OAuth Patterns\n{patterns[:3000]}\n\n## Examples\n{'---'.join(relevant)}",
+    "citations": [...],
+    "confidence": 0.72
+}
 ```
 
 This enables:
 - **Multi-step retrieval**: Search → read specific notes → filter → aggregate
 - **Query-specific logic**: Different retrieval strategies per subtask
 - **Context efficiency**: Return only what's needed, not entire documents
+- **Confidence scoring**: Recovery when retrieval quality is low
 
-### Recursive Decomposition
+### Strategy-Based Decomposition
 
-Complex tasks are broken into manageable subtasks:
+Complex tasks are broken into manageable subtasks using **strategy skeletons**:
 
 ```
-"Build a mobile app with auth"
+"Build a mobile app with auth" (software strategy)
          ↓
+├── Types & Contracts (hard dependency for all below)
 ├── "Set up project structure"
 ├── "Implement navigation"
 ├── "Build authentication flow"
@@ -126,10 +142,20 @@ Complex tasks are broken into manageable subtasks:
 │   ├── "Task list view"
 │   ├── "Task detail screen"
 │   └── "Create/edit task form"
-└── "Add offline sync"
+├── "Add offline sync"
+└── Verification (syntax, types, tests)
 ```
 
 Each leaf node retrieves its own context from the vault, ensuring targeted, relevant information.
+
+### File Output with Type Consistency
+
+For code generation, Shad uses **two-pass import resolution**:
+1. Generate an export index (which symbols live where)
+2. Generate implementations using the export index as ground truth
+3. Validate all imports resolve correctly
+
+Output is a structured **file manifest** — writing to disk requires explicit `--write-files`.
 
 ---
 
@@ -141,7 +167,9 @@ Each leaf node retrieves its own context from the vault, ensuring targeted, rele
 # Vault contains: Your team's code standards, architecture docs, example projects
 shad run "Build a REST API for user management following our patterns" \
   --vault ~/TeamDocs \
-  --max-depth 4
+  --strategy software \
+  --verify strict \
+  --write-files --output ./api
 ```
 
 ### 2. Research with Your Knowledge Base
@@ -149,7 +177,8 @@ shad run "Build a REST API for user management following our patterns" \
 ```bash
 # Vault contains: Research papers, notes, bookmarks
 shad run "What are the key arguments for and against microservices in my notes?" \
-  --vault ~/Research
+  --vault ~/Research \
+  --strategy research
 ```
 
 ### 3. Generate Documentation
@@ -166,7 +195,7 @@ shad run "Write a getting started guide based on our API documentation" \
 # Vault contains: Industry reports, competitor analysis, market data
 shad run "Analyze market trends based on my collected research" \
   --vault ~/MarketResearch \
-  --max-depth 3
+  --strategy analysis
 ```
 
 ---
@@ -175,25 +204,27 @@ shad run "Analyze market trends based on my collected research" \
 
 ```
 User
-   |
-   v
+   │
+   ▼
 Shad CLI / API
-   |
-   +-- RLM Engine
-   |       |
-   |       +-- Decomposition (break task into subtasks)
-   |       |
-   |       +-- Code Mode (LLM generates retrieval scripts)
-   |       |       |
-   |       |       v
-   |       +-- CodeExecutor ──> ObsidianTools ──> Your Vault
-   |       |
-   |       +-- Generation (produce output with context)
-   |       |
-   |       +-- Synthesis (combine subtask results)
-   |
-   +-- Redis (cache subtrees)
-   +-- History (run artifacts)
+   │
+   ├── RLM Engine
+   │       │
+   │       ├── Strategy Selection (heuristic + LLM)
+   │       │
+   │       ├── Decomposition (skeleton + LLM refinement)
+   │       │
+   │       ├── Code Mode (LLM generates retrieval scripts)
+   │       │       │
+   │       │       ▼
+   │       ├── CodeExecutor ──> ObsidianTools ──> Your Vault(s)
+   │       │
+   │       ├── Verification (syntax, types, tests)
+   │       │
+   │       └── Synthesis (combine subtask results)
+   │
+   ├── Redis (cache + budget ledger)
+   └── History (run artifacts)
 ```
 
 ### Key Components
@@ -201,10 +232,12 @@ Shad CLI / API
 | Component | Purpose |
 |-----------|---------|
 | **RLM Engine** | Recursive decomposition and execution |
+| **Strategy Skeletons** | Domain-specific decomposition templates |
 | **Code Mode** | LLM-generated retrieval scripts |
-| **CodeExecutor** | Sandboxed Python execution |
+| **CodeExecutor** | Sandboxed Python execution (configurable profiles) |
 | **ObsidianTools** | Vault operations (`search`, `read_note`, `list_notes`) |
-| **Redis Cache** | Cache subtask results for reuse |
+| **Verification Layer** | Syntax, type, import, test checking |
+| **Redis Cache** | Cache subtask results with hash validation |
 
 ---
 
@@ -215,12 +248,18 @@ Shad CLI / API
 shad run "Your task" --vault /path/to/vault [options]
 
 Options:
-  --vault, -v       Path to Obsidian vault
+  --vault, -v       Path to Obsidian vault (repeatable for layering)
+  --strategy        Force strategy (software|research|analysis|planning)
   --max-depth, -d   Maximum recursion depth (default: 3)
   --max-nodes       Maximum DAG nodes (default: 50)
   --max-time, -t    Maximum wall time in seconds (default: 300)
+  --verify          Verification level (off|basic|build|strict)
+  --profile         Sandbox profile (strict|local|extended)
+  --write-files     Write output files to disk
+  --output, -o      Output directory (requires --write-files)
   --no-code-mode    Disable Code Mode (use direct search)
-  --output, -o      Write result to file
+  --no-cache        Bypass cache
+  --no-checkpoints  Disable non-safety checkpoints
 
 # Check status
 shad status <run_id>
@@ -231,8 +270,16 @@ shad trace tree <run_id>
 # Inspect specific node
 shad trace node <run_id> <node_id>
 
-# Resume partial run
+# Resume partial run (with delta verification)
 shad resume <run_id>
+shad resume <run_id> --replay stale
+
+# Export files from completed run
+shad export <run_id> --output ./out
+
+# Ingest external content (Phase 7)
+shad ingest github <url> --preset docs --vault ~/MyVault
+shad vault analyze --llm-audit
 ```
 
 ---
@@ -274,10 +321,13 @@ See [PLAN.md](PLAN.md) for the full roadmap. Current focus:
 
 - [x] **Phase 1**: Foundation (CLI, API, RLM engine)
 - [x] **Phase 2**: Obsidian integration (Code Mode, per-subtask retrieval)
-- [ ] **Phase 3**: Task-aware decomposition (software architecture, research, etc.)
-- [ ] **Phase 4**: File output mode (generate actual codebases)
-- [ ] **Phase 5**: Verification layer (syntax check, type check, tests)
-- [ ] **Phase 6**: Iterative refinement (error feedback, HITL checkpoints)
+- [ ] **Phase 3**: Task-aware decomposition (strategy skeletons, soft deps)
+- [ ] **Phase 4**: File output mode (two-pass imports, contracts-first)
+- [ ] **Phase 5**: Verification layer (progressive strictness, repair loops)
+- [ ] **Phase 6**: Iterative refinement (HITL checkpoints, delta resume)
+- [ ] **Phase 7**: Vault curation tools (ingestion, gap detection)
+
+See [SPEC.md](SPEC.md) for detailed technical specification and design decisions.
 
 ---
 
@@ -287,7 +337,7 @@ See [PLAN.md](PLAN.md) for the full roadmap. Current focus:
 > Encode it as knowledge.
 > Never solve it again.
 
-Shad compounds your knowledge. Every document you add to your vault makes Shad more capable. The vault is the "how" — patterns, examples, documentation. Shad is the "engine" — decomposition, retrieval, generation, assembly.
+Shad compounds your knowledge. Every document you add to your vault makes Shad more capable. The vault is the "how" — patterns, examples, documentation. Shad is the "engine" — decomposition, retrieval, generation, verification, assembly.
 
 Together: complex tasks that learn from your accumulated knowledge.
 
