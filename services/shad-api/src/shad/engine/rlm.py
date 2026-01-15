@@ -18,6 +18,7 @@ from __future__ import annotations
 import hashlib
 import logging
 from datetime import datetime
+from pathlib import Path
 from typing import TYPE_CHECKING
 
 from shad.engine.llm import LLMProvider, ModelTier
@@ -30,12 +31,12 @@ from shad.models.run import (
     RunStatus,
     StopReason,
 )
+from shad.sandbox.executor import CodeExecutor, SandboxConfig
 from shad.utils.config import get_settings
 
 if TYPE_CHECKING:
     from shad.cache.redis_cache import RedisCache
     from shad.mcp.client import ObsidianMCPClient
-    from shad.sandbox.executor import CodeExecutor
 
 logger = logging.getLogger(__name__)
 
@@ -70,13 +71,29 @@ class RLMEngine:
         cache: RedisCache | None = None,
         mcp_client: ObsidianMCPClient | None = None,
         code_executor: CodeExecutor | None = None,
+        vault_path: Path | str | None = None,
+        use_code_mode: bool = True,
     ):
         self.llm = llm_provider or LLMProvider()
         self.cache: RedisCache | None = cache
         self.mcp_client: ObsidianMCPClient | None = mcp_client
-        self.code_executor: CodeExecutor | None = code_executor
         self.settings = get_settings()
-        self._use_code_mode = mcp_client is not None
+
+        # Resolve vault path from mcp_client if not provided
+        if vault_path is None and mcp_client is not None:
+            vault_path = mcp_client.vault_path
+        self.vault_path = Path(vault_path) if vault_path else None
+
+        # Initialize CodeExecutor for Code Mode
+        self._use_code_mode = use_code_mode and mcp_client is not None
+        if code_executor:
+            self.code_executor = code_executor
+        elif self._use_code_mode and self.vault_path:
+            sandbox_config = SandboxConfig(vault_path=self.vault_path)
+            self.code_executor = CodeExecutor(sandbox_config)
+            logger.info(f"[CODE_MODE] Initialized CodeExecutor with vault: {self.vault_path}")
+        else:
+            self.code_executor = None
 
     async def execute(self, config: RunConfig) -> Run:
         """
@@ -425,14 +442,85 @@ class RLMEngine:
     async def _retrieve_vault_context(self, query: str, limit: int = 10) -> str:
         """Retrieve relevant context from the Obsidian vault.
 
-        Uses the MCP client to search the vault and format results.
-        Extracts content around matched keywords rather than from file start.
+        Per OBSIDIAN_PIVOT.md Section 3:
+        - If Code Mode enabled: LLM generates Python script to query vault
+        - Fallback: Direct MCP search with keyword extraction
         """
         if not self.mcp_client:
             logger.warning("[RETRIEVAL] No MCP client configured")
             return ""
 
-        logger.info(f"[RETRIEVAL] Searching vault for: {query[:100]}...")
+        # Try Code Mode first if enabled
+        if self._use_code_mode and self.code_executor:
+            context = await self._retrieve_via_code_mode(query)
+            if context:
+                return context
+            logger.warning("[RETRIEVAL] Code Mode failed, falling back to direct search")
+
+        # Fallback: Direct MCP search
+        return await self._retrieve_direct(query, limit)
+
+    async def _retrieve_via_code_mode(self, query: str) -> str:
+        """Retrieve context using LLM-generated Code Mode script.
+
+        Per OBSIDIAN_PIVOT.md Section 3.1:
+        1. LLM generates Python script for this specific query
+        2. Script executes in sandboxed environment with vault access
+        3. Script filters/aggregates data before returning
+        4. Only final distilled output enters context window
+        """
+        if not self.code_executor:
+            return ""
+
+        logger.info(f"[CODE_MODE] Generating retrieval script for: {query[:80]}...")
+
+        try:
+            # Have LLM generate a custom retrieval script
+            script, tokens = await self.llm.generate_retrieval_script(
+                task=query,
+                vault_info=f"vault_path: {self.vault_path}" if self.vault_path else "",
+            )
+
+            if not script:
+                logger.warning("[CODE_MODE] LLM generated empty script")
+                return ""
+
+            logger.info(f"[CODE_MODE] Executing generated script ({len(script)} chars)...")
+            logger.debug(f"[CODE_MODE] Script:\n{script}")
+
+            # Execute the script in sandbox
+            result = await self.code_executor.execute(script)
+
+            if result.success:
+                if result.return_value:
+                    context = str(result.return_value)
+                    logger.info(f"[CODE_MODE] Script returned {len(context)} chars via __result__")
+                    return context
+                elif result.stdout:
+                    logger.info(f"[CODE_MODE] Script returned {len(result.stdout)} chars via stdout")
+                    return result.stdout
+                else:
+                    logger.warning("[CODE_MODE] Script succeeded but returned no output")
+                    return ""
+            else:
+                logger.error(f"[CODE_MODE] Script execution failed: {result.error_message}")
+                logger.error(f"[CODE_MODE] stderr: {result.stderr}")
+                return ""
+
+        except Exception as e:
+            logger.error(f"[CODE_MODE] Error: {e}")
+            return ""
+
+    async def _retrieve_direct(self, query: str, limit: int = 10) -> str:
+        """Direct MCP search fallback (non-Code Mode).
+
+        Uses the MCP client to search the vault and format results.
+        Extracts content around matched keywords rather than from file start.
+        """
+        if not self.mcp_client:
+            return ""
+
+        logger.info(f"[RETRIEVAL] Direct search for: {query[:100]}...")
 
         try:
             results = await self.mcp_client.search(query, limit=limit)

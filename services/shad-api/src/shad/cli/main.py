@@ -73,6 +73,7 @@ def cli() -> None:
 @click.option("--voice", help="Voice for output rendering")
 @click.option("--output", "-o", type=click.Path(), help="Output file for results")
 @click.option("--api", default=None, help="Shad API URL (uses local engine if not specified)")
+@click.option("--no-code-mode", is_flag=True, help="Disable Code Mode (LLM-generated retrieval scripts)")
 def run(
     goal: str,
     vault: str | None,
@@ -83,6 +84,7 @@ def run(
     voice: str | None,
     output: str | None,
     api: str | None,
+    no_code_mode: bool,
 ) -> None:
     """Execute a reasoning task.
 
@@ -113,6 +115,7 @@ def run(
 
     # Initialize MCP client if vault specified
     mcp_client: ObsidianMCPClient | None = None
+    vault_path: Path | None = None
     if vault:
         # Resolve vault path (support relative paths)
         vault_path = Path(vault).expanduser()
@@ -120,12 +123,25 @@ def run(
             vault_path = Path.cwd() / vault_path
         console.print(f"[dim][CONTEXT] Using vault: {vault_path}[/dim]")
         mcp_client = ObsidianMCPClient(vault_path=vault_path)
+
+        # Show Code Mode status
+        use_code_mode = not no_code_mode
+        if use_code_mode:
+            console.print("[dim][CODE_MODE] Enabled - LLM will generate custom retrieval scripts[/dim]")
+        else:
+            console.print("[dim][CODE_MODE] Disabled - using direct search[/dim]")
     else:
         console.print("[dim][CONTEXT] No vault specified[/dim]")
+        use_code_mode = False
 
     async def _execute_run() -> Run:
         """Execute run."""
-        engine = RLMEngine(llm_provider=LLMProvider(), mcp_client=mcp_client)
+        engine = RLMEngine(
+            llm_provider=LLMProvider(),
+            mcp_client=mcp_client,
+            vault_path=vault_path,
+            use_code_mode=use_code_mode,
+        )
         return await engine.execute(config)
 
     history = HistoryManager()
