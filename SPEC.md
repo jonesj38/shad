@@ -1,772 +1,1299 @@
-# SPEC.md
+# Shad Technical Specification
 
-Shad (Shannon's Daemon) — Technical Specification
-
-## Overview
-
-Shad is a personal AI infrastructure (PAI) for long-context reasoning over large knowledge environments. It is a self-orchestrating cognitive system that treats context as an environment, not a prompt.
-
-**Core premise**: Long-context reasoning is an inference problem, not a prompting problem.
-
-**Storage backend**: Local-first Markdown via **Obsidian**, accessed via **Model Context Protocol (MCP)**.
-
-> **Note**: See `OBSIDIAN_PIVOT.md` for the detailed Obsidian integration specification.
+> **Version**: 2.0
+> **Status**: Living Document
+> **Last Updated**: 2026-01-14
 
 ---
 
-## 1. Architecture
+## 0. Executive Summary
 
-### 1.1 High-Level Flow
+### What is Shad?
+
+**Shad (Shannon's Daemon) enables AI to utilize virtually unlimited context.** It treats an Obsidian vault as an explorable environment rather than a fixed input, recursively decomposing complex tasks, retrieving targeted context for each subtask, generating outputs informed by vault knowledge, and assembling coherent results.
+
+### Core Premise
+
+> **Long-context reasoning is an inference problem, not a prompting problem.**
+
+Instead of cramming context into a single prompt, Shad:
+1. **Decomposes** complex tasks into subtasks recursively
+2. **Retrieves** targeted context for each subtask via Code Mode
+3. **Generates** outputs informed by relevant examples
+4. **Assembles** results into coherent output
+
+### Hard Invariants
+
+1. **Never Auto-Publish**: No irreversible side effects without explicit human approval
+2. **Never Exfiltrate**: No sending data externally unless explicitly permitted
+3. **Never Self-Modify**: Cannot change own Skills/CORE without human review
+
+### Architecture Overview
 
 ```
-User / n8n
-   |
-   v
+User
+   │
+   ▼
 Shad CLI / API
-   |
-   +-- Skill Router (GoalSpec → Skill selection)
-   |
-   +-- RLM Engine (recursive DAG execution)
-   |       |
-   |       +-- OpenNotebookLM (graph-based knowledge retrieval)
-   |       +-- Redis (subtree caching)
-   |       +-- LLM Providers (tiered model calls)
-   |
-   +-- History/ (structured run artifacts)
-   |
-   +-- Voice Renderer (persona layer)
+   │
+   ├── RLM Engine (recursive decomposition + execution)
+   │       │
+   │       ├── Strategy Selection → Decomposition
+   │       ├── Code Mode → CodeExecutor → ObsidianTools → Vault(s)
+   │       ├── Verification Layer → Repair Loop
+   │       └── Synthesis → File Output
+   │
+   ├── Redis (cache + budget ledger)
+   ├── History/ (run artifacts)
+   └── Shadow Index (vault metadata)
 ```
 
-### 1.2 Core Components
+### Implementation Status
 
-| Component | Role |
-|-----------|------|
-| **RLM Engine** | Recursive Language Model engine. Treats prompts as external environments, generates code to inspect/query that environment, recursively decomposes problems, caches/verifies/recomposes results. |
-| **Obsidian Vault** | Local-first Markdown knowledge substrate. Uses frontmatter for structured metadata, Bases plugin for database-like views. |
-| **MCP Client** | Connects to Obsidian MCP Server. Translates RLM intents into tool execution requests. |
-| **Code Sandbox** | Docker container with vault bind-mounted. Executes RLM-generated Python scripts in isolation. |
-| **Skill Router** | Converts goals into GoalSpecs, scores candidate skills, selects primary + support skills, enforces loop guards. |
-| **Redis** | Subtree caching with hierarchical keys and hash validation. Central ledger for budget enforcement. |
-| **n8n** | Thin trigger + automation layer. Handles scheduling, event wiring, fan-out/fan-in of runs (not nodes), integrations. |
-| **History/** | Structured, append-only run artifacts stored inside the Obsidian vault at `Vault/Shad/History/`. |
-
-### 1.3 Code Mode (RLM Pattern)
-
-Instead of chat-based tool calling, Shad implements **Code Execution with MCP**:
-
-1. RLM writes a Python script that imports MCP tools (e.g., `obsidian.search`, `obsidian.read_note`)
-2. Script executes in sandboxed container with vault access
-3. Script filters, aggregates, and processes vault data *before* returning results
-4. Only final distilled output enters the context window
-
-This reduces context pollution and enables complex vault queries.
-
-### 1.3 Tenancy Model
-
-- **v1**: Single-user only
-- **Architecture**: Multi-tenant capable (proper isolation hooks designed in)
-- **Deployment**: Do not deploy multi-tenant initially
+| Phase | Status | Description |
+|-------|--------|-------------|
+| 1. Foundation | Complete | CLI, API, RLM Engine, budgets |
+| 2. Obsidian Integration | Complete | MCP client, Code Mode, citations |
+| 3. Task-Aware Decomposition | In Progress | Strategy skeletons, domain-specific |
+| 4. File Output Mode | Planned | Multi-file codebases, manifests |
+| 5. Verification Layer | Planned | Syntax, types, tests, repair |
+| 6. Iterative Refinement | Planned | Error feedback, HITL checkpoints |
+| 7. Vault Curation Tools | Planned | Ingestion, analysis, gap detection |
 
 ---
 
-## 2. Interface
+## 1. User Journey
 
-### 2.1 Primary Mode: CLI-First, Run-Oriented
+This section describes the mental model and flow of a Shad run from start to finish.
 
-The core UX is triggering runs from the terminal. Everything else (web UI, chat, n8n dashboards) is a view or trigger on top of the run model.
+### 1.1 Vault Setup
+
+Shad operates against one or more Obsidian vaults containing curated knowledge. A **vault** is a directory of markdown files with optional frontmatter, organized for retrieval.
+
+**Vault Layering**: Runs can declare multiple vaults with priority order:
+```bash
+shad run "Build auth system" \
+  --vault ~/Project \
+  --vault ~/Patterns \
+  --vault ~/Docs
+```
+
+Earlier vaults have higher priority in search result ranking. Each citation includes vault provenance.
+
+### 1.2 Initiating a Run
 
 ```bash
-# Start a run
-shad run "answer X using notebook Y" --notebook <id> --max-depth 3
+shad run "Build a task management app with auth and offline sync" \
+  --vault ~/MobileDevVault \
+  --max-depth 4 \
+  --output ./TaskApp
+```
 
-# Check status
-shad status <run_id>
+Shad:
+1. Normalizes the goal (extracts intent, entities, constraints)
+2. Selects a **strategy** (software, research, analysis, creative)
+3. Creates a **run** with unique ID and initializes budgets
 
-# Inspect the trace
-shad trace tree <run_id>
-shad trace node <run_id> <node_id>
+### 1.3 Strategy Selection & Decomposition
 
-# Resume / replay
+**Strategy selection** is hybrid:
+- Fast heuristic classifier runs first (keyword matching)
+- User can override with `--strategy software|research|analysis|planning`
+- LLM can request a strategy switch mid-execution with evidence
+
+Each strategy defines a **skeleton** with required stages, optional stages, and constraints. The LLM fills in task-specific details within these guardrails.
+
+**Software skeleton example**:
+- Required: Clarify requirements → Project layout → Types & contracts → Implementation → Verification → Synthesis
+- Optional: DB schema, Auth, OpenAPI, Migrations, Docs
+- Constraints: contracts-first, imports must resolve
+
+### 1.4 Retrieval (Code Mode)
+
+For each subtask, Shad retrieves targeted context via **Code Mode**: the LLM generates a Python script that queries the vault.
+
+```python
+# LLM-generated retrieval for "Implement OAuth"
+results = obsidian.search("OAuth refresh token", limit=10)
+patterns = obsidian.read_note("Patterns/Auth/OAuth.md")
+
+relevant = [r["content"][:2000] for r in results if "JWT" in r["content"]]
+__result__ = {"context": "\n".join(relevant), "citations": [...], "confidence": 0.72}
+```
+
+**Retrieval recovery policy** (when results are poor):
+1. **Tier A**: Regenerate script with hints (1 retry)
+2. **Tier B**: Broadened direct search fallback
+3. **Tier C**: Human checkpoint (high-impact nodes only)
+
+### 1.5 Parallel Execution & Budgeting
+
+Subtasks execute in parallel where dependencies allow. Each node draws from a **hierarchical token budget**:
+- Parent reserves 25% for synthesis
+- Children share the remainder via dynamic allocation
+- Per-child caps prevent runaway consumption
+- Late-stage protection enables graceful degradation
+
+**Concurrency** is tiered adaptive:
+- Separate limits for LLM calls vs local execution
+- Backoff on 429 rate limits
+- Slow-start increase when stable
+- User can override with `--max-parallel N`
+
+### 1.6 Context Propagation
+
+**Soft dependencies** enable cross-subtask context sharing:
+- Decomposition emits both hard_deps (must complete first) and soft_deps (useful if available)
+- When a node completes, it produces a **context packet** (summary, artifacts, keywords)
+- Scheduler injects packets into pending nodes' retrieval
+
+### 1.7 Verification & Repair
+
+After generation, the **verification layer** checks outputs:
+
+| Check | Default Mode | Strict Mode |
+|-------|--------------|-------------|
+| Import resolution | Blocking | Blocking |
+| Syntax/parse | Blocking | Blocking |
+| Manifest integrity | Blocking | Blocking |
+| Type errors | Advisory | Blocking |
+| Unit tests | Advisory | Blocking |
+| Lint | Advisory | Configurable |
+
+**Error recovery** follows classification:
+- **Syntax/lint**: Local repair only
+- **Type errors**: Local repair with sibling context (contracts/types)
+- **Integration failures**: Escalate to parent coordinator
+- **Contract mismatch**: Parent coordination + contract update node
+
+Escalation threshold: max 2 local retries per node, max 10 escalations per run.
+
+### 1.8 File Output
+
+For code generation tasks, Shad produces a **file manifest** (not raw text):
+
+```json
+{
+  "files": [
+    {"path": "src/types.ts", "content": "...", "language": "ts", "hash": "..."},
+    {"path": "src/api/users.ts", "content": "...", "source_nodes": ["impl_api"]}
+  ]
+}
+```
+
+**Import resolution** uses two-pass generation:
+1. **Pass 1**: Build export index (symbol → file mapping)
+2. **Pass 2**: Generate implementations using export index as ground truth
+3. **Validation**: Check all imports resolve to existing files/symbols
+
+Writing to filesystem is **always explicit** (`--write-files` flag).
+
+### 1.9 Iterative Refinement
+
+If verification fails, Shad enters a repair loop. On max iterations:
+
+| Task Type | Final State | Behavior |
+|-----------|-------------|----------|
+| High-impact | `NEEDS_HUMAN` | Pause with full context, await hints |
+| Low-risk | `PARTIAL` | Return best-effort with known issues |
+| Impossible | `FAILED` | Return diagnostics, suggest changes |
+
+Shad **always** returns best-effort artifacts plus a diagnostic report.
+
+### 1.10 Human-in-the-Loop Checkpoints
+
+Checkpoints trigger when:
+- Node is **high-impact** (security, data model, architecture, contracts) AND has low confidence
+- Retrieval confidence < 0.45 on a gating node
+- Generation confidence < 0.55 with repeated repair failures
+- Any **irreversible side effect** (file writes, network, ingestion)
+
+Explicit markers (`[REVIEW]`, `[APPROVE]`) always trigger checkpoints. Users can disable with `--no-checkpoints`.
+
+### 1.11 Resume & Replay
+
+Partial runs can be resumed:
+```bash
 shad resume <run_id>
-shad replay --from-node <node_id>
-
-# Debug mode (CLI power users)
-shad debug <run_id>
 ```
 
-### 2.2 API Endpoints
+**Delta verification**: Only re-verify nodes whose vault context changed (subset fingerprint mismatch). Users can force replay of specific nodes:
+```bash
+shad resume <run_id> --replay node_id
+shad resume <run_id> --replay stale
+```
 
-| Endpoint | Description |
-|----------|-------------|
-| `POST /v1/run` | Execute a reasoning task. Accepts `{ goal, notebook_id?, budgets?, voice? }` |
-| `GET /v1/run/:id` | Get run status and results |
-| `POST /v1/run/:id/resume` | Resume a partial/failed run |
-| `GET /v1/health` | Health check |
+### 1.12 Synthesis & Conflict Resolution
+
+Child results are synthesized bottom-up. When children produce **conflicting outputs**:
+1. Detect conflicts via decision table (decision slots with different values)
+2. Preserve both perspectives with attribution in output
+3. LLM attempts reconciliation with explicit criteria
+4. Checkpoint only for high-impact unresolved conflicts
 
 ---
 
-## 3. OpenNotebookLM Data Model
+## 2. Reference Specification
 
-### 3.1 Graph Structure (Not Hierarchy)
+### 2.1 Execution Engine
 
-Notebook, Source, and Note are all **nodes in a graph**. Relationships are **typed edges**. Hierarchy is a projection, not the ontology.
-
-| Node Type | Definition |
-|-----------|------------|
-| **Notebook** | Contextual container / "lens" / "view over the graph". Groups references, defines context for retrieval, may impose policies. Does NOT own content. |
-| **Source** | External or primary artifact (PDF, web page, transcript, code repo, etc.). Has immutable identity, metadata, extracted representations. |
-| **Note** | Derived, human- or AI-authored artifact (summary, annotation, synthesis, hypothesis, etc.). References sources and/or other notes. |
-
-### 3.2 Edge Types
+#### 2.1.1 DAG Lifecycle
 
 ```
-NOTE  ─DERIVED_FROM─>  SOURCE
-NOTE  ─DERIVED_FROM─>  NOTE
-NOTE  ─SUMMARIZES──>   SOURCE
-NOTE  ─CONTRADICTS─>   NOTE
-NOTE  ─SUPPORTS────>   NOTE
-NOTE  ─REFERENCES──>   SOURCE
-NOTE  ─PART_OF─────>   NOTEBOOK
-SOURCE ─INCLUDED_IN─>  NOTEBOOK
+CREATED → STARTED → SUCCEEDED | CACHE_HIT | FAILED | PRUNED
+                ↓
+           (decompose)
+                ↓
+           child nodes
 ```
 
-### 3.3 Retrieval Model
+**Node states**:
+- `CREATED`: Node exists but not started
+- `STARTED`: Execution in progress
+- `SUCCEEDED`: Completed successfully
+- `CACHE_HIT`: Result retrieved from cache
+- `FAILED`: Execution failed
+- `PRUNED`: Skipped (novelty check or budget)
 
-Shad doesn't "load a notebook." It queries the graph:
-> "Give me notes + sources reachable from Notebook X within depth D, filtered by trust/payment/provisional state."
+#### 2.1.2 Scheduling & Concurrency
 
----
+**Semaphores**:
+- `max_llm_in_flight`: Default 2, adaptive
+- `max_local_jobs`: Default min(4, cpu_count)
 
-## 4. Skill System
+**Adaptive behavior**:
+- On 429: Reduce `max_llm_in_flight` by 1, exponential backoff
+- On stable window (60-120s, no errors): Increase by 1 up to cap
+- Local jobs continue while LLM is rate-limited
 
-### 4.1 Skill Structure
+**User overrides**:
+- `--max-parallel N`: Upper bound on both
+- `--max-llm N`: LLM-specific cap
+- `--concurrency-mode fixed|adaptive`
 
+#### 2.1.3 Budget Enforcement
+
+| Budget | Default | Enforcement |
+|--------|---------|-------------|
+| `max_depth` | 3 | Checked before decomposition |
+| `max_nodes` | 50 | Checked before creating nodes |
+| `max_wall_time` | 300s | Checked periodically |
+| `max_tokens` | 100,000 | Atomic Redis deduction |
+
+**Hierarchical token allocation**:
 ```
-Skills/<SkillName>/
-├── SKILL.md        # Routing rules + domain knowledge (YAML frontmatter)
-├── workflows/      # Step-by-step procedures
-├── tools/          # Deterministic helpers
-└── tests/          # Evals and regressions
+Node receives envelope B
+├── reserve = max(800, 0.25 * B)  # Protected for synthesis
+└── spendable = B - reserve        # Distributed to children
 ```
 
-### 4.2 Skill Metadata (SKILL.md frontmatter)
+Children receive base grants (300 tokens) with dynamic top-ups. Per-child cap: 35% of parent's spendable pool.
 
+### 2.2 Decomposition & Strategies
+
+#### 2.2.1 Strategy Skeletons
+
+Each strategy defines:
+- **Required stages**: Must exist in DAG
+- **Optional stages**: Added when relevant
+- **Constraints**: Invariants the LLM must respect
+- **Default dependencies**: Edges between stages
+
+**Software strategy**:
 ```yaml
-name: research
-version: 1.2.0
-description: Deep research with citation tracking
-use_when:
-  - "research *"
-  - "investigate *"
-  - "find evidence for *"
-intents: [research, investigate, summarize]
-entities: [academic, technical]
-inputs_schema: { goal: string, notebook_id: string }
-outputs_schema: { summary: string, citations: array }
-tools_allowed: [retrieve, embed, summarize]
-priority: 10
-cost_profile: expensive
-composes_with: [citations, images]
-exclusions: ["quick questions", "simple lookups"]
-default_voice: researcher
-entry_workflows: [default, quick, thorough]
+required:
+  - clarify_requirements
+  - project_layout
+  - types_contracts
+  - implementation
+  - verification
+  - synthesis
+optional:
+  - db_schema
+  - auth
+  - openapi
+  - migrations
+  - docs
+constraints:
+  - contracts_first: true
+  - imports_must_resolve: true
+  - no_implicit_writes: true
 ```
 
-### 4.3 Skill Routing Flow
+**Research strategy**:
+```yaml
+required:
+  - clarify_scope
+  - gather_sources
+  - synthesize
+  - cite
+optional:
+  - compare_perspectives
+  - identify_gaps
+constraints:
+  - must_cite_vault: true
+  - max_claims_per_source: 5
+```
 
-1. **Normalize goal → GoalSpec**
-   - `raw_goal`, `normalized_goal`, `intent`, `entities`, `constraints`, `context`, `risk_level`
+#### 2.2.2 LLM Refinement
 
-2. **Candidate generation** (fast recall, 5-12 skills)
-   - Keyword/pattern match (high precision)
-   - Intent match (high precision)
-   - Embedding similarity (high recall)
-   - Context gates (hard filters)
+The decomposition LLM receives:
+- Strategy name and skeleton
+- Strategy-specific "hint pack" (system prompt additions)
+- Budget caps
 
-3. **Ranking** (deterministic scoring)
-   ```
-   Score(skill) =
-     + W_intent * intent_match
-     + W_triggers * trigger_match_strength
-     + W_context * context_match
-     + W_embed * embedding_similarity
-     + W_history * past_success_rate
-     - W_risk * risk_mismatch
-     - W_exclusion * exclusion_hit
-     + W_priority * priority
-   ```
+It returns a DAG that:
+- Can add/remove optional nodes
+- Can split implementation into specific modules
+- Can add soft dependencies
+- Cannot violate required stages without explicit waiver
 
-4. **Selection**
-   - One primary skill (always)
-   - Support skills only if clearly needed
+#### 2.2.3 Strategy Selection
 
-5. **Composition**: Primary skill orchestrates support skills via direct invocation
+1. **Heuristic classifier** (no LLM call):
+   - Pattern-match task text against keyword sets
+   - Output: `strategy_guess` + `guess_confidence`
 
-### 4.4 Skill Loop Guards
+2. **Decision rule**:
+   - confidence ≥ 0.7 → proceed with guess
+   - confidence < 0.7 → default to `analysis`, allow LLM confirmation
 
-- **Call stack tracking**: Reject invocations that would create a cycle
-- **Depth limits per skill**: Each skill has max invocation depth
-- **Static analysis**: Lint tool to detect potential cycles (not runtime defense)
+3. **User override**: `--strategy X` always wins
+
+4. **Mid-run switch**: LLM can emit `strategy_switch_request` with evidence
+
+### 2.3 Vaults
+
+#### 2.3.1 Single vs Layered Vaults
+
+**Single vault** (default):
+```bash
+shad run "..." --vault ~/MyVault
+```
+
+**Layered vaults** (priority order):
+```bash
+shad run "..." --vault ~/Project --vault ~/Patterns --vault ~/Docs
+```
+
+**Retrieval behavior**:
+- Search executes against all vaults in parallel
+- Results merged with weighted scoring: `relevance + priority_bonus(vault_index)`
+- Per-vault caps (e.g., max 10 results each), then global top N
+- Citations include `vault_id:path`
+
+**Optional namespacing** for Code Mode:
+```python
+obsidian.search("jwt", vault="patterns")
+obsidian.search("config", vaults=["project", "docs"])
+```
+
+#### 2.3.2 Ingestion & Snapshots
+
+**Snapshot model**: Immutable, timestamped snapshots.
+
+```
+Sources/<domain>/<source_id>/<YYYY-MM-DD>/
+├── _entry.md           # Summary note
+├── README.md
+├── docs/...
+├── meta/
+│   ├── ingest.yaml     # Provenance metadata
+│   └── file_tree.md
+└── index/              # Only for 'deep' preset
+    ├── symbols.md
+    └── modules.md
+```
+
+**Frontmatter** (required):
+```yaml
+source_url: "https://github.com/org/repo"
+source_type: "github_repo"
+ingested_at: "2026-01-14T19:02:11-07:00"
+source_revision: "abc123"
+content_hash: "sha256:..."
+snapshot_id: "source_id@2026-01-14"
+```
+
+**Ingestion presets**:
+
+| Preset | What's ingested | Best for |
+|--------|-----------------|----------|
+| `mirror` | All files, minimal processing | Archival, small repos |
+| `docs` (default) | README, docs/, comments, metadata | Most repos |
+| `deep` | docs + semantic index (symbols, imports) | Heavily-used repos |
+
+**CLI**:
+```bash
+shad ingest github <url> --preset docs
+shad ingest github <url> --preset deep --languages ts,python
+shad enrich <snapshot_id> --deep  # Post-hoc semantic indexing
+```
+
+#### 2.3.3 Shadow Index
+
+The shadow index maps `source_url → latest_snapshot`. It lives **outside the vault** in `~/.shad/index.sqlite`.
+
+**Schema**:
+```sql
+sources(source_url PK, source_id, source_type, update_policy)
+snapshots(snapshot_id PK, source_id FK, ingested_at, source_revision, entry_paths, content_hash)
+latest(source_id PK, latest_snapshot_id FK)
+```
+
+**Update policies**:
+- `manual`: Detect changes, ingest only on user trigger
+- `notify`: Detect changes, queue suggestion
+- `auto`: Ingest on schedule with quotas
+
+**Export** (optional):
+```bash
+shad sources export --format yaml --out <vault>/.shad/sources.yaml
+shad sources ls
+shad sources pin <url> --snapshot <id>
+```
+
+### 2.4 Retrieval (Code Mode)
+
+#### 2.4.1 Sandbox Security Model
+
+**Profiles** (configurable per-run):
+
+| Profile | File Access | Network | Use Case |
+|---------|-------------|---------|----------|
+| `strict` (default) | Vault only via ObsidianTools | None | Safe, deterministic |
+| `local` | + Read-only to allowlisted roots | None | Reference local repos |
+| `extended` | + Read-only allowlist | HTTP GET to allowlisted domains | Fetch live docs |
+
+**Sandbox constraints**:
+- Disabled builtins: `eval`, `exec`, `compile`, `__import__`, raw `open`
+- Allowed imports: `json`, `re`, `datetime`, `collections`, `itertools`, `functools`, `math`, `hashlib`, `pathlib`, `typing`, `dataclasses`, `enum`, `yaml`
+- Resource limits: 60s timeout, 512MB memory
+- Output via `__result__` only, capped at 200KB
+
+**CLI**:
+```bash
+shad run "..." --profile strict  # Default
+shad run "..." --profile local --fs-read ./myrepo
+shad run "..." --profile extended --net-allow docs.example.com
+```
+
+#### 2.4.2 Structured Retrieval Results
+
+Retrieval scripts must return structured results:
+
+```python
+__result__ = {
+    "context": "<distilled context text>",
+    "citations": [{"vault": "...", "path": "...", "snip_start": 0, "snip_end": 2000}],
+    "queries": ["oauth refresh token", "jwt validation"],
+    "signals": {"num_notes": 7, "total_chars": 12450, "keyword_hits": 18},
+    "confidence": 0.72,
+    "why": "Found OAuth pattern note + 3 examples mentioning refresh tokens"
+}
+```
+
+#### 2.4.3 Retrieval Scoring & Recovery
+
+**System-computed relevance score** (independent of script's self-reported confidence):
+
+```
+retrieval_score = w1*keyword_overlap + w2*coverage + w3*diversity - w4*boilerplate_penalty
+```
+
+**Recovery policy**:
+
+| Tier | Trigger | Action |
+|------|---------|--------|
+| A | `retrieval_score < 0.45` OR `confidence < 0.5` | Regenerate script with hints (1 retry) |
+| B | Tier A failed | Broadened direct search fallback |
+| C | Tier B failed AND high-impact node | Human checkpoint |
+
+**Thresholds**:
+- `min_context_chars`: 2000
+- `min_citations`: 2
+- `low_score_threshold`: 0.45
+- `max_retrieval_regens_per_node`: 1
+- `max_total_retrieval_regens_per_run`: 5
+
+### 2.5 Budgets
+
+#### 2.5.1 Token Hierarchy
+
+```
+Run budget (max_tokens)
+└── Root node envelope
+    ├── reserve (25%, min 800)
+    └── spendable → distributed to children
+        ├── Child 1 envelope
+        │   ├── retrieval (20-30%)
+        │   ├── generation (50-60%)
+        │   └── repair (10-20%)
+        └── Child N envelope
+```
+
+**Allocation rules**:
+- Base grant per child: 300 tokens
+- Max child share: 35% of parent's spendable
+- Late-stage protection: Disable expensive strategies when pool depleted
+
+#### 2.5.2 Wall Time & Retry Caps
+
+| Limit | Default | Scope |
+|-------|---------|-------|
+| `max_wall_time` | 300s | Per-run |
+| `max_local_repairs_per_leaf` | 2 | Per-node |
+| `max_escalations_per_run` | 10 | Per-run |
+| `max_retrieval_regens_per_run` | 5 | Per-run |
+
+### 2.6 Verification
+
+#### 2.6.1 Verification Checks
+
+| Check | What it validates |
+|-------|-------------------|
+| Import resolution | All imports resolve to existing files/symbols |
+| Syntax/parse | Code is syntactically valid |
+| Manifest integrity | No path traversal, no duplicates, within output root |
+| Type check | TypeScript/Flow type errors (via `tsc --noEmit`) |
+| Unit tests | Tests pass |
+| Integration tests | Integration tests pass |
+| Lint | Style conformance |
+
+#### 2.6.2 Blocking vs Advisory
+
+**Verification levels**:
+- `--verify=off`: No checks
+- `--verify=basic` (default): Imports + syntax + manifest blocking
+- `--verify=build`: Basic + typecheck blocking
+- `--verify=strict`: Build + tests blocking
+
+**Per-check override**:
+```bash
+--block-on typecheck,unit_tests
+--warn-only lint,integration_tests
+```
+
+Or via config:
+```yaml
+verification:
+  import_resolution: blocking
+  syntax: blocking
+  typecheck: advisory
+  unit_tests: advisory
+```
+
+#### 2.6.3 Repair Escalation
+
+**Error classification drives repair scope**:
+
+| Error Class | First Action | Context | Escalate When |
+|-------------|--------------|---------|---------------|
+| Syntax/lint | Local repair | None | >2 retries |
+| Type errors | Local repair | types/contracts | >2 retries OR multi-leaf |
+| Unit tests | Local repair | sibling outputs | >2 retries |
+| Integration tests | Parent coordination | relevant siblings | Immediate |
+| Contract mismatch | Parent coordination + update | contracts + dependents | Immediate |
+
+**Error signature hashing** prevents infinite loops: Hash `(error_class, primary_files, key_lines)` to detect repeated same-error.
+
+### 2.7 File Output
+
+#### 2.7.1 Manifest Structure
+
+```json
+{
+  "run_id": "abc123",
+  "files": [
+    {
+      "path": "src/types.ts",
+      "content": "export interface User { ... }",
+      "language": "ts",
+      "mode": "create",
+      "hash": "sha256:...",
+      "source_nodes": ["types_contracts"]
+    }
+  ],
+  "notes": [
+    {"kind": "contract_change_request", "detail": "Add UserRole enum"}
+  ]
+}
+```
+
+#### 2.7.2 Import Resolution (Two-Pass)
+
+**Pass 1: Build export index**
+```json
+{
+  "exports": [
+    {"symbol": "User", "from": "src/types.ts", "type": "type"},
+    {"symbol": "createUser", "from": "src/api/users.ts", "type": "function"}
+  ],
+  "path_aliases": {"@/": "src/"}
+}
+```
+
+**Pass 2: Generate implementations**
+- Each node receives export index as ground truth
+- Instruction: "Import from export index mappings. Do not invent paths."
+
+**Post-generation validation**:
+```json
+{
+  "missing_modules": [{"file": "src/api/users.ts", "import": "@/db", "reason": "not in manifest"}],
+  "missing_symbols": [{"file": "src/api/users.ts", "symbol": "User", "reason": "not exported"}]
+}
+```
+
+#### 2.7.3 Type Consistency
+
+**Contracts-first rule**:
+1. A `Types & Contracts` node produces canonical type artifacts
+2. Implementation nodes import from canonical artifacts only
+3. New type needs emit `contract_change_request` artifacts
+4. Reconciliation step merges identical proposals, flags conflicts
+
+For software tasks spanning DB/API/Auth, Shad enforces **schema-first**: data model → contracts → implementation.
+
+#### 2.7.4 Write Semantics
+
+**Artifact-first**: Runs always produce a manifest. Writing to disk is explicit.
+
+```bash
+# Produce manifest only
+shad run "..." --vault ~/v
+
+# Produce manifest + write files
+shad run "..." --vault ~/v --write-files --output ./out
+
+# Export after inspection
+shad export <run_id> --output ./out
+```
+
+**Write safeguards**:
+- Only write under `output_root` (no `../` traversal)
+- `--overwrite` flag for conflicts (default: fail)
+- Emit write report with paths, skipped conflicts, hashes
+
+### 2.8 Iteration & Resume
+
+#### 2.8.1 Run States
+
+```
+PENDING → RUNNING → SUCCESS | PARTIAL | FAILED | NEEDS_HUMAN
+```
+
+**Terminal states**:
+- `SUCCESS`: Meets acceptance criteria
+- `PARTIAL`: Produced artifacts but did not meet criteria
+- `FAILED`: Could not produce meaningful artifacts or safety stop
+
+**Pausable state**:
+- `NEEDS_HUMAN`: Run stopped, context preserved, awaiting human input
+
+#### 2.8.2 Delta Verification on Resume
+
+For each completed node, store:
+- `used_notes[]`: Paths actually read
+- `used_note_hashes{path → hash}`: Content hashes
+- `subset_fingerprint`: Hash over used note hashes
+
+**On resume**:
+1. Check current vault manifest against stored hashes
+2. Node is **stale** if any `used_note_hash` differs
+3. Stale nodes undergo re-verification (or re-execution for contracts nodes)
+4. Unchanged nodes are trusted
+
+**Selective replay**:
+```bash
+shad resume <run_id> --replay node_id
+shad resume <run_id> --replay subtree:node_id
+shad resume <run_id> --replay stale
+```
+
+#### 2.8.3 Max Iterations Policy
+
+On max-iteration exhaustion:
+
+| Condition | Final State |
+|-----------|-------------|
+| High-impact task OR substantial artifacts exist | `NEEDS_HUMAN` |
+| Low-risk task, verification advisory | `PARTIAL` |
+| Cannot proceed safely OR no meaningful artifacts | `FAILED` |
+| Same run hits max iterations twice without human intervention | `FAILED_WITH_DIAGNOSTIC` |
+
+**Always return**:
+- Best current artifacts
+- Failure report (what criteria failed, what was tried)
+- Suggested next inputs from human
+
+### 2.9 Human-in-the-Loop
+
+#### 2.9.1 Checkpoint Triggers
+
+**Explicit markers** (always honored):
+- `[REVIEW]`: Run node, pause before propagating outputs
+- `[APPROVE]`: Pause before execution, require approval
+- `--checkpoint-on <categories>`: Pause on specific node types
+- `--no-checkpoints`: Disable all except hard safety
+
+**Auto-triggers** (default enabled):
+- High-impact node (security/auth, data model, architecture, contracts) at depth ≤ 1
+- High-impact node changing contracts
+- Low retrieval confidence (< 0.45) + high-impact or high fan-out
+- Low generation confidence (< 0.55) + repeated repair failures
+
+**Hard safety** (non-negotiable, cannot disable):
+- File write outside sandboxed output root
+- Network access beyond allowlist
+- Vault ingestion (if auto-ingest configured)
+- Any potential data leak
+
+#### 2.9.2 Checkpoint Interface
+
+When paused, Shad presents:
+- Node summary (goal + plan)
+- Decision/output to approve (diff or contract snippet)
+- Confidence signals (retrieval_score, generation_confidence, verification status)
+- Options: Approve | Edit | Provide hint | Skip node | Stop run
+
+**Caps**: `max_checkpoints_per_run = 5` (then degrade to batch review at end)
+
+### 2.10 Caching
+
+#### 2.10.1 Cache Keys
+
+**Hierarchical key scheme**:
+```
+shad:cache:main:<goal_type>:<intent>:<entities>:<context_hash>[:<extra_slots>]
+```
+
+**Subset fingerprint**: Hash of `(vault_id, path, content_hash)` tuples for notes actually used.
+
+#### 2.10.2 Invalidation Rules
+
+**Hybrid (hash + TTL)**:
+
+| Condition | Cache behavior |
+|-----------|----------------|
+| Subset fingerprint matches AND TTL not expired | Hit |
+| Subset fingerprint differs | Miss (invalidate) |
+| TTL expired | Miss (invalidate) |
+
+**TTL defaults**:
+- Main cache: 30 days
+- Staging cache: 24 hours
+- Volatile folders (`Inbox/`, `Daily/`): 24 hours
+
+**TTL per vault** (with layered vaults):
+- `patterns` vault: 30 days
+- `docs` vault: 7 days
+- `project` vault: 24 hours
+
+#### 2.10.3 Manual Controls
+
+```bash
+shad run "..." --no-cache          # Bypass reads/writes
+shad run "..." --refresh-cache     # Ignore reads, write new
+shad cache clear --scope run|source|all
+```
+
+### 2.11 Test Generation
+
+#### 2.11.1 Strategy-Specific Defaults
+
+| Strategy | Test behavior |
+|----------|---------------|
+| `software` | Spec-first stubs + post-implementation pass |
+| `research` | No tests (verification = citation checks) |
+| `analysis` | No tests (verification = criteria coverage) |
+| `creative` | No tests |
+
+#### 2.11.2 Software Test Flow
+
+1. **After contracts**: Generate `TEST_PLAN.md` + test stubs (describe blocks, fixtures)
+2. **After implementation**: Generate full test suite with complete codebase context
+3. **Verification**: Run tests as advisory (default) or blocking (`--verify=strict`)
+
+**Test co-generation** (optional): Leaf nodes may emit local unit tests for pure functions only.
+
+**Override**:
+```bash
+--tests off|stubs|post|tdd|co
+```
+
+### 2.12 Vault Analysis
+
+#### 2.12.1 Gap Detection (Combined Scoring)
+
+```
+gap_score = 0.55 * history_pain + 0.25 * coverage_miss + 0.20 * llm_score
+```
+
+**History pain** (primary signal):
+- Query frequency in past runs
+- Median retrieval_score per query cluster
+- "No results" / fallback rate
+- Correlation with downstream failures
+
+**Coverage miss** (secondary):
+- Missing anchor notes for common topics (auth, API, testing, etc.)
+- Missing templates (spec, ADR, test plan)
+
+**LLM audit** (optional, `--llm-audit`):
+- Send vault summary + sample notes
+- Ask for top 10 gaps with suggested note titles
+
+#### 2.12.2 Gap Report Output
+
+```markdown
+## Top Gaps (Ranked)
+
+### 1. Auth refresh tokens
+- **Evidence**: 14 queries, median retrieval_score 0.31, 62% fallback
+- **Suggested additions**:
+  - `Patterns/Auth/RefreshTokens.md`
+  - Ingest: https://auth0.com/docs/tokens/refresh-tokens
+- **Priority**: High (frequent + painful)
+```
 
 ---
 
-## 5. RLM Engine
+## 3. Existing Implementation Details
 
-### 5.1 Recursive Execution Model
+This section documents what is already implemented (Phases 1-2).
 
-```
-Goal
-  ├── Decompose into sub-questions/tasks
-  │     ├── Sub-task 1 → Retrieve → Reason → Cache
-  │     ├── Sub-task 2 → Retrieve → Reason → Cache
-  │     └── Sub-task 3 → (recursive decomposition if needed)
-  ├── Verify results
-  └── Recompose into final answer
-```
+### 3.1 LLM Provider Support
 
-### 5.2 Budget Controls (Non-Negotiable)
+**Supported providers**:
+- **Claude Code CLI** (primary, uses subscription)
+- **Anthropic API** (fallback with API key)
+- **OpenAI API** (fallback with API key)
 
-Every run gets hard limits:
+**Model tiers**:
+- `ModelTier.ORCHESTRATOR`: Best reasoning/planning (claude-sonnet-4)
+- `ModelTier.WORKER`: Balanced mid-depth work (claude-sonnet-4)
+- `ModelTier.LEAF`: Fast/cheap parallel execution (claude-haiku-4)
+- `ModelTier.JUDGE`: Evaluation/verification (uses leaf_model)
+- `ModelTier.EMBEDDER`: Routing/similarity (uses worker_model)
 
-| Budget | Description |
-|--------|-------------|
-| `max_wall_time` | Total execution time |
-| `max_tokens` | Per tier + total token budget |
-| `max_nodes` | Maximum DAG nodes |
-| `max_depth` | Maximum recursion depth |
-| `max_branching_factor` | Maximum children per node |
+### 3.2 MCP Client (Vault Operations)
 
-**Behavior at budget exhaustion**: Return partial results with completed subtrees, missing branches list, and suggested next run plan.
+**Read operations**:
+- `read_note(path)` → VaultNote with content, metadata, hash, mtime
+- `search(query, limit, path_filter, type_filter)` → Keyword-based search with scoring
+- `list_notes(directory, recursive)` → Directory enumeration
+- `get_file_hash(path)` → SHA256 hash for cache validation
 
-### 5.3 Pruning Strategy
+**Write operations**:
+- `write_note(path, content, metadata, resolve_wikilinks)`
+- `update_note(path, content, append)`
+- `update_frontmatter(path, updates)`
 
-**Primary signal**: Diminishing returns (novelty metric)
+**Delete operations** (HITL gated):
+- `delete_note(path)` → Queues for human review
+- `execute_delete(path)` → Executes pre-approved deletion
 
-Detection layers:
-1. **Cheap prefilter**: Embedding distance from existing results
-2. **Backbone**: Fact extraction diff (new facts vs. rephrased existing)
-3. **Tie-breaker**: LLM judge for marginal value scoring
+### 3.3 Code Executor (Sandbox)
 
-### 5.4 Model Tiering
+**Restricted environment**:
+- Dangerous builtins disabled
+- Import whitelist enforced
+- File access restricted to vault path
+- 60s timeout, 512MB memory limit
 
-**Profiles** (capability-based, not provider-specific):
+**ObsidianTools API** available in scripts:
+- `obsidian.search(query, limit, path_filter)`
+- `obsidian.read_note(path)`
+- `obsidian.write_note(path, content, note_type, frontmatter)`
+- `obsidian.list_notes(directory, recursive)`
+- `obsidian.get_frontmatter(path)`
+- `obsidian.get_hash(path)`
+- `obsidian.create_wikilink(path)`
 
-| Profile | Use Case |
-|---------|----------|
-| `ORCHESTRATOR` | Best reasoning/planning (expensive) |
-| `WORKER` | Balanced mid-depth recursion |
-| `LEAF` | Fast/cheap parallel calls |
-| `JUDGE` | Evals, novelty, verification |
-| `EMBEDDER` | Routing, cache keys, similarity |
+### 3.4 History & Observability
 
-**Tier routing**: Depth-based degradation + uncertainty-aware verification gates
-
-**Provider priority**:
-1. Anthropic (Claude Opus/Sonnet/Haiku) — primary
-2. OpenAI (GPT-5.x / GPT-4.1 / embeddings) — fallback
-3. Google Gemini (Pro/Flash) — alternative
-4. Local (Ollama/vLLM) — offline/privacy tier
-
-### 5.5 Caching
-
-**Key scheme**: Hierarchical keys as primary
-```
-(goal_type, intent, entities, key_slots...) → stable key
-```
-
-- **Fallback**: Exact string hash
-- **Optional**: LLM canonicalization for expensive subcalls only
-- **Avoid**: Pure embedding-hash as main mechanism
-
-**Cache namespaces**:
-- **Main cache**: Reviewed, trusted results
-- **Staging cache**: Provisional results awaiting review
-- Provisional results do NOT enter main cache until reviewed
-
-### 5.6 Contradiction Handling
-
-**Policy**: Surface both contradictions; let reasoning handle uncertainty
-
-**Per-skill handling** (context-dependent):
-- Probabilistic reasoning (carry forward multiple hypotheses)
-- Investigative escalation (spawn sub-task to resolve)
-- Flag and continue (note contradiction, proceed with best interpretation)
-
----
-
-## 6. Verification & Quality
-
-### 6.1 Verification Signals
-
-Layered approach for caching decisions:
-
-1. **Domain-specific validators**: Per-skill validation functions checking structural/factual constraints
-2. **Entailment checking**: Verify answer is logically entailed by retrieved evidence
-3. **Human-in-the-loop**: Flag low-confidence results for batch review
-
-### 6.2 HITL Model
-
-**Latency tolerance**: Batch review (async)
-- Queue flagged items for periodic human review
-- Runs complete with provisional results
-- Provisional results get taint propagation + expiring cache
-
-### 6.3 Eval Strategy
-
-| Layer | Purpose | Method |
-|-------|---------|--------|
-| **0: Invariants** | Safety floor | DAG validity, budget bounds, provenance, citation format, tool policy |
-| **1: Golden dataset** | Regression guards | Curated (GoalSpec, notebook slice, expected properties) pairs |
-| **2: Comparative runs** | Quality improvement | Same goal, different configs; human judges winner |
-| **3: Live feedback** | Long-term signal | Structured thumbs up/down with tags |
-
----
-
-## 7. History & Observability
-
-### 7.1 Directory Structure
-
+**Per-run artifact directory**:
 ```
 History/Runs/<run_id>/
 ├── run.manifest.json      # Inputs, versions, config hashes
-├── events.jsonl           # Node lifecycle events (flight recorder)
+├── events.jsonl           # Node lifecycle events
 ├── dag.json               # DAG structure with statuses
-├── decisions/
-│   ├── routing.json       # Skill routing decision
-│   └── decomposition/     # Per-node decomposition decisions
-├── metrics/
-│   ├── nodes.jsonl        # Per-node metrics
-│   └── summary.json       # Rollup metrics
+├── decisions/             # Routing, decomposition decisions
+├── metrics/               # Per-node and summary metrics
 ├── errors/                # Error records with context
-├── artifacts/             # Large payloads (referenced by hash)
-├── inspection/            # Derived analysis outputs
-├── replay/
-│   └── manifest.json      # Deterministic replay bundle
+├── artifacts/             # Large payloads (by hash)
+├── replay/manifest.json   # Deterministic replay bundle
 ├── final.report.md        # Human-readable output
-├── final.summary.json     # Machine-readable output
-└── final.<voice>.md       # Voice-rendered output (optional)
+└── final.summary.json     # Machine-readable output
 ```
 
-### 7.2 Correlation IDs
+**Per-node metrics**:
+- `node_id`, `task`, `depth`, `status`, `tokens_used`
+- `start_time`, `end_time`, `duration_ms`
+- `cache_key`, `cache_hit`, `error`
 
-Every event carries:
-- `run_id` (entire execution)
-- `trace_id` (distributed tracing)
-- `node_id` (each recursive subproblem)
-- `parent_node_id`
-- `depth`
-- `attempt` (retry count)
-- `skill_id`
-- `cache_key(s)`
+### 3.5 Redis Cache
 
-### 7.3 Node Lifecycle Events
+**Two-stage caching**:
+- **Main cache**: Verified, long-lived (30 days TTL)
+- **Staging cache**: Provisional, short-lived (24 hours TTL)
+- **Promotion**: Staging → Main via `promote()` after HITL review
 
-```
-NODE_CREATED → NODE_READY → NODE_STARTED →
-  NODE_TOOL_CALL → NODE_MODEL_CALL →
-  NODE_CACHE_HIT / NODE_CACHE_MISS →
-  NODE_RETRY_SCHEDULED →
-  NODE_FAILED / NODE_SUCCEEDED →
-  NODE_PROMOTED (staging→main)
-```
+**Hash validation**:
+- Cache keys include `context_hash` from vault content
+- Before lookup, verify hash still matches
+- Mismatch → invalidate and recompute
 
-### 7.4 Retention Policy
-
-| Tier | Duration | Contents |
-|------|----------|----------|
-| **Hot** | 14 days | Full fidelity (all traces, artifacts, raw outputs) |
-| **Warm** | 180 days | Compressed + pruned (gzipped logs, deduplicated content) |
-| **Cold** | Forever | Summaries + provenance (manifest, final outputs, decisions, learnings) |
-
-**Special handling**:
-- `shad run pin <run_id>` — Never purge full trace
-- Size caps per run (prevent pathological explosions)
-- GC job: `shad history gc --hot-days 14 --warm-days 180`
+**Budget ledger**:
+- `init_budget(run_id, token_budget)`
+- `deduct_budget(run_id, tokens)` → Atomic deduction
+- `get_remaining_budget(run_id)`
 
 ---
 
-## 8. Voice & Persona
+## 4. Decision Log
 
-### 8.1 Architecture
+This appendix documents key design decisions with rationale.
 
-- **Inside the run engine**: Neutral + precise (structured outputs)
-- **At the boundary**: Rendered through a voice layer
+### D1: Retrieval Recovery Policy
 
-Voice affects **presentation**, not **truth conditions**.
+**Decision**: Confidence-gated regeneration + three-tier fallback (regen → direct search → human checkpoint)
 
-### 8.2 VoiceSpec
+**Options considered**:
+1. Re-generate with hints only
+2. Multi-strategy parallel retrieval
+3. Graceful degradation (accept weak context)
+4. Confidence scoring + tiered recovery
 
-```yaml
-# CORE/Voices/kai.yaml
-name: kai
-tone: playful        # concise | blunt | warm | playful | formal
-verbosity: 3         # 1-5
-formatting: bullets  # bullets | headings | tables | prose
-profanity: allow
-citation_style: inline
-error_style: transparent
-signature: null
-```
+**Why this won**: Balances retrieval quality with budget constraints. Multi-strategy parallel is expensive; graceful degradation hides problems. Tiered approach provides measurable recovery with caps.
 
-### 8.3 Skill Default Voices
+**Revisit if**: Retrieval models become cheap enough to always run parallel strategies.
 
-Skills declare `default_voice` in their metadata. CLI can override:
+---
+
+### D2: DAG Cross-Subtask Dependencies
+
+**Decision**: Soft dependencies + dynamic context injection (context packets)
+
+**Options considered**:
+1. Static DAG only
+2. Dynamic re-parenting
+3. Two-pass execution
+4. Explicit soft dependency hints
+
+**Why this won**: Soft deps preserve parallelism while enabling context sharing. Dynamic re-parenting causes thrashing; two-pass doubles cost. Context packets inject value without restructuring.
+
+**Revisit if**: Complex tasks consistently produce better results with two-pass.
+
+---
+
+### D3: Type Consistency
+
+**Decision**: Contracts-first node + convention-based merging as safety net
+
+**Options considered**:
+1. Early type extraction (dedicated node)
+2. Convention-based merging
+3. Schema-first decomposition
+4. Shared mutable type registry
+
+**Why this won**: Contracts-first ensures single source of truth. Convention-based merging catches drift. Mutable registry breaks determinism and caching.
+
+**Revisit if**: LLMs become reliable enough to maintain consistency without explicit contracts.
+
+---
+
+### D4: Sandbox Security
+
+**Decision**: Configurable profiles with strict (vault-only) as default
+
+**Options considered**:
+1. Vault-only strict
+2. Read-only filesystem
+3. Allowlisted network
+4. Configurable profiles
+
+**Why this won**: Profiles balance security with power-user needs. Strict default matches "never exfiltrate" invariant. Opt-in relaxation requires explicit per-run consent.
+
+**Revisit if**: Common use cases require network access frequently enough to justify changing default.
+
+---
+
+### D5: Vault Ingestion Versioning
+
+**Decision**: Immutable snapshots + shadow index (outside vault)
+
+**Options considered**:
+1. Immutable snapshots only
+2. Update-in-place
+3. Git-backed versioning
+4. Shadow index + snapshots
+
+**Why this won**: Immutable snapshots preserve provenance. Shadow index provides "latest" convenience without vault churn. External DB avoids sync conflicts.
+
+**Revisit if**: Multi-user collaboration requires vault-internal index for portability.
+
+---
+
+### D6: Token Budget Distribution
+
+**Decision**: Hierarchical reserves (parent keeps synthesis reserve)
+
+**Options considered**:
+1. Fixed per-depth allocation
+2. Complexity-weighted pre-allocation
+3. Shared pool (first-come-first-served)
+4. Hierarchical reserves
+
+**Why this won**: Guarantees synthesis always completes (the most important output). Dynamic allocation within children prevents waste. Fixed-per-depth is too rigid; shared pool starves synthesis.
+
+**Revisit if**: Token costs drop enough that over-allocation is acceptable.
+
+---
+
+### D7: Verification Strictness
+
+**Decision**: Progressive strictness with configurable per-check
+
+**Options considered**:
+1. All advisory
+2. Syntax blocking only
+3. Configurable per-check
+4. Progressive strictness levels
+
+**Why this won**: Sensible defaults (basic: imports + syntax) enable fast iteration. Strict mode enforces quality when needed. Per-check config satisfies power users.
+
+**Revisit if**: Verification becomes fast/cheap enough to always run strict.
+
+---
+
+### D8: Resume Semantics
+
+**Decision**: Delta verification (re-verify only changed context)
+
+**Options considered**:
+1. Trust all completed nodes
+2. Re-verify all completed nodes
+3. Selective replay (user-specified)
+4. Delta verification
+
+**Why this won**: Delta verification balances correctness with speed. Trusting blindly misses vault changes; re-verifying all wastes compute. Selective replay available as override.
+
+**Revisit if**: Vault content rarely changes (then trust-all becomes safe default).
+
+---
+
+### D9: Concurrency Model
+
+**Decision**: Tiered adaptive with separate LLM/local limits
+
+**Options considered**:
+1. Fixed thread pool
+2. Adaptive to provider rate limits
+3. User-configurable only
+4. Tiered adaptive
+
+**Why this won**: Adaptive backoff handles real-world rate limits gracefully. Separate limits prevent LLM saturation from blocking local work. User override preserves control.
+
+**Revisit if**: Providers expose reliable rate limit headers (then query-based adaptation becomes viable).
+
+---
+
+### D10: Decomposition Strategies
+
+**Decision**: Hybrid (template skeletons + LLM refinement)
+
+**Options considered**:
+1. Hardcoded templates
+2. LLM + strategy hints
+3. Vault-learned patterns
+4. Hybrid templates + LLM
+
+**Why this won**: Skeletons enforce invariants (contracts-first, verification placement). LLM fills task-specific details. Vault-learned is future enhancement, not MVP requirement.
+
+**Revisit if**: Sufficient vault examples accumulate to enable pattern learning.
+
+---
+
+### D11: Test Generation Timing
+
+**Decision**: Spec-first stubs + post-implementation pass (for software strategy)
+
+**Options considered**:
+1. Co-generation (alongside implementation)
+2. Post-implementation only
+3. TDD-style (full tests first)
+4. Configurable per-strategy
+
+**Why this won**: Spec-first shapes architecture toward testability. Post-implementation pass has full context for coherent tests. Co-generation produces inconsistent fixtures.
+
+**Revisit if**: LLMs improve at maintaining test consistency across co-generation.
+
+---
+
+### D12: Multi-Vault Support
+
+**Decision**: Layered vaults with priority + optional namespacing
+
+**Options considered**:
+1. Single vault only
+2. Vault layering (priority order)
+3. Vault namespacing
+4. Defer to later
+
+**Why this won**: Layering unlocks reusable pattern vaults without complexity. Namespacing adds precision for Code Mode. Single-vault remains the simple default.
+
+**Revisit if**: Vault collision issues become common (then stronger namespacing needed).
+
+---
+
+### D13: Conflict Resolution in Synthesis
+
+**Decision**: Preserve both perspectives + LLM reconciliation + checkpoint for high-impact
+
+**Options considered**:
+1. LLM always picks winner
+2. Flag all conflicts for human
+3. Preserve both with attribution
+4. Confidence-weighted winner
+
+**Why this won**: Conflicts often represent valid tradeoffs, not errors. Preserving both maintains transparency. LLM reconciliation attempts resolution. Human checkpoint only when it matters.
+
+**Revisit if**: Users consistently want Shad to make decisions rather than present options.
+
+---
+
+### D14: Gap Detection Method
+
+**Decision**: Combined scoring (history + patterns + optional LLM audit)
+
+**Options considered**:
+1. Pattern matching only
+2. Query history analysis
+3. LLM assessment
+4. Combined scoring
+
+**Why this won**: History-based gaps reflect actual pain points. Pattern coverage catches obvious omissions. LLM audit adds depth but is expensive—opt-in only.
+
+**Revisit if**: LLM audit costs drop significantly.
+
+---
+
+## Appendix A: CLI Reference
+
 ```bash
-shad run --voice kai "..."
+# Core commands
+shad run "goal" [options]
+shad status <run_id>
+shad trace tree <run_id>
+shad trace node <run_id> <node_id>
+shad resume <run_id> [--replay <target>]
+shad export <run_id> --output <dir>
+
+# Run options
+--vault <path>              # Vault path (repeatable for layering)
+--strategy <name>           # Force strategy (software|research|analysis|planning)
+--max-depth <n>             # Max recursion depth (default: 3)
+--max-nodes <n>             # Max DAG nodes (default: 50)
+--max-time <seconds>        # Max wall time (default: 300)
+--max-tokens <n>            # Max token budget (default: 100000)
+--max-parallel <n>          # Concurrency cap
+--profile <name>            # Sandbox profile (strict|local|extended)
+--verify <level>            # Verification level (off|basic|build|strict)
+--write-files               # Write output files to disk
+--output <dir>              # Output directory (requires --write-files)
+--no-code-mode              # Disable Code Mode (direct search only)
+--no-cache                  # Bypass cache
+--no-checkpoints            # Disable non-safety checkpoints
+--tests <mode>              # Test generation (off|stubs|post|tdd|co)
+
+# Vault commands
+shad ingest github <url> [--preset docs|mirror|deep]
+shad ingest <path> [--type file|folder]
+shad enrich <snapshot_id> --deep
+shad vault analyze [--llm-audit]
+shad sources ls
+shad sources export --format yaml --out <path>
+shad sources pin <url> --snapshot <id>
+
+# Cache commands
+shad cache clear [--scope run|source|all]
 ```
 
-### 8.4 Voice Constraints
-
-Voice layer may change:
-- Phrasing and tone
-- Structure and brevity
-- Examples and analogies
-- How it surfaces caveats
-
-Voice layer must NOT change:
-- Claims / facts
-- Citations / provenance
-- Numeric results
-- Safety policies / CORE constraints
-- Decisions and stop reasons
-
 ---
 
-## 9. Failure Handling
+## Appendix B: API Reference
 
-### 9.1 UX Contract
+### Endpoints
 
-On any non-success outcome, Shad produces:
-- `final.summary.json` (machine-readable)
-- `final.report.md` (human-readable)
+| Method | Path | Description |
+|--------|------|-------------|
+| `POST` | `/v1/run` | Execute reasoning task |
+| `GET` | `/v1/run/:id` | Get run status/results |
+| `POST` | `/v1/run/:id/resume` | Resume partial run |
+| `GET` | `/v1/runs` | List recent runs |
+| `GET` | `/v1/vault/status` | Check vault connection |
+| `GET` | `/v1/vault/search` | Search vault |
+| `GET` | `/v1/health` | Health check |
 
-Both include:
-- `status`: complete | partial | failed | aborted
-- What succeeded (completed nodes/subtrees + key outputs)
-- What failed (node IDs, phase, error class, message)
-- Impact (what parts may be incomplete/tainted)
-- Suggested fixes (retry, switch model, tighten depth, add source)
-- Stop reasons (budget hit, novelty pruned, tool blocked)
-- Next actions (resume commands + recommended params)
+### POST /v1/run
 
-### 9.2 Resume Capability
-
-Every partial/failure emits a resume command:
-```bash
-shad resume <run_id>
-shad resume <run_id> --budget +25% --max-depth 2 --model-tier safer
+```json
+{
+  "goal": "Build a REST API for user management",
+  "vaults": [
+    {"id": "project", "root": "/vaults/proj", "priority": 0},
+    {"id": "patterns", "root": "/vaults/patterns", "priority": 1}
+  ],
+  "strategy": "software",
+  "config": {
+    "max_depth": 4,
+    "max_tokens": 100000,
+    "verify": "basic"
+  },
+  "write_files": false,
+  "profile": "strict"
+}
 ```
 
-Resume behavior:
-- Continue from last checkpoint
-- Reuse cached completed nodes
-- Optionally re-run failed nodes with changed parameters
+### Response
 
-### 9.3 Recovery Strategy
-
-| Failure Type | Response |
-|--------------|----------|
-| Transient (API error, timeout) | Retry with exponential backoff |
-| Budget exhaustion | Return partial with missing branches |
-| Bad decomposition | Checkpoint + partial |
-| Security/policy violation | Full abort |
-| Corrupted state | Full abort |
-
----
-
-## 10. Security & Invariants
-
-### 10.1 Hard Invariants (Constitutional Constraints)
-
-These are non-negotiable. Shad must be architecturally incapable of violating them without explicit, auditable override.
-
-#### 1. Never Auto-Publish
-
-> Shad must not publish, deploy, send, post, or execute irreversible side effects without explicit human approval.
-
-**Covered actions**: Pushing code, deploying infrastructure, posting to social media, sending emails, modifying production systems, issuing payments, changing public-facing pods.
-
-**Enforcement**: Hard gate in CORE; publish tools require `--confirm` or approval token + run ID + user identity; all attempts logged.
-
-#### 2. Never Exfiltrate
-
-> Shad must not send notebook data, derived notes, or pod contents to external services unless explicitly permitted for that run.
-
-**Enforcement**: Default network deny; allowlist per run; "external send" is privileged capability; provenance + consent recorded in History.
-
-#### 3. Never Self-Modify
-
-> Shad must not directly change its own Skills, routing logic, or CORE policies without explicit human review and approval.
-
-**Allowed**: Proposing patches, generating diffs, writing candidates to staging, running evals.
-
-**Enforcement**: Skills/CORE mounted read-only at runtime; promotion pipeline requires human approval + version bump + recorded rationale.
-
-### 10.2 CORE Enforcement Model
-
-- **Hard validation gates**: Anything that can cause harm, leakage, irreversible action, or economic impact (payments, access grants, publishing, deletes, network calls)
-- **Soft guidance in prompts**: Tone, formatting, preferences, heuristics
-
-> "Prompts are education, gates are law enforcement."
-
-### 10.3 Inspection Code Sandbox (Future)
-
-**Must support**:
-- Read-only access to History artifacts
-- Deterministic transformations and analysis
-- Local compute and lightweight modeling
-- Controlled tool invocation (safe, explicit)
-- Structured output to `History/Runs/<run_id>/inspection/`
-- Visualization outputs (Mermaid, Graphviz, CSV)
-
-**Must NOT support**:
-- Read arbitrary filesystem paths
-- Access environment secrets
-- Spawn unrestricted subprocesses
-- Open arbitrary sockets
-- Write outside `inspection/` subtree
-- Mutate Skills/CORE directly
-
----
-
-## 11. Payment Model (Future)
-
-### 11.1 Billing Primitives
-
-| Layer | Model | Description |
-|-------|-------|-------------|
-| **Primary** | Per-query metered | Pay per retrieval + reasoning operation over a notebook subgraph |
-| **Secondary** | Per-artifact unlock | Pay once to permanently unlock a specific note/source |
-| **Convenience** | Subscription tiers | Pre-paid query credits, higher limits, freshness windows |
-
-### 11.2 Metering Dimensions
-
-Record for future pricing flexibility:
-- Nodes traversed
-- Depth reached
-- Tokens generated
-- Cache hits vs misses
-- Fresh vs cached derivations
-
-### 11.3 Entitlement Model
-
-Every traversal request checked against entitlement:
-> "Does this run have permission to traverse this edge and read this node?"
-
-BSV micropayment issues short-lived capability tokens scoped to (notebook, depth, node types).
-
----
-
-## 12. Deployment
-
-### 12.1 v1 Target: Single VPS / Homelab
-
-Docker Compose stack:
-- `shad-api` (Run API + CLI entrypoint)
-- `shad-worker` (optional: async runs)
-- `redis` (cache + run state + queues)
-- `opennotebooklm` (knowledge graph)
-- `n8n` (scheduling + integrations)
-- `caddy`/`traefik` (optional: TLS + reverse proxy)
-
-### 12.2 Volumes
-
-```yaml
-volumes:
-  - ./History:/data/history
-  - ./Notebooks:/data/notebooks
-  - ./redis-data:/data/redis
+```json
+{
+  "run_id": "abc123",
+  "status": "SUCCESS",
+  "result": "...",
+  "manifest": {
+    "files": [...],
+    "notes": [...]
+  },
+  "metrics": {
+    "total_tokens": 45000,
+    "duration_ms": 120000,
+    "nodes_executed": 23
+  }
+}
 ```
 
-### 12.3 Secrets Management
-
-- `.env` file with strict permissions (0600)
-- Never write secrets into History
-- Log "provider/model used" but redact keys/tokens
-- Future: swap in SSM/Secret Manager/K8s Secrets via clean config loader
-
-### 12.4 Ops Story
-
-- Systemd unit or Docker restart policies
-- Backups: History/, ONLM data, Redis persistence
-- Updates: `git pull && docker compose build && docker compose up -d`
-
 ---
 
-## 13. Design Constraints
+## Appendix C: Glossary
 
-### 13.1 Offline-First Capability
-
-Shad must be able to operate without internet:
-- Local cache (Redis + disk)
-- Local embeddings (planned)
-- Local LLM provider (Ollama/vLLM)
-
-**Offline mode**:
-- `--offline` flag
-- Refuse external calls
-- Degrade gracefully (partial outputs, "needs online to fetch X")
-- Record what would have been done online
-
-### 13.2 Deterministic Replay
-
-Given the same:
-- GoalSpec
-- Notebook graph snapshot
-- Tool outputs (or hashes)
-- Model versions
-- Prompts
-- Random seeds
-
-Shad should reproduce:
-- Same DAG structure
-- Same decisions
-- Same citations
-- Functionally equivalent outputs
-
-### 13.3 Audit Everything
-
-Every action must be logged:
-- Every model call (provider/model/params/inputs hash/outputs hash/cost)
-- Every routing decision (candidates + scores)
-- Every DAG node creation/prune/stop reason
-- Every mutation (cache writes, notebook writes, pod writes)
-- Every external call attempt (even blocked ones)
-- Every HITL approval and what it authorized
-
-**Constraints**:
-- No secrets in logs (redaction mandatory)
-- Logs must be structured (JSONL) with human summaries alongside
-
----
-
-## 14. MVP Scope
-
-### 14.1 What Must Work
-
-**A) CLI command**
-```bash
-shad run "Goal text…" --notebook <id> --max-depth 2
-```
-
-**B) Notebook graph retrieval**
-- Load notebook by ID
-- Retrieve relevant sources + notes (top K)
-- Provide citations back to node IDs
-
-**C) 2-3 level decomposition + recomposition**
-- Decompose goal into 3-7 sub-tasks
-- For each: retrieve context, run sub-call
-- Recompose into final answer with summary, key points, citations
-
-**D) Run graph + History artifacts**
-- `run.manifest.json`
-- `routing.json`
-- `dag.json`
-- `final.report.md`
-- `final.summary.json`
-
-**E) Hard budgets + partial results**
-- `max-depth`, `max-nodes`, `max-time`
-- Return partial with clear report on exhaustion
-
-**F) Resume from checkpoint**
-```bash
-shad resume <run_id>
-```
-
-### 14.2 What MVP Does NOT Need
-
-- Redis semantic cache keys / canonicalization
-- Diminishing returns novelty pruning
-- Verification loops / judges
-- Skill router + skill-to-skill composition
-- Learnings extraction + patch promotion
-- n8n orchestration (beyond simple trigger)
-- SOLID pods + micropayments gating
-
----
-
-## 15. Learnings System (Post-MVP)
-
-### 15.1 Capture → Promote Pipeline
-
-1. **Capture everything as notes** (default layer)
-2. **Propose patches/hints/negatives** (automated suggestions)
-3. **Test via evals** (comparative runs)
-4. **Promote via HITL review** (human approval)
-
-This gives compounding improvement without self-edit instability.
-
-### 15.2 Learning Types
-
-| Type | Form | Effect |
-|------|------|--------|
-| Prompt patches | Amendments to skill prompts | Better reasoning |
-| Routing hints | "Goals containing X → skill Y" | Better skill selection |
-| Negative examples | Failure cases to avoid | Prevent repeated mistakes |
-| Notes | OpenNotebookLM entries | Retrieved when relevant |
-
----
-
-## 16. Top Technical Risk
-
-**Recursion depth explosion**: The failure mode that can silently eat time, money, and trust.
-
-### Mitigation Plan
-
-1. **Hard budgets with graceful degradation**
-2. **Diminishing returns pruning** (novelty metric critical)
-3. **DAG checkpointing + resume**
-4. **First-class stop reasons** (budget, novelty, cycle, confidence, error)
-5. **Depth-aware AND uncertainty-aware tiering**
-
----
-
-## Appendix A: n8n Integration
-
-**Role**: Thin trigger + automation layer (not orchestration peer)
-
-**Responsibilities**:
-- Scheduling (cron)
-- Event wiring (webhooks)
-- Fan-out/fan-in of **runs** (not nodes)
-- Integrations (Slack, email, SOLID, BSV)
-
-**n8n workflow pattern**:
-1. Start run
-2. Wait for completion webhook
-3. Fetch `final.summary.json`
-4. Route by status:
-   - `complete` → publish/notify
-   - `partial` → create HITL review task or auto-resume
-   - `failed` → alert + log
-
----
-
-## Appendix B: Repository Structure (Planned)
-
-```
-shad/
-├── docker-compose.yml
-├── services/
-│   └── shad-api/              # RLM engine + orchestration API
-├── Skills/                    # Personalization modules
-│   └── <SkillName>/
-│       ├── SKILL.md
-│       ├── workflows/
-│       ├── tools/
-│       └── tests/
-├── CORE/                      # Constitution, policies, invariants
-│   ├── invariants.md
-│   ├── invariants.yaml
-│   └── Voices/
-│       └── <voice>.yaml
-├── hooks/                     # Lifecycle automation
-├── History/                   # Generated at runtime (volume)
-├── scripts/                   # Deploy / maintenance helpers
-├── .env.example
-├── CLAUDE.md
-├── PLAN.md
-└── SPEC.md
-```
+| Term | Definition |
+|------|------------|
+| **Code Mode** | LLM generates Python scripts to query vault instead of keyword search |
+| **Context packet** | Compact artifact from completed node (summary, artifacts, keywords) |
+| **Contracts-first** | Types & contracts node runs before implementation |
+| **DAG** | Directed Acyclic Graph of execution nodes |
+| **Delta verification** | Re-verify only nodes whose context changed |
+| **Export index** | Symbol → file mapping built in first pass of code generation |
+| **Hard deps** | Dependencies that must complete before node starts |
+| **HITL** | Human-in-the-loop checkpoint |
+| **Manifest** | Structured file output (paths, content, metadata) |
+| **RLM** | Recursive Language Model engine |
+| **Shadow index** | External DB mapping source URLs to latest snapshots |
+| **Skeleton** | Strategy template with required/optional stages |
+| **Soft deps** | Dependencies that are useful but not blocking |
+| **Subset fingerprint** | Hash of notes actually used by a node |
+| **Vault layering** | Multiple vaults with priority order for retrieval |
