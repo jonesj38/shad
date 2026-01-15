@@ -220,6 +220,7 @@ All modules now integrated into RLMEngine:
 6. **Repair Loop**: Retry failed verifications with error context
 7. **Refinement Manager**: State tracking with delta verification on resume
 8. **CLI Commands**: `--strategy`, `--verify`, `--write-files`, `shad export`, `shad ingest github`
+9. **Parallel Execution**: Dependency-aware parallel node execution using asyncio.gather
 
 ### Architecture
 All modules implemented per SPEC.md:
