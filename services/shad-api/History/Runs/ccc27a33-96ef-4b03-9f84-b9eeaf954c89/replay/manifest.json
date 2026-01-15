@@ -1,0 +1,19 @@
+{
+  "run_id": "ccc27a33-96ef-4b03-9f84-b9eeaf954c89",
+  "config": {
+    "goal": "Compare the authentication methods described across all my notes",
+    "vault_path": "/home/jake/Desktop/test_vault",
+    "budget": {
+      "max_wall_time": 300,
+      "max_tokens": 100000,
+      "max_nodes": 50,
+      "max_depth": 2,
+      "max_branching_factor": 7
+    },
+    "voice": null
+  },
+  "node_count": 1,
+  "cache_keys": [
+    "492f9ae7710eefc3"
+  ]
+}

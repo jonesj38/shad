@@ -1,0 +1,24 @@
+{
+  "run_id": "ceeaee02-23c5-4199-94d9-a8dae47548cd",
+  "version": "1.0",
+  "config": {
+    "goal": "What SDKs are documented in my notes?",
+    "vault_path": "/home/jake/Desktop/test_vault",
+    "budget": {
+      "max_wall_time": 300,
+      "max_tokens": 100000,
+      "max_nodes": 50,
+      "max_depth": 1,
+      "max_branching_factor": 7
+    },
+    "voice": null
+  },
+  "status": "complete",
+  "created_at": "2026-01-15T02:37:53.604818",
+  "started_at": "2026-01-15T02:37:53.604850",
+  "completed_at": "2026-01-15T02:38:17.819456",
+  "total_tokens": 292,
+  "stop_reason": null,
+  "error": null,
+  "final_result": "Based on your notes, the following SDKs are documented:\n\n1. **@bsv/sdk (BSV TypeScript SDK)** - The primary SDK documented extensively in your notes. This is a TypeScript SDK for BSV blockchain development that includes:\n   - WalletClient for wallet operations\n   - IdentityClient for decentralized identity resolution\n   - Transaction building and signing\n   - Script operations\n   - Documentation at https://bsv-blockchain.github.io/ts-sdk\n   - Source: https://github.com/bsv-blockchain/ts-sdk\n\n2. **BSV Wallet Toolbox** - A related SDK/library that works with @bsv/sdk, containing storage utilities, change generation functions, and wallet storage interfaces.\n   - Source: https://github.com/bsv-blockchain/wallet-toolbox\n\n3. **Go SDK** - Mentioned but with minimal documentation in your notes (referenced as \"go-sdk\")\n\n4. **Fast Wallet Client** - A wallet client implementation using @bsv/sdk, documented in `github.com_bsv-blockchain_fast-wallet-client-docs.md`\n\nThe vast majority of your documentation focuses on the **@bsv/sdk TypeScript SDK** and its ecosystem, including wallet operations, transaction management, identity resolution, and storage interfaces.\n\n**Sources:**\n- github.com_bsv-blockchain_ts-sdk.md\n- github.com_bsv-blockchain_wallet-toolbox.md\n- github.com_bsv-blockchain_fast-wallet-client-docs.md"
+}

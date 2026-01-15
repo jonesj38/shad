@@ -2,61 +2,88 @@
 
 This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.
 
-## Project Overview
+## Project Vision
 
-Shad (Shannon's Daemon) is a personal AI infrastructure for long-context reasoning. It recursively decomposes problems, retrieves knowledge from an Obsidian vault via MCP, caches subtrees in Redis, and recomposes results.
+**Shad enables AI to utilize virtually unlimited context.**
 
-**Core premise**: Long-context reasoning is an inference problem, not a prompting problem.
+The goal: Load an Obsidian vault with curated knowledge (documentation, code examples, architecture patterns), then accomplish complex tasks that would be impossible with a single context window.
 
-**Storage backend**: Local-first Markdown via **Obsidian**, accessed via **Model Context Protocol (MCP)**.
+**Example use case**: Build a production-quality mobile app by loading a vault with React Native docs, great app examples, and UI patterns, then running:
+```bash
+shad run "Build a task management app with auth and offline sync" --vault ~/MobileDevVault
+```
 
-> See `OBSIDIAN_PIVOT.md` for the complete Obsidian integration specification.
+Shad recursively decomposes the task, retrieves targeted context for each subtask from the vault, generates code, and assembles a complete codebase.
+
+## Core Premise
+
+> **Long-context reasoning is an inference problem, not a prompting problem.**
+
+Instead of cramming context into a single prompt, Shad:
+1. Treats the vault as an **explorable environment**
+2. **Decomposes** complex tasks into subtasks recursively
+3. **Retrieves** targeted context for each subtask via Code Mode
+4. **Generates** outputs informed by relevant examples
+5. **Assembles** results into coherent output
 
 ## Architecture
 
 ```
-User / n8n
+User
    |
    v
-Shad API / CLI (FastAPI + Click)
+Shad CLI / API
    |
-   +-- Skill Router (goal → skill selection with weighted scoring)
-   |
-   +-- RLM Engine (recursive DAG execution)
+   +-- RLM Engine (recursive decomposition + execution)
    |       |
-   |       +-- OpenNotebookLM (graph-based knowledge retrieval)
-   |       +-- Redis (subtree caching with hierarchical keys)
-   |       +-- LLM Provider (Claude Code CLI by default, API fallback)
+   |       +-- Code Mode ─────────────────────────┐
+   |       |   (LLM generates Python scripts)    |
+   |       |                                      v
+   |       +-- CodeExecutor ──────────> ObsidianTools
+   |       |   (sandboxed execution)        |
+   |       |                                v
+   |       |                          Obsidian Vault
+   |       |                          (your knowledge)
+   |       |
+   |       +-- Redis (subtree caching)
+   |       +-- LLM Provider (Claude Code CLI)
    |
-   +-- Verification (validators, entailment, novelty detection)
-   |
-   +-- History/ (structured run artifacts)
-   |
-   +-- Voice Renderer (persona-based output transformation)
+   +-- History/ (run artifacts)
 ```
 
-### Key Execution Flow
+### Code Mode (Key Innovation)
 
-1. Goal comes in via CLI (`shad run`) or API (`POST /v1/run`)
-2. SkillRouter scores and selects appropriate skill(s)
-3. RLMEngine decomposes goal into subtasks via LLM
-4. Each subtask: check cache → retrieve context → execute → cache result
-5. Results synthesized bottom-up with citations
-6. Output rendered through voice layer
-7. Artifacts saved to History/
+Instead of simple keyword search, **Code Mode** lets the LLM write custom retrieval logic:
+
+```python
+# LLM generates this script for: "How do I implement auth?"
+results = obsidian.search("authentication React Native", limit=10)
+auth_patterns = obsidian.read_note("Patterns/Authentication.md")
+
+context_parts = []
+for r in results:
+    if "OAuth" in r["content"] or "JWT" in r["content"]:
+        context_parts.append(f"## {r['path']}\n{r['content'][:2000]}")
+
+__result__ = "\n\n".join(context_parts)
+```
+
+This enables:
+- Multi-step retrieval (search → read → filter)
+- Query-specific logic (different strategies per task)
+- Aggregation before returning (reduce context size)
 
 ### Module Responsibilities
 
 | Module | Location | Purpose |
 |--------|----------|---------|
-| `engine/rlm.py` | Core | Recursive decomposition, budget enforcement, DAG execution |
-| `engine/llm.py` | Core | LLM abstraction (Claude Code CLI primary, API fallback) |
-| `cache/redis_cache.py` | Caching | Hierarchical keys, main + staging caches |
-| `skills/router.py` | Routing | Weighted scoring: intent, triggers, context, priority |
-| `verification/` | Quality | Validators, entailment checking, novelty detection, HITL queues |
-| `voice/renderer.py` | Output | Transform structured output through persona layer |
-| `learnings/` | Learning | Extract facts/patterns from runs, promotion pipeline |
-| `history/manager.py` | Persistence | Structured artifacts: manifest, DAG, metrics, reports |
+| `engine/rlm.py` | Core | Recursive decomposition, DAG execution, Code Mode orchestration |
+| `engine/llm.py` | Core | LLM abstraction, retrieval script generation |
+| `sandbox/executor.py` | Execution | Sandboxed Python execution for Code Mode |
+| `sandbox/tools.py` | Execution | `ObsidianTools` class with `search()`, `read_note()`, etc. |
+| `mcp/client.py` | Integration | Direct MCP client for vault operations |
+| `cache/redis_cache.py` | Caching | Hierarchical keys, subtree caching |
+| `history/manager.py` | Persistence | Run artifacts (DAG, metrics, reports) |
 
 ## Development Commands
 
@@ -68,9 +95,6 @@ source .venv/bin/activate
 
 # Install in editable mode
 pip install -e ".[dev]"
-
-# Run API server locally
-uvicorn shad.api.main:app --reload --port 8000
 
 # Run linter
 ruff check src/shad/
@@ -84,36 +108,26 @@ mypy src/shad/
 # Run tests
 pytest
 
-# Run single test file
-pytest tests/test_rlm.py
-
 # Run with coverage
 pytest --cov=shad
 ```
 
-### Docker Commands
+## CLI Commands
 
 ```bash
-# Start full stack
-docker compose up -d --build
+# Run with vault context (Code Mode enabled by default)
+shad run "Your task" --vault /path/to/vault
 
-# View logs
-docker compose logs -f shad-api
+# Run without Code Mode (direct search only)
+shad run "Your task" --vault /path/to/vault --no-code-mode
 
-# Rebuild single service
-docker compose up -d --build shad-api
-```
-
-### CLI Commands
-
-```bash
-# Execute a reasoning task
-shad run "What are three benefits of git?" --max-depth 2
+# Control recursion depth
+shad run "Complex task" --vault ~/vault --max-depth 4
 
 # Check run status
 shad status <run_id>
 
-# View execution tree
+# View execution DAG
 shad trace tree <run_id>
 
 # Resume partial run
@@ -128,48 +142,69 @@ shad resume <run_id>
 | `GET /v1/run/:id` | Get run status/results |
 | `POST /v1/run/:id/resume` | Resume partial run |
 | `GET /v1/runs` | List recent runs |
-| `GET /v1/skills` | List available skills |
-| `POST /v1/skills/route` | Route goal to skills |
-| `GET /v1/admin/cache/stats` | Cache statistics |
-| `GET /v1/admin/hitl/queue` | HITL review queue |
-| `GET /v1/admin/voices` | List voices |
+| `GET /v1/vault/status` | Check vault connection |
+| `GET /v1/vault/search` | Search vault |
 
-## LLM Provider
+## Key Files for the Vision
 
-The system uses Claude Code CLI by default (`use_claude_code=True` in LLMProvider), which uses your Claude Code subscription instead of API costs. Falls back to Anthropic/OpenAI APIs if CLI unavailable.
+| File | Purpose |
+|------|---------|
+| `engine/rlm.py` | Core RLM engine - decomposition, Code Mode retrieval, synthesis |
+| `engine/llm.py` | `generate_retrieval_script()` - LLM writes custom retrieval code |
+| `sandbox/executor.py` | `CodeExecutor` - runs LLM-generated scripts safely |
+| `sandbox/tools.py` | `ObsidianTools` - vault operations available to scripts |
 
 ## Budget System
 
-Every run enforces hard limits defined in `RunConfig.budget`:
-- `max_depth`: Maximum recursion depth
-- `max_nodes`: Maximum DAG nodes
-- `max_wall_time`: Total execution time (seconds)
-- `max_tokens`: Total token budget
-- `max_branching_factor`: Maximum children per node
+Every run enforces hard limits:
+- `max_depth`: Maximum recursion depth (default: 3)
+- `max_nodes`: Maximum DAG nodes (default: 50)
+- `max_wall_time`: Total execution time in seconds (default: 300)
+- `max_tokens`: Total token budget (default: 100000)
 
 When budgets are exhausted, run returns partial results with `status: partial`.
 
-## Skills System
+## How Vault Context Flows
 
-Skills are in `Skills/<SkillName>/SKILL.md` with YAML frontmatter:
-```yaml
-name: research
-use_when: ["research *", "investigate *"]
-intents: [research, investigate]
-priority: 10
-composes_with: [citations]
+```
+1. User: "Build a login screen"
+         ↓
+2. RLM decomposes into subtasks:
+   - "Design login UI layout"
+   - "Implement form validation"
+   - "Add OAuth integration"
+         ↓
+3. For each subtask, Code Mode:
+   a. LLM generates retrieval script
+   b. Script searches vault for relevant examples
+   c. Script reads specific notes for detail
+   d. Script returns distilled context
+         ↓
+4. LLM generates output using retrieved context
+         ↓
+5. Results synthesized bottom-up
 ```
 
-SkillRouter uses weighted scoring: intent match (0.3), trigger match (0.25), context (0.1), priority (0.1), minus exclusion penalties.
+## Extending the System
 
-## History Artifacts
+### Adding Vault Content
+The vault quality determines output quality. Good vault content includes:
+- Official documentation converted to markdown
+- Code examples with explanations
+- Architecture patterns and best practices
+- Common pitfalls and solutions
 
-Each run creates `History/Runs/<run_id>/`:
-- `run.manifest.json` - Config, budgets, versions
-- `dag.json` - Complete DAG with node statuses
-- `metrics/summary.json` - Token counts, timing
-- `final.report.md` - Human-readable output
-- `final.summary.json` - Machine-readable with suggested next actions
+### Improving Decomposition
+Current decomposition is in `engine/llm.py:decompose_task()`. To improve:
+- Add domain-specific decomposition strategies
+- Teach the LLM to recognize task types
+- Adjust branching based on task complexity
+
+### Adding Verification
+Post-generation verification goes in `verification/`. Could add:
+- Syntax checking for generated code
+- Type checking via `tsc --noEmit`
+- Test generation and execution
 
 ## Hard Invariants (from CORE/invariants.md)
 

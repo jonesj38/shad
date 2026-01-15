@@ -1,0 +1,16 @@
+{
+  "run_id": "13f6daf9-b91c-41c6-829d-30df47da823c",
+  "status": "complete",
+  "goal": "What topics are covered in my notes?",
+  "result": "Based on your vault, you have **3 notes** all focused on **BSV (Bitcoin SV) blockchain development**:\n\n1. **fast-wallet-client-docs** - Documentation for a fast wallet client, appears to be a React/TypeScript web application with UI components (accordion, alerts, buttons, cards, etc.)\n\n2. **ts-sdk** - The BSV TypeScript SDK, containing benchmarks for cryptographic operations (BigNumber, ECC scalar, symmetric key) and serialization utilities\n\n3. **wallet-toolbox** - A wallet development toolkit with documentation covering client setup, monitoring, services, storage, and wallet management, plus test files for wallet permissions\n\n**Summary**: Your notes cover the BSV blockchain ecosystem's developer tools\u2014specifically wallet clients, the core TypeScript SDK, and wallet development utilities.",
+  "citations": [],
+  "stop_reason": null,
+  "error": null,
+  "metrics": {
+    "total_nodes": 1,
+    "completed_nodes": 1,
+    "failed_nodes": 0,
+    "total_tokens": 208
+  },
+  "suggested_next_actions": []
+}

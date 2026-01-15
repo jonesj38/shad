@@ -1,0 +1,24 @@
+{
+  "run_id": "13f6daf9-b91c-41c6-829d-30df47da823c",
+  "version": "1.0",
+  "config": {
+    "goal": "What topics are covered in my notes?",
+    "vault_path": "/home/jake/Desktop/test_vault",
+    "budget": {
+      "max_wall_time": 300,
+      "max_tokens": 100000,
+      "max_nodes": 50,
+      "max_depth": 1,
+      "max_branching_factor": 7
+    },
+    "voice": null
+  },
+  "status": "complete",
+  "created_at": "2026-01-15T02:33:11.914817",
+  "started_at": "2026-01-15T02:33:11.914846",
+  "completed_at": "2026-01-15T02:33:30.308617",
+  "total_tokens": 208,
+  "stop_reason": null,
+  "error": null,
+  "final_result": "Based on your vault, you have **3 notes** all focused on **BSV (Bitcoin SV) blockchain development**:\n\n1. **fast-wallet-client-docs** - Documentation for a fast wallet client, appears to be a React/TypeScript web application with UI components (accordion, alerts, buttons, cards, etc.)\n\n2. **ts-sdk** - The BSV TypeScript SDK, containing benchmarks for cryptographic operations (BigNumber, ECC scalar, symmetric key) and serialization utilities\n\n3. **wallet-toolbox** - A wallet development toolkit with documentation covering client setup, monitoring, services, storage, and wallet management, plus test files for wallet permissions\n\n**Summary**: Your notes cover the BSV blockchain ecosystem's developer tools\u2014specifically wallet clients, the core TypeScript SDK, and wallet development utilities."
+}

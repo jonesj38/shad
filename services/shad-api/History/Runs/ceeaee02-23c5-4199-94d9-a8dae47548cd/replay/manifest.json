@@ -1,0 +1,19 @@
+{
+  "run_id": "ceeaee02-23c5-4199-94d9-a8dae47548cd",
+  "config": {
+    "goal": "What SDKs are documented in my notes?",
+    "vault_path": "/home/jake/Desktop/test_vault",
+    "budget": {
+      "max_wall_time": 300,
+      "max_tokens": 100000,
+      "max_nodes": 50,
+      "max_depth": 1,
+      "max_branching_factor": 7
+    },
+    "voice": null
+  },
+  "node_count": 1,
+  "cache_keys": [
+    "87a57cd41c0f88ef"
+  ]
+}
