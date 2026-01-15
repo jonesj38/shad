@@ -234,6 +234,21 @@ shad run "Analyze market trends based on my collected research" \
   --strategy analysis
 ```
 
+### 5. Keep Your Vault Current
+
+```bash
+# Set up automated ingestion from multiple sources
+shad sources add github https://github.com/facebook/react --schedule weekly --vault ~/DevDocs
+shad sources add feed https://blog.rust-lang.org/feed.xml --schedule daily --vault ~/DevDocs
+shad sources add url https://docs.python.org/3/whatsnew/3.12.html --schedule monthly --vault ~/DevDocs
+
+# Check what's due for sync
+shad sources status
+
+# Sync all due sources
+shad sources sync
+```
+
 ---
 
 ## Architecture
@@ -332,6 +347,35 @@ shad ingest github <url> --preset docs --vault ~/MyVault
 # Presets: mirror (all files), docs (documentation only), deep (with code)
 ```
 
+### Sources Scheduler
+
+Automatically sync content from GitHub repos, URLs, RSS feeds, and local folders on a schedule.
+
+```bash
+# Add sources
+shad sources add github https://github.com/org/repo --schedule weekly --vault ~/MyVault
+shad sources add url https://docs.example.com/api --schedule daily --vault ~/MyVault
+shad sources add feed https://blog.example.com/rss --schedule hourly --vault ~/MyVault
+shad sources add folder ~/LocalDocs --schedule daily --vault ~/MyVault
+
+# List all sources
+shad sources list
+
+# View detailed status (schedule, last sync, next sync)
+shad sources status
+
+# Manually sync due sources
+shad sources sync
+
+# Force sync all sources
+shad sources sync --force
+
+# Remove a source
+shad sources remove <source_id>
+```
+
+Schedules: `manual`, `hourly`, `daily`, `weekly`, `monthly`
+
 ---
 
 ## Configuration
@@ -398,6 +442,7 @@ All phases complete:
 - [x] **Phase 5**: Verification layer (progressive strictness, repair loops)
 - [x] **Phase 6**: Iterative refinement (HITL checkpoints, delta resume)
 - [x] **Phase 7**: Vault curation tools (ingestion, gap detection)
+- [x] **Phase 8**: Sources scheduler (automated sync from GitHub, URLs, feeds, folders)
 
 See [SPEC.md](SPEC.md) for detailed technical specification and [PLAN.md](PLAN.md) for implementation details.
 
