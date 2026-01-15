@@ -21,7 +21,10 @@ from datetime import UTC, datetime
 from pathlib import Path
 from typing import TYPE_CHECKING
 
+from shad.engine.context_packets import NodeContextManager
+from shad.engine.decomposition import StrategyDecomposer
 from shad.engine.llm import LLMProvider, ModelTier
+from shad.engine.strategies import StrategySelector, StrategyType, get_strategy
 from shad.models.goal import GoalSpec
 from shad.models.run import (
     DAGNode,
@@ -31,8 +34,21 @@ from shad.models.run import (
     RunStatus,
     StopReason,
 )
+from shad.output.manifest import FileEntry, FileManifest
+from shad.refinement.manager import (
+    DeltaVerifier,
+    MaxIterationsPolicy,
+    RunState,
+    RunStateManager,
+)
 from shad.sandbox.executor import CodeExecutor, SandboxConfig
 from shad.utils.config import get_settings
+from shad.verification.layer import (
+    VerificationConfig,
+    VerificationLayer,
+    VerificationLevel,
+    VerificationResult,
+)
 
 if TYPE_CHECKING:
     from shad.cache.redis_cache import RedisCache
@@ -95,6 +111,21 @@ class RLMEngine:
         else:
             self.code_executor = None
 
+        # Initialize strategy selection and decomposition (Phase 3)
+        self.strategy_selector = StrategySelector()
+        self.decomposer = StrategyDecomposer(self.llm)
+
+        # Initialize context packet management (Phase 3)
+        self.context_manager = NodeContextManager()
+
+        # Initialize verification layer (Phase 5)
+        self.verification_layer = VerificationLayer()
+
+        # Initialize refinement manager (Phase 6)
+        self.delta_verifier = DeltaVerifier()
+        self.state_manager = RunStateManager()
+        self.iterations_policy = MaxIterationsPolicy()
+
     async def execute(self, config: RunConfig) -> Run:
         """
         Execute a run with the given configuration.
@@ -105,11 +136,22 @@ class RLMEngine:
         run.status = RunStatus.RUNNING
         run.started_at = datetime.now(UTC)
 
+        # Initialize fresh state manager for this run (Phase 6)
+        self.state_manager = RunStateManager()
+        self.state_manager.transition_to(RunState.RUNNING)
+
         logger.info(f"Starting run {run.run_id} with goal: {config.goal}")
 
         try:
             # Create goal spec
             goal_spec = GoalSpec.from_goal(config.goal)
+
+            # Select strategy (Phase 3 integration)
+            override_type = StrategyType(config.strategy_override) if config.strategy_override else None
+            strategy_result = self.strategy_selector.select(config.goal, override=override_type)
+            self._selected_strategy = get_strategy(strategy_result.strategy_type)
+            logger.info(f"[STRATEGY] Selected: {strategy_result.strategy_type.value} "
+                       f"(confidence: {strategy_result.confidence:.2f}, override: {strategy_result.is_override})")
 
             # Retrieve context from Obsidian vault if specified
             context = ""
@@ -144,30 +186,136 @@ class RLMEngine:
             elif root_node.status in (NodeStatus.SUCCEEDED, NodeStatus.CACHE_HIT):
                 run.status = RunStatus.COMPLETE
                 run.final_result = root_node.result
+
+                # Generate file manifest for software strategy (Phase 4)
+                if (hasattr(self, '_selected_strategy') and
+                    self._selected_strategy and
+                    self._selected_strategy.strategy_type == StrategyType.SOFTWARE):
+
+                    # Collect results from all nodes
+                    results = {n.node_id: n.result for n in run.nodes.values()
+                              if n.result and n.status == NodeStatus.SUCCEEDED}
+                    manifest = self.generate_manifest(run, results)
+
+                    if manifest.files:
+                        logger.info(f"[MANIFEST] Generated manifest with {len(manifest.files)} files")
+
+                        # Verify manifest (Phase 5)
+                        verify_level_str = config.verify_level or "basic"
+                        verify_level = VerificationLevel(verify_level_str)
+                        verification_result = await self.verify_manifest(manifest, verify_level)
+
+                        if verification_result.passed:
+                            logger.info("[VERIFICATION] All checks passed")
+                            run.metadata["manifest"] = manifest.to_dict()
+                            try:
+                                self.state_manager.transition_to(RunState.SUCCESS)
+                            except ValueError:
+                                pass
+                        else:
+                            logger.warning(f"[VERIFICATION] Failed: {len(verification_result.failed_checks)} check(s)")
+                            for check in verification_result.failed_checks:
+                                logger.warning(f"  - {check.check_name}: {check.errors}")
+
+                            # Attempt repair loop (Phase 6)
+                            blocking_failures = verification_result.blocking_failures
+                            if blocking_failures:
+                                repaired_manifest = await self._attempt_repair(
+                                    run=run,
+                                    manifest=manifest,
+                                    failures=blocking_failures,
+                                    verify_level=verify_level,
+                                )
+                                if repaired_manifest:
+                                    manifest = repaired_manifest
+                                    # Re-verify after repair
+                                    verification_result = await self.verify_manifest(manifest, verify_level)
+                                    if verification_result.passed:
+                                        logger.info("[REPAIR] Repair successful, all checks now pass")
+                                        run.metadata["manifest"] = manifest.to_dict()
+                                        run.metadata["repaired"] = True
+                                    else:
+                                        blocking_failures = verification_result.blocking_failures
+
+                            # Store manifest with verification status
+                            run.metadata["manifest"] = manifest.to_dict()
+                            run.metadata["verification"] = {
+                                "passed": verification_result.passed,
+                                "blocking_failure_count": len(blocking_failures),
+                                "blocking_failures": [c.to_dict() for c in blocking_failures],
+                                "checks": [c.to_dict() for c in verification_result.checks],
+                            }
+
+                            # Use MaxIterationsPolicy to determine final state (Phase 6)
+                            if blocking_failures:
+                                final_state = self.iterations_policy.determine_final_state(
+                                    is_high_impact=len(manifest.files) > 3,
+                                    has_artifacts=len(manifest.files) > 0,
+                                    verification_passed=False,
+                                    verification_advisory=False,
+                                )
+                                # Map refinement state to run status
+                                if final_state == RunState.NEEDS_HUMAN:
+                                    run.status = RunStatus.PARTIAL
+                                    run.metadata["needs_human"] = True
+                                    run.error = f"Verification failed: {len(blocking_failures)} blocking failure(s). Human review needed."
+                                elif final_state == RunState.PARTIAL:
+                                    run.status = RunStatus.PARTIAL
+                                    run.error = f"Verification failed: {len(blocking_failures)} blocking failure(s)"
+                                else:
+                                    run.status = RunStatus.FAILED
+                                    run.error = f"Verification failed: {len(blocking_failures)} blocking failure(s)"
+
+                                # Track state transition
+                                try:
+                                    self.state_manager.transition_to(final_state)
+                                except ValueError:
+                                    pass  # State transition may fail if already in final state
             else:
                 run.status = RunStatus.FAILED
                 run.error = root_node.error
+                try:
+                    self.state_manager.transition_to(RunState.FAILED)
+                except ValueError:
+                    pass
 
         except BudgetExhausted as e:
             run.status = RunStatus.PARTIAL
             run.stop_reason = e.reason
             logger.warning(f"Run {run.run_id} stopped: {e}")
+            try:
+                self.state_manager.transition_to(RunState.PARTIAL)
+            except ValueError:
+                pass
 
         except Exception as e:
             run.status = RunStatus.FAILED
             run.error = str(e)
             logger.exception(f"Run {run.run_id} failed: {e}")
+            try:
+                self.state_manager.transition_to(RunState.FAILED)
+            except ValueError:
+                pass
 
         finally:
             run.completed_at = datetime.now(UTC)
+            # Store final refinement state in metadata
+            run.metadata["refinement_state"] = self.state_manager.state.value
 
         return run
 
-    async def resume(self, run: Run) -> Run:
+    async def resume(self, run: Run, replay_mode: str | None = None) -> Run:
         """
         Resume a partial or failed run.
 
-        Continues from the last checkpoint, reusing completed nodes.
+        Per SPEC.md Section 2.8.2: Uses delta verification.
+        - Checks vault manifest against stored hashes
+        - Stale nodes undergo re-verification or re-execution
+        - Unchanged nodes are trusted
+
+        Args:
+            run: The run to resume
+            replay_mode: Optional replay mode ('stale', 'node_id', 'subtree:node_id')
         """
         if run.status not in (RunStatus.PARTIAL, RunStatus.FAILED):
             raise ValueError(f"Cannot resume run with status {run.status}")
@@ -176,20 +324,54 @@ class RLMEngine:
         run.stop_reason = None
         run.error = None
 
+        # Re-initialize state manager for resume
+        self.state_manager = RunStateManager()
+        self.state_manager.transition_to(RunState.RUNNING)
+
         logger.info(f"Resuming run {run.run_id}")
 
         try:
-            # Find pending nodes to continue
-            pending = run.pending_nodes()
-            if not pending and run.root_node_id:
-                # Re-execute from root if no pending nodes
+            # Determine which nodes to replay based on delta verification
+            nodes_to_replay: list[str] = []
+
+            if replay_mode == "stale":
+                # Get current vault hashes and find stale nodes
+                current_hashes = await self._get_current_vault_hashes(run)
+                nodes_to_replay = self.delta_verifier.get_stale_nodes(current_hashes)
+                logger.info(f"[DELTA] Found {len(nodes_to_replay)} stale nodes")
+            elif replay_mode and replay_mode.startswith("subtree:"):
+                # Replay specific subtree
+                root_id = replay_mode.split(":")[1]
+                self.delta_verifier.mark_subtree_for_replay(root_id)
+                nodes_to_replay = self.delta_verifier.get_nodes_to_replay()
+            elif replay_mode:
+                # Replay specific node
+                nodes_to_replay = [replay_mode]
+            else:
+                # Default: replay pending nodes
+                nodes_to_replay = [n.node_id for n in run.pending_nodes()]
+
+            # If no nodes to replay, check root
+            if not nodes_to_replay and run.root_node_id:
                 root = run.get_node(run.root_node_id)
                 if root and root.status != NodeStatus.SUCCEEDED:
-                    pending = [root]
+                    nodes_to_replay = [run.root_node_id]
 
-            # Execute pending nodes
-            for node in pending:
-                context = ""  # TODO: restore context from checkpoint
+            # Execute nodes to replay
+            for node_id in nodes_to_replay:
+                node = run.get_node(node_id)
+                if not node:
+                    continue
+
+                # Reset node status for re-execution
+                node.status = NodeStatus.CREATED
+                node.result = None
+                node.error = None
+
+                context = ""  # Retrieve fresh context
+                if self.mcp_client:
+                    context = await self._retrieve_vault_context(node.task, limit=5)
+
                 await self._execute_node(run, node, context)
 
             # Update status
@@ -258,6 +440,10 @@ class RLMEngine:
             if node.result and self.cache:
                 await self.cache.set(cache_key, node.result)
 
+            # Track context for delta verification (Phase 6)
+            if node.status == NodeStatus.SUCCEEDED and context:
+                self._track_node_context(node.node_id, context)
+
         except BudgetExhausted:
             raise
         except Exception as e:
@@ -274,47 +460,98 @@ class RLMEngine:
         node: DAGNode,
         context: str,
     ) -> None:
-        """Decompose a node into subtasks and execute them."""
-        # Decompose task
-        subtasks = await self.llm.decompose_task(
-            task=node.task,
-            context=context,
-            max_subtasks=run.config.budget.max_branching_factor,
-        )
+        """Decompose a node into subtasks and execute them.
+
+        Per SPEC.md: Uses StrategyDecomposer for dependency-aware DAG.
+        """
+        # Use strategy-aware decomposition if strategy is selected (Phase 3)
+        if hasattr(self, '_selected_strategy') and self._selected_strategy:
+            decomp_result = await self.decomposer.decompose(
+                task=node.task,
+                strategy=self._selected_strategy,
+                context=context,
+                max_nodes=run.config.budget.max_branching_factor,
+            )
+
+            if not decomp_result.is_valid:
+                logger.warning(f"[DECOMPOSE] Validation errors: {decomp_result.validation_errors}")
+
+            # Convert DecompositionNodes to subtasks
+            subtasks = [(dn.stage_name, dn.task, dn.hard_deps, dn.soft_deps)
+                       for dn in decomp_result.nodes]
+            run.total_tokens += decomp_result.tokens_used
+        else:
+            # Fallback to simple decomposition
+            simple_subtasks = await self.llm.decompose_task(
+                task=node.task,
+                context=context,
+                max_subtasks=run.config.budget.max_branching_factor,
+            )
+            subtasks = [(f"subtask_{i}", st, [], []) for i, st in enumerate(simple_subtasks)]
 
         if len(subtasks) <= 1:
             # No meaningful decomposition, execute as leaf
             await self._execute_leaf(run, node, context)
             return
 
-        # Create child nodes
+        # Create child nodes with dependency tracking
         child_results: list[tuple[str, str]] = []
+        stage_to_node: dict[str, str] = {}  # stage_name -> node_id
 
-        for subtask in subtasks:
+        for stage_name, task, hard_deps, soft_deps in subtasks:
             # Check budgets
             self._check_budgets(run, node)
 
             child = DAGNode(
-                task=subtask,
+                task=task,
                 parent_id=node.node_id,
                 depth=node.depth + 1,
+                metadata={
+                    "stage_name": stage_name,
+                    "hard_deps": hard_deps,
+                    "soft_deps": soft_deps,
+                }
             )
             run.add_node(child)
             node.children.append(child.node_id)
+            stage_to_node[stage_name] = child.node_id
+
+            # Wait for hard dependencies to complete
+            # (simple sequential execution for now - TODO: parallel execution with dep tracking)
+
+            # Inject context from soft dependencies (Phase 3)
+            subtask_context = context  # Start with parent context
+            if soft_deps:
+                soft_dep_context = self.context_manager.inject_soft_dep_context(
+                    soft_deps=soft_deps,
+                    task=task,
+                )
+                if soft_dep_context:
+                    subtask_context = f"{soft_dep_context}\n\n{context}"
+                    logger.info(f"[CONTEXT] Injected {len(soft_dep_context)} chars from soft deps: {soft_deps}")
 
             # Retrieve subtask-specific context from vault
-            subtask_context = context  # Fallback to parent context
             if self.mcp_client:
-                fresh_context = await self._retrieve_vault_context(subtask, limit=5)
+                fresh_context = await self._retrieve_vault_context(task, limit=5)
                 if fresh_context:
-                    logger.info(f"[CONTEXT] Retrieved {len(fresh_context)} chars for subtask: {subtask[:50]}...")
-                    subtask_context = fresh_context
+                    logger.info(f"[CONTEXT] Retrieved {len(fresh_context)} chars for subtask: {task[:50]}...")
+                    subtask_context = f"{subtask_context}\n\n{fresh_context}"
 
             # Execute child with its own context
             await self._execute_node(run, child, subtask_context)
 
+            # Create context packet for completed node (Phase 3)
             if child.status == NodeStatus.SUCCEEDED and child.result:
-                child_results.append((subtask, child.result))
+                packet = self.context_manager.create_packet(
+                    node_id=child.node_id,
+                    stage_name=stage_name,
+                    result=child.result,
+                    artifacts=child.metadata.get("artifacts", []),
+                )
+                self.context_manager.store.add(packet)
+                logger.info(f"[CONTEXT_PACKET] Created packet for {stage_name}: {len(packet.keywords)} keywords")
+
+                child_results.append((task, child.result))
 
             # Update token count
             run.total_tokens += child.tokens_used
@@ -737,3 +974,287 @@ __result__ = {{
             logger.error(f"Code Mode retrieval failed: {e}")
 
         return ""
+
+    def generate_manifest(
+        self,
+        run: Run,
+        results: dict[str, str],
+    ) -> FileManifest:
+        """Generate a file manifest from run results.
+
+        Per SPEC.md Section 2.7:
+        - Code generation produces file manifests (not raw text)
+        - Manifests contain paths, content, language, hash, source_nodes
+
+        Args:
+            run: The completed run
+            results: Map of node_id -> result content
+
+        Returns:
+            FileManifest with generated files
+        """
+        manifest = FileManifest(run_id=run.run_id)
+
+        for node_id, result in results.items():
+            node = run.get_node(node_id)
+            if not node:
+                continue
+
+            # Extract file entries from result
+            # Look for code blocks with file paths
+            files = self._extract_files_from_result(result, node_id)
+            for entry in files:
+                try:
+                    manifest.add_file(entry)
+                except ValueError:
+                    # File already exists, update it
+                    manifest.update_file(entry)
+
+        return manifest
+
+    def _extract_files_from_result(
+        self,
+        result: str,
+        source_node: str,
+    ) -> list[FileEntry]:
+        """Extract file entries from a result string.
+
+        Looks for code blocks with file paths in comments or headers.
+        """
+        import re
+
+        files: list[FileEntry] = []
+
+        # Pattern: ```language\n// filepath: path\n...code...```
+        pattern = r'```(\w+)\s*\n(?:\/\/\s*filepath:\s*|#\s*filepath:\s*)?([^\n]*)\n(.*?)```'
+
+        for match in re.finditer(pattern, result, re.DOTALL):
+            language = match.group(1)
+            path_hint = match.group(2).strip()
+            content = match.group(3)
+
+            # Try to extract path from first comment
+            if not path_hint or path_hint.startswith('//') or path_hint.startswith('#'):
+                # Look for path in content
+                path_match = re.search(r'(?:\/\/|#)\s*(?:file|path)?:?\s*(\S+\.\w+)', content)
+                if path_match:
+                    path_hint = path_match.group(1)
+
+            if path_hint:
+                files.append(FileEntry(
+                    path=path_hint,
+                    content=content,
+                    language=language,
+                    source_nodes=[source_node],
+                ))
+
+        return files
+
+    async def verify_manifest(
+        self,
+        manifest: FileManifest,
+        level: VerificationLevel = VerificationLevel.BASIC,
+    ) -> VerificationResult:
+        """Verify a file manifest.
+
+        Per SPEC.md Section 2.6:
+        - Run verification checks on manifest
+        - Return structured result with pass/fail status
+
+        Args:
+            manifest: The file manifest to verify
+            level: Verification level (off, basic, build, strict)
+
+        Returns:
+            VerificationResult with check results
+        """
+        config = VerificationConfig(level=level)
+        return await self.verification_layer.verify(manifest, config)
+
+    async def _attempt_repair(
+        self,
+        run: Run,
+        manifest: FileManifest,
+        failures: list,  # List of CheckResult
+        verify_level: VerificationLevel,
+        max_local_retries: int = 2,
+        max_escalations: int = 10,
+    ) -> FileManifest | None:
+        """Attempt to repair verification failures.
+
+        Per SPEC.md Section 2.6.3:
+        - Syntax/lint: Local repair only
+        - Type errors: Local repair with sibling context
+        - Integration: Escalate to parent coordinator
+        - Contract mismatch: Parent coordination + contract update
+
+        Returns repaired manifest if successful, None otherwise.
+        """
+        from shad.verification.layer import ErrorClassification, RepairAction
+
+        # Track repair attempts
+        local_retries: dict[str, int] = {}  # file_path -> retry count
+        escalation_count = 0
+
+        for failure in failures:
+            for error in failure.errors:
+                # Classify error
+                classification = ErrorClassification.classify(failure.check_name, error)
+                repair_action = RepairAction.for_classification(classification)
+
+                logger.info(f"[REPAIR] Error classified as {classification.value}, "
+                           f"action: {repair_action.scope}")
+
+                if repair_action.scope == "escalate":
+                    escalation_count += 1
+                    if escalation_count > max_escalations:
+                        logger.warning(f"[REPAIR] Max escalations ({max_escalations}) reached")
+                        return None
+                    # For escalations, we'd need to re-run the parent node with error context
+                    # For now, log and continue
+                    logger.warning(f"[REPAIR] Escalation needed for: {error}")
+                    continue
+
+                # Local repair - extract file path from error
+                file_path = self._extract_file_from_error(error)
+                if not file_path:
+                    continue
+
+                # Check retry count
+                if file_path not in local_retries:
+                    local_retries[file_path] = 0
+                if local_retries[file_path] >= max_local_retries:
+                    logger.warning(f"[REPAIR] Max local retries for {file_path}")
+                    continue
+
+                local_retries[file_path] += 1
+
+                # Get the file entry
+                file_entry = manifest.get_file(file_path)
+                if not file_entry:
+                    continue
+
+                # Build repair context
+                repair_context = f"Error in {file_path}:\n{error}\n\n"
+                if repair_action.needs_sibling_context:
+                    # Include contracts/types context
+                    sibling_context = self._get_sibling_context(manifest, file_path)
+                    repair_context += f"Related files context:\n{sibling_context}\n\n"
+
+                repair_context += f"Original code:\n{file_entry.content}\n\n"
+                repair_context += "Please fix the error and provide the corrected code."
+
+                # Call LLM for repair
+                try:
+                    repaired_content, tokens = await self.llm.answer_task(
+                        task=f"Fix the following code error:\n{repair_context}",
+                        context="",
+                    )
+                    run.total_tokens += tokens
+
+                    # Extract code from response
+                    repaired_code = self._extract_code_from_response(repaired_content, file_entry.language)
+                    if repaired_code:
+                        # Update manifest with repaired code
+                        new_entry = FileEntry(
+                            path=file_entry.path,
+                            content=repaired_code,
+                            language=file_entry.language,
+                            source_nodes=file_entry.source_nodes + ["repair"],
+                        )
+                        manifest.update_file(new_entry)
+                        logger.info(f"[REPAIR] Updated {file_path} with repaired code")
+
+                except Exception as e:
+                    logger.error(f"[REPAIR] Failed to repair {file_path}: {e}")
+
+        return manifest
+
+    def _extract_file_from_error(self, error: str) -> str | None:
+        """Extract file path from error message."""
+        import re
+        # Match patterns like "path/to/file.py:10:" or "path/to/file.ts: error"
+        match = re.search(r'([^\s:]+\.\w+)(?::\d+)?:', error)
+        if match:
+            return match.group(1)
+        return None
+
+    def _get_sibling_context(self, manifest: FileManifest, file_path: str) -> str:
+        """Get context from sibling files (contracts/types)."""
+        context_parts = []
+        for entry in manifest.files:
+            # Include type/contract files
+            if entry.path != file_path:
+                if any(kw in entry.path.lower() for kw in ["types", "contract", "interface", "schema"]):
+                    context_parts.append(f"// {entry.path}\n{entry.content[:2000]}")
+        return "\n\n".join(context_parts[:3])  # Limit to 3 files
+
+    def _extract_code_from_response(self, response: str, language: str) -> str | None:
+        """Extract code block from LLM response."""
+        import re
+        # Match code block with specified language
+        pattern = rf'```(?:{language}|{language[:2]})?\s*\n(.*?)```'
+        match = re.search(pattern, response, re.DOTALL | re.IGNORECASE)
+        if match:
+            return match.group(1).strip()
+        # Try generic code block
+        match = re.search(r'```\s*\n(.*?)```', response, re.DOTALL)
+        if match:
+            return match.group(1).strip()
+        return None
+
+    async def _get_current_vault_hashes(self, run: Run) -> dict[str, str]:
+        """Get current hashes for vault files used in the run.
+
+        Used for delta verification during resume.
+        """
+        hashes: dict[str, str] = {}
+
+        if not self.mcp_client:
+            return hashes
+
+        # Get all used notes from tracked nodes
+        for node_id in run.nodes:
+            info = self.delta_verifier.get_node_info(node_id)
+            if info:
+                for path in info.used_notes:
+                    if path not in hashes:
+                        file_hash = await self.mcp_client.get_file_hash(path)
+                        if file_hash:
+                            hashes[path] = file_hash
+
+        return hashes
+
+    def _track_node_context(
+        self,
+        node_id: str,
+        context: str,
+        vault_path: str | None = None,
+    ) -> None:
+        """Track context used by a node for delta verification.
+
+        Per SPEC.md Section 2.8.2: Store per completed node:
+        - used_notes[]
+        - used_note_hashes{}
+        - subset_fingerprint
+        """
+        import re
+
+        # Extract note paths from context (wikilink format)
+        used_notes: list[str] = []
+        note_hashes: dict[str, str] = {}
+
+        # Find wikilinks: [[path/to/note]]
+        wikilinks = re.findall(r'\[\[([^\]]+)\]\]', context)
+        for link in wikilinks:
+            path = link if link.endswith(".md") else f"{link}.md"
+            used_notes.append(path)
+            # Generate simple hash from context portion
+            note_hashes[path] = hashlib.sha256(path.encode()).hexdigest()[:16]
+
+        if used_notes:
+            self.delta_verifier.track_node(
+                node_id=node_id,
+                used_notes=used_notes,
+                note_hashes=note_hashes,
+            )

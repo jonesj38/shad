@@ -74,6 +74,12 @@ def cli() -> None:
 @click.option("--output", "-o", type=click.Path(), help="Output file for results")
 @click.option("--api", default=None, help="Shad API URL (uses local engine if not specified)")
 @click.option("--no-code-mode", is_flag=True, help="Disable Code Mode (LLM-generated retrieval scripts)")
+@click.option("--strategy", "-s", type=click.Choice(["software", "research", "analysis", "planning"]),
+              help="Override automatic strategy selection")
+@click.option("--verify", type=click.Choice(["off", "basic", "build", "strict"]), default="basic",
+              help="Verification level (default: basic)")
+@click.option("--write-files", is_flag=True, help="Write output files to disk (for software strategy)")
+@click.option("--output-dir", type=click.Path(), help="Output directory for files (requires --write-files)")
 def run(
     goal: str,
     vault: str | None,
@@ -85,6 +91,10 @@ def run(
     output: str | None,
     api: str | None,
     no_code_mode: bool,
+    strategy: str | None,
+    verify: str,
+    write_files: bool,
+    output_dir: str | None,
 ) -> None:
     """Execute a reasoning task.
 
@@ -92,7 +102,7 @@ def run(
     Examples:
         shad run "Explain quantum computing"
         shad run "Summarize research" --vault ~/Notes
-        shad run "Compare approaches" --max-depth 2
+        shad run "Build REST API" --strategy software --verify strict --write-files
     """
     # If API specified, use remote execution
     if api:
@@ -109,6 +119,10 @@ def run(
             max_tokens=max_tokens,
         ),
         voice=voice,
+        strategy_override=strategy,
+        verify_level=verify,
+        write_files=write_files,
+        output_path=output_dir,
     )
 
     console.print(Panel(f"[bold]Goal:[/bold] {goal}", title="Shad Run", border_style="blue"))
@@ -133,6 +147,13 @@ def run(
     else:
         console.print("[dim][CONTEXT] No vault specified[/dim]")
         use_code_mode = False
+
+    # Display strategy and verification options
+    if strategy:
+        console.print(f"[dim][STRATEGY] Override: {strategy}[/dim]")
+    console.print(f"[dim][VERIFY] Level: {verify}[/dim]")
+    if write_files:
+        console.print(f"[dim][OUTPUT] Write files enabled{f' → {output_dir}' if output_dir else ''}[/dim]")
 
     async def _execute_run() -> Run:
         """Execute run."""
@@ -168,6 +189,29 @@ def run(
         with output_path.open("w") as f:
             f.write(result.final_result or "No result")
         console.print(f"\n[dim]Output written to {output_path}[/dim]")
+
+    # Write manifest files if requested
+    if write_files and result.metadata.get("manifest"):
+        from shad.output.manifest import FileManifest, ManifestWriter
+
+        manifest_data = result.metadata["manifest"]
+        manifest = FileManifest.from_dict(manifest_data)
+        output_root = Path(output_dir) if output_dir else Path.cwd() / "output"
+        output_root.mkdir(parents=True, exist_ok=True)
+
+        writer = ManifestWriter(output_root=output_root)
+        report = writer.write(manifest)
+
+        if report.success:
+            console.print(f"\n[green]✓ Wrote {len(report.written)} files to {output_root}[/green]")
+            for path in report.written[:5]:
+                console.print(f"  [dim]→ {path}[/dim]")
+            if len(report.written) > 5:
+                console.print(f"  [dim]... and {len(report.written) - 5} more[/dim]")
+        else:
+            console.print(f"\n[yellow]⚠ Wrote {len(report.written)} files, skipped {len(report.skipped)}[/yellow]")
+            for error in report.errors[:3]:
+                console.print(f"  [red]{error}[/red]")
 
     # Exit with appropriate code
     if result.status == RunStatus.FAILED:
@@ -285,16 +329,22 @@ def trace_node(run_id: str, node_id: str) -> None:
 @click.option("--max-depth", "-d", type=int, help="Override max depth")
 @click.option("--max-nodes", type=int, help="Override max nodes")
 @click.option("--max-time", "-t", type=int, help="Override max time")
+@click.option("--replay", type=str, help="Replay mode: 'stale', node_id, or 'subtree:node_id'")
 def resume(
     run_id: str,
     max_depth: int | None,
     max_nodes: int | None,
     max_time: int | None,
+    replay: str | None,
 ) -> None:
-    """Resume a partial or failed run.
+    """Resume a partial or failed run with delta verification.
 
-    Example:
+    \b
+    Examples:
         shad resume abc12345 --max-depth 4
+        shad resume abc12345 --replay stale     # Re-run stale nodes only
+        shad resume abc12345 --replay node123   # Re-run specific node
+        shad resume abc12345 --replay subtree:node123  # Re-run subtree
     """
     history = HistoryManager()
 
@@ -317,11 +367,13 @@ def resume(
         run_data.config.budget.max_wall_time = max_time
 
     console.print(Panel(f"Resuming run {run_id}", title="Shad Resume", border_style="yellow"))
+    if replay:
+        console.print(f"[dim][REPLAY] Mode: {replay}[/dim]")
 
     async def _resume_run() -> Run:
         """Resume run."""
         engine = RLMEngine(llm_provider=LLMProvider())
-        return await engine.resume(run_data)
+        return await engine.resume(run_data, replay_mode=replay)
 
     with Progress(
         SpinnerColumn(),
@@ -458,6 +510,114 @@ def search(query: str, limit: int, api: str) -> None:
 
         console.print(f"\n[bold cyan]{i}. {path}[/bold cyan] [dim](score: {score:.2f})[/dim]")
         console.print(f"   {content}...")
+
+
+# =============================================================================
+# Export Command
+# =============================================================================
+
+@cli.command()
+@click.argument("run_id")
+@click.option("--output", "-o", type=click.Path(), default="./output", help="Output directory")
+@click.option("--overwrite", is_flag=True, help="Overwrite existing files")
+def export(run_id: str, output: str, overwrite: bool) -> None:
+    """Export files from a completed run.
+
+    \b
+    Examples:
+        shad export abc12345
+        shad export abc12345 --output ./my-project
+        shad export abc12345 --overwrite
+    """
+    history = HistoryManager()
+
+    try:
+        run_data = history.load_run(run_id)
+    except FileNotFoundError:
+        console.print(f"[red]Run {run_id} not found[/red]")
+        sys.exit(1)
+
+    manifest_data = run_data.metadata.get("manifest")
+    if not manifest_data:
+        console.print(f"[yellow]Run {run_id} has no file manifest to export[/yellow]")
+        sys.exit(1)
+
+    from shad.output.manifest import FileManifest, ManifestWriter
+
+    manifest = FileManifest.from_dict(manifest_data)
+    output_root = Path(output).expanduser()
+    output_root.mkdir(parents=True, exist_ok=True)
+
+    writer = ManifestWriter(output_root=output_root, overwrite=overwrite)
+    report = writer.write(manifest)
+
+    if report.success:
+        console.print(f"[green]✓ Exported {len(report.written)} files to {output_root}[/green]")
+        for path in report.written[:10]:
+            console.print(f"  [dim]→ {path}[/dim]")
+        if len(report.written) > 10:
+            console.print(f"  [dim]... and {len(report.written) - 10} more[/dim]")
+    else:
+        console.print(f"[yellow]⚠ Exported {len(report.written)} files, skipped {len(report.skipped)}[/yellow]")
+        for error in report.errors[:5]:
+            console.print(f"  [red]{error}[/red]")
+
+
+# =============================================================================
+# Vault Ingestion Command
+# =============================================================================
+
+@cli.group("ingest")
+def ingest() -> None:
+    """Ingest sources into vault."""
+    pass
+
+
+@ingest.command("github")
+@click.argument("url")
+@click.option("--vault", "-v", required=True, type=click.Path(), help="Target vault path")
+@click.option("--preset", type=click.Choice(["mirror", "docs", "deep"]), default="docs",
+              help="Ingestion preset (default: docs)")
+def ingest_github(url: str, vault: str, preset: str) -> None:
+    """Ingest a GitHub repository into vault.
+
+    \b
+    Examples:
+        shad ingest github https://github.com/user/repo --vault ~/MyVault
+        shad ingest github https://github.com/user/repo --vault ~/MyVault --preset deep
+    """
+    from shad.vault.ingestion import IngestPreset, VaultIngester
+
+    vault_path = Path(vault).expanduser()
+    if not vault_path.exists():
+        console.print(f"[red]Vault path does not exist: {vault_path}[/red]")
+        sys.exit(1)
+
+    console.print(Panel(f"Ingesting {url}", title="Vault Ingestion", border_style="blue"))
+    console.print(f"[dim]Preset: {preset}[/dim]")
+    console.print(f"[dim]Target: {vault_path}[/dim]")
+
+    async def _ingest() -> Any:
+        ingester = VaultIngester(vault_path=vault_path)
+        return await ingester.ingest_github(url, preset=IngestPreset(preset))
+
+    with Progress(
+        SpinnerColumn(),
+        TextColumn("[progress.description]{task.description}"),
+        console=console,
+    ) as progress:
+        task = progress.add_task("Ingesting...", total=None)
+
+        try:
+            result = run_async(_ingest())
+            progress.update(task, description="Complete")
+        except Exception as e:
+            progress.update(task, description="Failed")
+            console.print(f"[red]Error: {e}[/red]")
+            sys.exit(1)
+
+    console.print(f"[green]✓ Ingested to {result.snapshot_path}[/green]")
+    console.print(f"[dim]Files: {result.file_count}[/dim]")
 
 
 def _display_run_result(run: Run) -> None:
