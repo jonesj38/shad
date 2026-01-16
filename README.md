@@ -308,10 +308,10 @@ shad server logs -f   # Follow logs
 
 ```bash
 # Execute a task
-shad run "Your task" --vault /path/to/vault [options]
+shad run "Your task" [options]
 
 Options:
-  --vault, -v       Path to Obsidian vault (repeatable for layering)
+  --vault, -v       Path to Obsidian vault (optional if OBSIDIAN_VAULT_PATH is set; repeatable for layering)
   --strategy        Force strategy (software|research|analysis|planning)
   --max-depth, -d   Maximum recursion depth (default: 3)
   --max-nodes       Maximum DAG nodes (default: 50)
@@ -386,16 +386,34 @@ Copy `.env.example` to `.env` and configure:
 # Required
 REDIS_URL=redis://localhost:6379/0
 
-# Optional: Obsidian Local REST API
+# Optional: Default vault path
+# If set, you don't need to pass --vault to every command
+OBSIDIAN_VAULT_PATH=/path/to/your/vault
+
+# Optional: Obsidian Local REST API (for advanced vault features)
 OBSIDIAN_API_KEY=your_key_here
 OBSIDIAN_BASE_URL=https://127.0.0.1:27124
-OBSIDIAN_VAULT_PATH=/path/to/your/vault
 
 # Optional: Budget defaults
 DEFAULT_MAX_DEPTH=3
 DEFAULT_MAX_NODES=50
 DEFAULT_MAX_WALL_TIME=300
 DEFAULT_MAX_TOKENS=100000
+```
+
+### Default Vault
+
+Set `OBSIDIAN_VAULT_PATH` in your `.env` file to use a default vault:
+
+```bash
+# In .env
+OBSIDIAN_VAULT_PATH=/home/user/MyVault
+
+# Now you can run without --vault
+shad run "Summarize my notes"
+
+# CLI --vault flag overrides the default
+shad run "Query other vault" --vault ~/OtherVault
 ```
 
 ---

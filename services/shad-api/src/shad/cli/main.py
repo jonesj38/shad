@@ -135,15 +135,20 @@ def run(
 
     console.print(Panel(f"[bold]Goal:[/bold] {goal}", title="Shad Run", border_style="blue"))
 
-    # Initialize MCP client if vault specified
+    # Initialize MCP client if vault specified (CLI arg or env fallback)
     mcp_client: ObsidianMCPClient | None = None
     vault_path: Path | None = None
-    if vault:
+
+    # Use CLI arg, or fall back to env var
+    effective_vault = vault or get_settings().obsidian_vault_path
+
+    if effective_vault:
         # Resolve vault path (support relative paths)
-        vault_path = Path(vault).expanduser()
+        vault_path = Path(effective_vault).expanduser()
         if not vault_path.is_absolute():
             vault_path = Path.cwd() / vault_path
-        console.print(f"[dim][CONTEXT] Using vault: {vault_path}[/dim]")
+        source = "CLI" if vault else "env"
+        console.print(f"[dim][CONTEXT] Using vault ({source}): {vault_path}[/dim]")
         mcp_client = ObsidianMCPClient(vault_path=vault_path)
 
         # Show Code Mode status
@@ -153,7 +158,7 @@ def run(
         else:
             console.print("[dim][CODE_MODE] Disabled - using direct search[/dim]")
     else:
-        console.print("[dim][CONTEXT] No vault specified[/dim]")
+        console.print("[dim][CONTEXT] No vault specified (use --vault or set OBSIDIAN_VAULT_PATH)[/dim]")
         use_code_mode = False
 
     # Display strategy and verification options
