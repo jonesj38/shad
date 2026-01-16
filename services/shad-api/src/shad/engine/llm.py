@@ -412,17 +412,22 @@ You have access to an 'obsidian' object with these methods:
 IMPORTANT: Store your final result in __result__ variable. This should be a string
 containing the most relevant context for the task, formatted clearly.
 
+CRITICAL: When using list comprehensions, access dict keys directly on the loop variable.
+WRONG: [f"{path}" for r in results]  # 'path' is undefined!
+RIGHT: [f"{r['path']}" for r in results]  # access via r
+
 Example script:
 ```python
 # Search for relevant notes
 results = obsidian.search("machine learning", limit=5)
 
-# Extract and combine relevant content
-context_parts = []
-for r in results:
-    path = r["path"]
-    content = r["content"][:2000]  # Limit size
-    context_parts.append(f"## {path}\\n{content}")
+# Extract and combine relevant content (use r['key'] in comprehensions)
+context_parts = [f"## {r['path']}\\n{r['content'][:2000]}" for r in results]
+
+# Or with a for loop:
+# context_parts = []
+# for r in results:
+#     context_parts.append(f"## {r['path']}\\n{r['content'][:2000]}")
 
 # Store final result
 __result__ = "\\n\\n---\\n\\n".join(context_parts)
