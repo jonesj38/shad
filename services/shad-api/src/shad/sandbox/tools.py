@@ -13,6 +13,7 @@ import re
 from pathlib import Path
 from typing import Any
 
+import httpx
 import yaml
 
 logger = logging.getLogger(__name__)
@@ -29,9 +30,26 @@ class ObsidianTools:
     - update_frontmatter -> obsidian_manage_frontmatter
     """
 
-    def __init__(self, vault_path: Path | str):
-        """Initialize with vault path."""
+    def __init__(
+        self,
+        vault_path: Path | str,
+        api_url: str | None = None,
+        api_key: str | None = None,
+        verify_ssl: bool = False,
+    ):
+        """Initialize with vault path and optional API configuration.
+
+        Args:
+            vault_path: Path to the Obsidian vault
+            api_url: Optional Obsidian Local REST API URL for indexed search
+            api_key: Optional API key for authentication
+            verify_ssl: Whether to verify SSL certificates (default False for local)
+        """
         self.vault_path = Path(vault_path)
+        self.api_url = api_url
+        self.api_key = api_key
+        self.verify_ssl = verify_ssl
+        self._client: httpx.Client | None = None
 
     def read_note(self, path: str) -> str | None:
         """Read a note's content.
@@ -93,13 +111,89 @@ class ObsidianTools:
             logger.error(f"Error writing {path}: {e}")
             return False
 
-    def search(
+    def _get_client(self) -> httpx.Client | None:
+        """Get or create HTTP client for API calls.
+
+        Returns:
+            httpx.Client if API is configured, None otherwise
+        """
+        if not self.api_url:
+            return None
+
+        if self._client is None:
+            headers = {}
+            if self.api_key:
+                headers["Authorization"] = f"Bearer {self.api_key}"
+
+            self._client = httpx.Client(
+                base_url=self.api_url,
+                headers=headers,
+                verify=self.verify_ssl,
+                timeout=30.0,
+            )
+
+        return self._client
+
+    def _search_via_api(
+        self,
+        query: str,
+        limit: int = 10,
+    ) -> list[dict[str, Any]] | None:
+        """Search via Obsidian Local REST API.
+
+        Uses Obsidian's indexed search for faster queries on large vaults.
+
+        Args:
+            query: Search query string
+            limit: Maximum results
+
+        Returns:
+            List of search results, or None if API unavailable
+        """
+        client = self._get_client()
+        if client is None:
+            return None
+
+        try:
+            response = client.post(
+                "/search/simple/",
+                json={"query": query},
+            )
+
+            if response.status_code == 200:
+                data = response.json()
+                results = []
+                for item in data[:limit]:
+                    path = item.get("filename", "")
+                    # Read full content for consistency with local search
+                    content = self.read_note(path) or item.get("content", "")
+                    results.append({
+                        "path": path,
+                        "content": content,
+                        "score": item.get("score", 0.0),
+                        "matched_line": item.get("matches", [None])[0] if item.get("matches") else None,
+                    })
+                return results
+            else:
+                logger.warning(f"Obsidian API returned status {response.status_code}")
+                return None
+
+        except httpx.ConnectError:
+            logger.debug("Obsidian API not available, falling back to local search")
+            return None
+        except Exception as e:
+            logger.warning(f"Obsidian API search error: {e}")
+            return None
+
+    def _search_local(
         self,
         query: str,
         limit: int = 10,
         path_filter: str | None = None,
     ) -> list[dict[str, Any]]:
-        """Search for notes matching query.
+        """Search locally via filesystem traversal.
+
+        Fallback when Obsidian API is unavailable.
 
         Args:
             query: Search query string
@@ -158,8 +252,38 @@ class ObsidianTools:
             return results[:limit]
 
         except Exception as e:
-            logger.error(f"Search error: {e}")
+            logger.error(f"Local search error: {e}")
             return []
+
+    def search(
+        self,
+        query: str,
+        limit: int = 10,
+        path_filter: str | None = None,
+    ) -> list[dict[str, Any]]:
+        """Search for notes matching query.
+
+        Attempts to use Obsidian's indexed search API first for performance,
+        falling back to local filesystem search if unavailable.
+
+        Args:
+            query: Search query string
+            limit: Maximum results
+            path_filter: Optional path prefix filter
+
+        Returns:
+            List of search results
+        """
+        # Try API search first (much faster for large vaults)
+        if self.api_url and not path_filter:
+            # Note: API doesn't support path_filter, so skip for filtered searches
+            api_results = self._search_via_api(query, limit)
+            if api_results is not None:
+                logger.debug(f"Search via Obsidian API returned {len(api_results)} results")
+                return api_results
+
+        # Fall back to local search
+        return self._search_local(query, limit, path_filter)
 
     def list_notes(
         self,
@@ -297,15 +421,28 @@ class ObsidianTools:
 obsidian: ObsidianTools | None = None
 
 
-def init_tools(vault_path: Path) -> ObsidianTools:
+def init_tools(
+    vault_path: Path,
+    api_url: str | None = None,
+    api_key: str | None = None,
+    verify_ssl: bool = False,
+) -> ObsidianTools:
     """Initialize the global obsidian tools instance.
 
     Args:
         vault_path: Path to the vault
+        api_url: Optional Obsidian Local REST API URL for indexed search
+        api_key: Optional API key for authentication
+        verify_ssl: Whether to verify SSL certificates
 
     Returns:
         ObsidianTools instance
     """
     global obsidian
-    obsidian = ObsidianTools(vault_path)
+    obsidian = ObsidianTools(
+        vault_path=vault_path,
+        api_url=api_url,
+        api_key=api_key,
+        verify_ssl=verify_ssl,
+    )
     return obsidian
