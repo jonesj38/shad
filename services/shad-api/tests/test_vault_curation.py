@@ -112,22 +112,48 @@ class TestVaultIngester:
         assert "react-native" in str(path)
 
     @pytest.mark.asyncio
-    async def test_ingest_creates_entry_note(self, ingester: VaultIngester) -> None:
-        """Test that ingestion creates entry note."""
-        # Mock git clone
-        with patch.object(ingester, '_clone_repo', new_callable=AsyncMock) as mock_clone:
-            mock_clone.return_value = Path("/tmp/cloned")
+    async def test_ingest_creates_entry_note(self, ingester: VaultIngester, tmp_path: Path) -> None:
+        """Test that ingestion creates entry note with converted files."""
+        # Create a mock clone directory with actual files
+        clone_dir = tmp_path / "mock_clone"
+        clone_dir.mkdir()
 
-            with patch.object(ingester, '_process_files') as mock_process:
-                mock_process.return_value = ["README.md", "docs/api.md"]
+        # Create test files
+        readme = clone_dir / "README.md"
+        readme.write_text("# Test Repo\n\nThis is a test repository.")
 
-                result = await ingester.ingest_github(
-                    url="https://github.com/org/repo",
-                    preset=IngestPreset.DOCS,
-                )
+        docs_dir = clone_dir / "docs"
+        docs_dir.mkdir()
+        api_doc = docs_dir / "api.md"
+        api_doc.write_text("# API Documentation\n\nAPI docs here.")
 
-                assert result.success is True
-                assert result.snapshot_id is not None
+        # Mock git clone to use our test directory
+        async def mock_clone(url: str, target: Path) -> Path:
+            # Copy files to target (simulating git clone)
+            import shutil
+            if target.exists():
+                shutil.rmtree(target)
+            shutil.copytree(clone_dir, target)
+            return target
+
+        with patch.object(ingester, '_clone_repo', side_effect=mock_clone):
+            result = await ingester.ingest_github(
+                url="https://github.com/org/repo",
+                preset=IngestPreset.DOCS,
+            )
+
+            assert result.success is True
+            assert result.snapshot_id is not None
+            assert len(result.files_processed) == 2
+
+            # Verify entry note was created
+            sources_dir = ingester.vault_path / "Sources"
+            entry_files = list(sources_dir.rglob("_entry.md"))
+            assert len(entry_files) == 1
+
+            # Verify notes were created
+            md_files = list(sources_dir.rglob("*.md"))
+            assert len(md_files) >= 3  # _entry.md + README.md + api.md
 
     def test_extract_source_id(self, ingester: VaultIngester) -> None:
         """Test extracting source ID from URL."""
