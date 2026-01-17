@@ -41,6 +41,10 @@ class SandboxConfig:
         "functools", "math", "statistics", "hashlib", "pathlib",
         "typing", "dataclasses", "enum", "yaml",
     ])
+    # Obsidian API settings for indexed search
+    obsidian_api_url: str | None = None
+    obsidian_api_key: str | None = None
+    obsidian_verify_ssl: bool = False
 
 
 @dataclass
@@ -91,8 +95,13 @@ class CodeExecutor:
         # Import sandbox tools module
         from shad.sandbox import tools
 
-        # Create obsidian tools instance
-        obsidian_tools = tools.ObsidianTools(vault_path=self.config.vault_path)
+        # Create obsidian tools instance with API config for indexed search
+        obsidian_tools = tools.ObsidianTools(
+            vault_path=self.config.vault_path,
+            api_url=self.config.obsidian_api_url,
+            api_key=self.config.obsidian_api_key,
+            verify_ssl=self.config.obsidian_verify_ssl,
+        )
 
         # Set up globals with safe builtins and tools
         self._globals = {

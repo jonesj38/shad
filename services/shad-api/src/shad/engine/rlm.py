@@ -106,7 +106,12 @@ class RLMEngine:
         if code_executor:
             self.code_executor = code_executor
         elif self._use_code_mode and self.vault_path:
-            sandbox_config = SandboxConfig(vault_path=self.vault_path)
+            sandbox_config = SandboxConfig(
+                vault_path=self.vault_path,
+                obsidian_api_url=self.settings.obsidian_base_url,
+                obsidian_api_key=self.settings.obsidian_api_key,
+                obsidian_verify_ssl=self.settings.obsidian_verify_ssl,
+            )
             self.code_executor = CodeExecutor(sandbox_config)
             logger.info(f"[CODE_MODE] Initialized CodeExecutor with vault: {self.vault_path}")
         else:
