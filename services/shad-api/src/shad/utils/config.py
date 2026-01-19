@@ -1,16 +1,26 @@
 """Configuration management for Shad."""
 
+import os
 from functools import lru_cache
 from pathlib import Path
 
 from pydantic_settings import BaseSettings, SettingsConfigDict
+
+# Get SHAD_HOME for .env file location
+_shad_home = Path(os.environ.get("SHAD_HOME", os.path.expanduser("~/.shad")))
+_env_files = [
+    str(_shad_home / ".env.local"),
+    str(_shad_home / ".env"),
+    ".env.local",
+    ".env",
+]
 
 
 class Settings(BaseSettings):
     """Application settings loaded from environment."""
 
     model_config = SettingsConfigDict(
-        env_file=(".env.local", ".env"),
+        env_file=tuple(_env_files),
         env_file_encoding="utf-8",
         extra="ignore",
     )

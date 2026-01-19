@@ -1268,5 +1268,170 @@ def _display_node_detail(node: Any) -> None:
         console.print(Panel(node.result, title="Result", border_style="green"))
 
 
+# =============================================================================
+# Project Initialization
+# =============================================================================
+
+
+SHAD_PERMISSIONS = [
+    # File operations - shad needs to read/write generated code
+    "Read",
+    "Edit",
+    "Write",
+    # Bash - for running builds, tests, linters
+    "Bash(npm:*)",
+    "Bash(npx:*)",
+    "Bash(node:*)",
+    "Bash(python:*)",
+    "Bash(pip:*)",
+    "Bash(pytest:*)",
+    "Bash(ruff:*)",
+    "Bash(mypy:*)",
+    "Bash(git status:*)",
+    "Bash(git diff:*)",
+    "Bash(git log:*)",
+    "Bash(ls:*)",
+    "Bash(cat:*)",
+    "Bash(mkdir:*)",
+    "Bash(cp:*)",
+    "Bash(mv:*)",
+]
+
+
+@cli.command("init")
+@click.argument("path", default=".", type=click.Path())
+@click.option("--force", "-f", is_flag=True, help="Overwrite existing .claude settings")
+@click.option("--yes", "-y", is_flag=True, help="Skip confirmation prompt")
+def init(path: str, force: bool, yes: bool) -> None:
+    """Initialize a project for use with shad.
+
+    Creates .claude/settings.json with permissions that allow shad to:
+    - Read, write, and edit files
+    - Run builds, tests, and linters
+    - Execute common development commands
+
+    \b
+    Examples:
+        shad init                    # Initialize current directory
+        shad init ~/projects/myapp   # Initialize specific project
+        shad init --force            # Overwrite existing settings
+    """
+    import json
+
+    project_path = Path(path).expanduser().resolve()
+    claude_dir = project_path / ".claude"
+    settings_file = claude_dir / "settings.json"
+
+    if not project_path.exists():
+        console.print(f"[red]Path does not exist: {project_path}[/red]")
+        sys.exit(1)
+
+    # Check for existing settings
+    if settings_file.exists() and not force:
+        console.print(f"[yellow].claude/settings.json already exists at {project_path}[/yellow]")
+        console.print("[dim]Use --force to overwrite[/dim]")
+        sys.exit(1)
+
+    # Show what permissions will be granted
+    console.print(Panel(
+        f"[bold]Project:[/bold] {project_path}",
+        title="Shad Project Initialization",
+        border_style="blue"
+    ))
+
+    console.print("\n[bold]The following permissions will be granted to Claude Code:[/bold]\n")
+
+    table = Table(show_header=False, box=None)
+    table.add_column("Permission", style="cyan")
+    table.add_column("Description")
+
+    table.add_row("Read", "Read any file in the project")
+    table.add_row("Edit", "Edit any file in the project")
+    table.add_row("Write", "Create new files in the project")
+    table.add_row("Bash(npm/npx/node:*)", "Run Node.js commands")
+    table.add_row("Bash(python/pip:*)", "Run Python commands")
+    table.add_row("Bash(pytest/ruff/mypy:*)", "Run test and lint tools")
+    table.add_row("Bash(git status/diff/log:*)", "Read-only git commands")
+    table.add_row("Bash(ls/cat/mkdir/cp/mv:*)", "Basic file operations")
+
+    console.print(table)
+    console.print()
+
+    # Confirm unless --yes
+    if not yes:
+        if not click.confirm("Create .claude/settings.json with these permissions?"):
+            console.print("[dim]Aborted[/dim]")
+            sys.exit(0)
+
+    # Create settings
+    settings = {
+        "_comment": "Shad project permissions - allows automated code generation",
+        "permissions": {
+            "allow": SHAD_PERMISSIONS,
+        },
+    }
+
+    # Write settings
+    claude_dir.mkdir(parents=True, exist_ok=True)
+    with settings_file.open("w") as f:
+        json.dump(settings, f, indent=2)
+
+    console.print(f"\n[green]Created {settings_file}[/green]")
+    console.print("\n[dim]You can now run shad commands in this project without permission prompts.[/dim]")
+    console.print("[dim]To revoke permissions, delete .claude/settings.json[/dim]")
+
+
+@cli.command("check-permissions")
+@click.argument("path", default=".", type=click.Path())
+def check_permissions(path: str) -> None:
+    """Check if a project has shad permissions configured.
+
+    \b
+    Examples:
+        shad check-permissions
+        shad check-permissions ~/projects/myapp
+    """
+    import json
+
+    project_path = Path(path).expanduser().resolve()
+    settings_file = project_path / ".claude" / "settings.json"
+
+    if not settings_file.exists():
+        console.print(f"[yellow]No .claude/settings.json found at {project_path}[/yellow]")
+        console.print("[dim]Run 'shad init' to set up permissions[/dim]")
+        sys.exit(1)
+
+    try:
+        with settings_file.open() as f:
+            settings = json.load(f)
+    except json.JSONDecodeError:
+        console.print(f"[red]Invalid JSON in {settings_file}[/red]")
+        sys.exit(1)
+
+    permissions = settings.get("permissions", {}).get("allow", [])
+
+    if not permissions:
+        console.print(f"[yellow]No permissions configured in {settings_file}[/yellow]")
+        console.print("[dim]Run 'shad init --force' to set up permissions[/dim]")
+        sys.exit(1)
+
+    console.print(f"[green]Permissions configured at {project_path}[/green]\n")
+
+    # Check which shad permissions are present
+    missing = []
+    for perm in SHAD_PERMISSIONS:
+        if perm in permissions:
+            console.print(f"  [green]✓[/green] {perm}")
+        else:
+            console.print(f"  [yellow]○[/yellow] {perm} [dim](not configured)[/dim]")
+            missing.append(perm)
+
+    if missing:
+        console.print(f"\n[yellow]Missing {len(missing)} shad permissions[/yellow]")
+        console.print("[dim]Run 'shad init --force' to update[/dim]")
+    else:
+        console.print("\n[green]All shad permissions are configured[/green]")
+
+
 if __name__ == "__main__":
     cli()

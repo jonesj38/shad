@@ -156,8 +156,8 @@ class ObsidianTools:
 
         try:
             response = client.post(
-                "/search/simple/",
-                json={"query": query},
+                "/search/simple",
+                params={"query": query},
             )
 
             if response.status_code == 200:
