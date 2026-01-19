@@ -1082,14 +1082,33 @@ __result__ = {{
             path_hint = match.group(2).strip()
             content = match.group(3)
 
-            # Try to extract path from first comment
-            if not path_hint or path_hint.startswith('//') or path_hint.startswith('#'):
+            # Validate path_hint looks like a file path (has extension, no code syntax)
+            def is_valid_path(p: str) -> bool:
+                if not p:
+                    return False
+                # Must have a file extension
+                if not re.search(r'\.\w+$', p):
+                    return False
+                # Should not contain code syntax indicators
+                if any(c in p for c in ['{', '}', '(', ')', '=', ';', ',']):
+                    return False
+                # Should not start with common code keywords
+                code_keywords = ['export', 'import', 'const', 'let', 'var', 'function',
+                                 'class', 'interface', 'type', 'def', 'async', 'return']
+                first_word = p.split()[0].lower() if p.split() else ''
+                if first_word in code_keywords:
+                    return False
+                return True
+
+            # Try to extract path from first comment if path_hint is invalid
+            if not is_valid_path(path_hint):
+                path_hint = ''
                 # Look for path in content
                 path_match = re.search(r'(?:\/\/|#)\s*(?:file|path)?:?\s*(\S+\.\w+)', content)
                 if path_match:
                     path_hint = path_match.group(1)
 
-            if path_hint:
+            if path_hint and is_valid_path(path_hint):
                 files.append(FileEntry(
                     path=path_hint,
                     content=content,
