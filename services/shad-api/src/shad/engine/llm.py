@@ -120,6 +120,7 @@ class LLMProvider:
                 "claude",
                 "-p", full_prompt,
                 "--output-format", "text",
+                "--allowedTools", "Read,Edit,Write,Bash",
                 stdout=asyncio.subprocess.PIPE,
                 stderr=asyncio.subprocess.PIPE,
             )
