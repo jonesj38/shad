@@ -44,17 +44,42 @@ def cli() -> None:
     """Shad - Shannon's Daemon: Personal AI Infrastructure.
 
     \b
-    Usage:
-        shad run "your goal or question"              # Run a reasoning task
-        shad run "question" --vault /path/to/vault    # Run with Obsidian vault context
-        shad status <run_id>                          # Check run status
-        shad trace tree <run_id>                      # View execution DAG
+    Core Commands:
+        run <goal>           Execute a reasoning task
+        status <run_id>      Check the status of a run
+        resume <run_id>      Resume a partial/failed run
+        export <run_id>      Export files from a completed run
+        debug <run_id>       Enter debug mode for a run
 
     \b
-    Examples:
-        shad run "Summarize the key points"
-        shad run "What are the main themes?" --vault ~/Documents/MyVault
-        shad status abc12345
+    Project Setup:
+        init [path]              Initialize project permissions for Claude Code
+        check-permissions [path] Verify project permissions are configured
+
+    \b
+    Vault Commands:
+        vault                Check Obsidian vault connection
+        search <query>       Search the Obsidian vault
+        ingest ...           Ingest sources into vault (see: shad ingest --help)
+
+    \b
+    Server Management:
+        server start|stop|status|logs    Manage Shad server
+
+    \b
+    Source Management:
+        sources add|list|remove|sync|status    Manage content sources
+
+    \b
+    Trace & Debug:
+        trace tree <run_id>              View DAG tree
+        trace node <run_id> <node_id>    Inspect specific node
+
+    \b
+    Quick Start:
+        shad init                                    # Set up project permissions
+        shad run "Build a REST API" --vault ~/Notes  # Run with vault context
+        shad status <run_id>                         # Check progress
     """
     pass
 
@@ -289,7 +314,18 @@ def status(run_id: str) -> None:
 
 @cli.group()
 def trace() -> None:
-    """Inspect run traces."""
+    """Inspect run traces and DAG execution.
+
+    \b
+    Commands:
+        tree <run_id>              Show DAG tree structure
+        node <run_id> <node_id>    Inspect a specific node
+
+    \b
+    Examples:
+        shad trace tree abc12345
+        shad trace node abc12345 node1234
+    """
     pass
 
 
@@ -582,7 +618,26 @@ def export(run_id: str, output: str, overwrite: bool) -> None:
 
 @cli.group("ingest")
 def ingest() -> None:
-    """Ingest sources into vault."""
+    """Ingest external sources into your Obsidian vault.
+
+    \b
+    Commands:
+        github <url>    Ingest a GitHub repository
+
+    \b
+    Arguments:
+        url             GitHub repository URL (e.g., https://github.com/user/repo)
+
+    \b
+    Options:
+        -v, --vault     Target vault path (required)
+        --preset        Ingestion preset: mirror, docs, deep (default: docs)
+
+    \b
+    Examples:
+        shad ingest github https://github.com/user/repo --vault ~/MyVault
+        shad ingest github https://github.com/user/repo -v ~/MyVault --preset deep
+    """
     pass
 
 
@@ -644,9 +699,27 @@ def server() -> None:
 
     \b
     Commands:
-        shad server start   - Start Redis and API server
-        shad server stop    - Stop all services
-        shad server status  - Check service status
+        start     Start Redis and API server
+        stop      Stop all services
+        status    Check service status
+        logs      View API server logs
+
+    \b
+    Start Options:
+        -f, --foreground    Run in foreground (don't daemonize)
+
+    \b
+    Logs Options:
+        -f, --follow        Follow log output (like tail -f)
+        -n, --lines N       Number of lines to show (default: 50)
+
+    \b
+    Examples:
+        shad server start
+        shad server start --foreground
+        shad server status
+        shad server logs -f
+        shad server stop
     """
     pass
 
@@ -917,11 +990,40 @@ def sources() -> None:
 
     \b
     Commands:
-        shad sources add       - Add a new source
-        shad sources list      - List all sources
-        shad sources remove    - Remove a source
-        shad sources sync      - Sync sources now
-        shad sources status    - Show scheduler status
+        add <type> <location>    Add a new source
+        list                     List all configured sources
+        remove <source_id>       Remove a source by ID
+        sync                     Sync sources now
+        status                   Show scheduler and sources status
+
+    \b
+    Source Types (for 'add'):
+        github    GitHub repository URL
+        url       Web page URL
+        feed      RSS/Atom feed URL
+        folder    Local folder path
+
+    \b
+    Add Options:
+        -v, --vault PATH         Target vault path (required)
+        -s, --schedule SCHED     Sync schedule: manual, hourly, daily, weekly, monthly
+        -p, --preset PRESET      Ingestion preset (for github): mirror, docs, deep
+
+    \b
+    Sync Options:
+        -a, --all               Sync all sources, not just due ones
+        -d, --daemon            Run as daemon (continuous sync)
+        -i, --interval SECS     Check interval in seconds (for daemon mode)
+
+    \b
+    Examples:
+        shad sources add github https://github.com/org/repo --vault ~/MyVault
+        shad sources add url https://docs.example.com -v ~/MyVault -s weekly
+        shad sources add feed https://blog.example.com/rss -v ~/MyVault -s hourly
+        shad sources list
+        shad sources sync --all
+        shad sources sync --daemon --interval 300
+        shad sources remove abc123
     """
     pass
 
