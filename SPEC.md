@@ -54,11 +54,12 @@ Shad CLI / API
 |-------|--------|-------------|
 | 1. Foundation | Complete | CLI, API, RLM Engine, budgets |
 | 2. Obsidian Integration | Complete | MCP client, Code Mode, citations |
-| 3. Task-Aware Decomposition | In Progress | Strategy skeletons, domain-specific |
-| 4. File Output Mode | Planned | Multi-file codebases, manifests |
-| 5. Verification Layer | Planned | Syntax, types, tests, repair |
-| 6. Iterative Refinement | Planned | Error feedback, HITL checkpoints |
-| 7. Vault Curation Tools | Planned | Ingestion, analysis, gap detection |
+| 3. Task-Aware Decomposition | Complete | Strategy skeletons, domain-specific |
+| 4. File Output Mode | Complete | Multi-file codebases, manifests |
+| 5. Verification Layer | Complete | Syntax, types, tests, repair |
+| 6. Iterative Refinement | Complete | Error feedback, HITL checkpoints |
+| 7. Vault Curation Tools | Complete | Ingestion, analysis, gap detection |
+| 8. Sources Scheduler | Complete | Automated sync from GitHub, URLs, feeds, folders |
 
 ---
 
@@ -1190,9 +1191,14 @@ shad trace tree <run_id>
 shad trace node <run_id> <node_id>
 shad resume <run_id> [--replay <target>]
 shad export <run_id> --output <dir>
+shad debug <run_id>
+
+# Project setup
+shad init [path]                    # Initialize project permissions for Claude Code
+shad check-permissions [path]       # Verify project permissions are configured
 
 # Run options
---vault <path>              # Vault path (repeatable for layering)
+--vault <path>              # Vault path (repeatable for layering; falls back to OBSIDIAN_VAULT_PATH env)
 --strategy <name>           # Force strategy (software|research|analysis|planning)
 --max-depth <n>             # Max recursion depth (default: 3)
 --max-nodes <n>             # Max DAG nodes (default: 50)
@@ -1207,15 +1213,31 @@ shad export <run_id> --output <dir>
 --no-cache                  # Bypass cache
 --no-checkpoints            # Disable non-safety checkpoints
 --tests <mode>              # Test generation (off|stubs|post|tdd|co)
+--quiet, -q                 # Suppress verbose output (logging enabled by default)
 
 # Vault commands
-shad ingest github <url> [--preset docs|mirror|deep]
+shad vault                          # Check vault connection
+shad search <query>                 # Search the vault
+shad ingest github <url> [--preset docs|mirror|deep] --vault <path>
 shad ingest <path> [--type file|folder]
 shad enrich <snapshot_id> --deep
 shad vault analyze [--llm-audit]
-shad sources ls
-shad sources export --format yaml --out <path>
-shad sources pin <url> --snapshot <id>
+
+# Sources scheduler
+shad sources add github <url> --vault <path> --schedule <freq>
+shad sources add url <url> --vault <path> --schedule <freq>
+shad sources add feed <url> --vault <path> --schedule <freq>
+shad sources add folder <path> --vault <path> --schedule <freq>
+shad sources list                   # List all sources
+shad sources status                 # View detailed status (schedule, last sync, next sync)
+shad sources sync [--force]         # Sync due sources (--force syncs all)
+shad sources remove <source_id>     # Remove a source
+
+# Server management
+shad server start [-f|--foreground]
+shad server stop
+shad server status
+shad server logs [-f|--follow] [-n|--lines N]
 
 # Cache commands
 shad cache clear [--scope run|source|all]

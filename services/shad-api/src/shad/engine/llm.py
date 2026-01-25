@@ -65,6 +65,7 @@ class LLMProvider:
             return await self._complete_claude_code(
                 prompt=prompt,
                 system=system,
+                model=model,
             )
 
         # Fallback to API if configured
@@ -89,12 +90,32 @@ class LLMProvider:
                 "No LLM provider configured. Use Claude Code CLI or set API keys."
             )
 
+    def _get_cli_model_name(self, model: str) -> str:
+        """Convert API model name to Claude CLI model name.
+
+        API names like 'claude-sonnet-4-20250514' -> CLI names like 'sonnet'
+        """
+        model_lower = model.lower()
+        if "opus" in model_lower:
+            return "opus"
+        elif "sonnet" in model_lower:
+            return "sonnet"
+        elif "haiku" in model_lower:
+            return "haiku"
+        else:
+            # Default to sonnet if unknown
+            return "sonnet"
+
     async def _complete_claude_code(
         self,
         prompt: str,
         system: str | None = None,
+        model: str = "claude-sonnet-4-20250514",
     ) -> tuple[str, int]:
         """Complete using Claude Code CLI (uses subscription, not API costs)."""
+        # Convert to CLI model name
+        cli_model = self._get_cli_model_name(model)
+
         # Combine system prompt and user prompt with clear structure
         full_prompt = prompt
         if system:
@@ -107,7 +128,7 @@ class LLMProvider:
 </task>"""
 
         # Log prompt details
-        logger.info("[CLAUDE_CODE] Preparing to call Claude Code CLI")
+        logger.info(f"[CLAUDE_CODE] Preparing to call Claude Code CLI (model: {cli_model})")
         logger.info(f"[CLAUDE_CODE] Prompt length: {len(full_prompt)} chars")
         if "Context:" in prompt:
             logger.info("[CLAUDE_CODE] Prompt contains context section")
@@ -115,10 +136,11 @@ class LLMProvider:
 
         # Run claude CLI in non-interactive mode
         try:
-            logger.info("[CLAUDE_CODE] Executing: claude -p <prompt> --output-format text")
+            logger.info(f"[CLAUDE_CODE] Executing: claude -p <prompt> --model {cli_model} --output-format text")
             process = await asyncio.create_subprocess_exec(
                 "claude",
                 "-p", full_prompt,
+                "--model", cli_model,
                 "--output-format", "text",
                 "--allowedTools", "Read,Edit,Write,Bash",
                 stdout=asyncio.subprocess.PIPE,
