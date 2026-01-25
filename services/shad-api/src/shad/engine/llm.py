@@ -135,19 +135,21 @@ class LLMProvider:
         logger.debug(f"[CLAUDE_CODE] Full prompt preview:\n{full_prompt[:1000]}...")
 
         # Run claude CLI in non-interactive mode
+        # Pass prompt via stdin to avoid "Argument list too long" errors
         try:
-            logger.info(f"[CLAUDE_CODE] Executing: claude -p <prompt> --model {cli_model} --output-format text")
+            logger.info(f"[CLAUDE_CODE] Executing: claude -p - --model {cli_model} --output-format text (prompt via stdin)")
             process = await asyncio.create_subprocess_exec(
                 "claude",
-                "-p", full_prompt,
+                "-p", "-",
                 "--model", cli_model,
                 "--output-format", "text",
                 "--allowedTools", "Read,Edit,Write,Bash",
+                stdin=asyncio.subprocess.PIPE,
                 stdout=asyncio.subprocess.PIPE,
                 stderr=asyncio.subprocess.PIPE,
             )
 
-            stdout, stderr = await process.communicate()
+            stdout, stderr = await process.communicate(input=full_prompt.encode())
 
             if process.returncode != 0:
                 error_msg = stderr.decode() if stderr else "Unknown error"
@@ -435,9 +437,22 @@ You have access to an 'obsidian' object with these methods:
 IMPORTANT: Store your final result in __result__ variable. This should be a string
 containing the most relevant context for the task, formatted clearly.
 
-CRITICAL: When using list comprehensions, access dict keys directly on the loop variable.
-WRONG: [f"{path}" for r in results]  # 'path' is undefined!
-RIGHT: [f"{r['path']}" for r in results]  # access via r
+CRITICAL SCOPING RULES - READ CAREFULLY:
+1. In list comprehensions, ONLY use the loop variable. Never reference variables from outer loops.
+   WRONG: [f"{note_path}" for r in results]  # note_path is from a different loop!
+   RIGHT: [f"{r['path']}" for r in results]  # use the loop variable r
+
+2. Never reuse a loop variable name in a nested context:
+   WRONG:
+     for note_path in notes:
+         process(note_path)
+     summary = [f"{note_path}" for x in items]  # note_path is stale/wrong scope!
+   RIGHT:
+     for note_path in notes:
+         process(note_path)
+     summary = [f"{x['path']}" for x in items]  # use the actual loop variable
+
+3. When in doubt, use explicit for loops instead of comprehensions.
 
 Example script:
 ```python
