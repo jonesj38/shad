@@ -60,15 +60,20 @@ shad run "Build app" --vault ~/MyVault
 | Module | Purpose |
 |--------|---------|
 | `engine/rlm.py` | Core RLM engine - DAG execution, Code Mode orchestration |
-| `engine/llm.py` | LLM abstraction, retrieval script generation |
+| `engine/llm.py` | LLM abstraction (Claude Code CLI, Anthropic API, OpenAI fallback) |
 | `engine/strategies.py` | Strategy skeletons (software, research, analysis) |
 | `engine/decomposition.py` | Task decomposition into subtasks |
+| `engine/context_packets.py` | Cross-subtask context sharing |
 | `sandbox/executor.py` | Sandboxed Python execution for Code Mode scripts |
 | `sandbox/tools.py` | `ObsidianTools` API available to retrieval scripts |
 | `mcp/client.py` | Direct filesystem client for vault operations |
 | `verification/layer.py` | Verification orchestration (syntax, types, imports) |
 | `output/manifest.py` | File manifest generation and writing |
+| `output/import_resolution.py` | Two-pass import validation |
+| `refinement/manager.py` | Run states, delta verification, HITL checkpoints |
+| `vault/ingestion.py` | Repository ingestion with presets (mirror/docs/deep) |
 | `sources/manager.py` | Automated source ingestion scheduling |
+| `sources/scheduler.py` | Source sync scheduling (hourly/daily/weekly/monthly) |
 
 ### Code Mode
 
@@ -91,8 +96,13 @@ Strategies define required stages and constraints. Example (software):
 ## CLI Usage
 
 ```bash
-# Basic run
+# Project setup (configures Claude Code permissions)
+shad init
+shad check-permissions
+
+# Basic run (uses OBSIDIAN_VAULT_PATH env if --vault not specified)
 shad run "Your task" --vault /path/to/vault
+shad run "Your task"  # Uses default vault from env
 
 # Software generation with file output
 shad run "Build REST API" --vault ~/v --strategy software --verify strict --write-files -o ./out
@@ -103,15 +113,29 @@ shad run "Build app" --vault ~/Project --vault ~/Patterns
 # Check status / inspect
 shad status <run_id>
 shad trace tree <run_id>
+shad trace node <run_id> <node_id>
 shad resume <run_id>
 shad export <run_id> --output ./out
+shad debug <run_id>
+
+# Vault operations
+shad vault                    # Check connection
+shad search "query"           # Search vault
+
+# Ingest content
+shad ingest github <url> --vault ~/v --preset docs
 
 # Server management
 shad server start|stop|status|logs
 
-# Source scheduling
+# Source scheduling (automated sync)
 shad sources add github <url> --vault ~/v --schedule weekly
-shad sources sync
+shad sources add url <url> --vault ~/v --schedule daily
+shad sources add feed <url> --vault ~/v --schedule hourly
+shad sources list
+shad sources status
+shad sources sync [--force]
+shad sources remove <source_id>
 ```
 
 ## Key Concepts
@@ -139,3 +163,4 @@ Environment variables (or `.env` file):
 
 - `SPEC.md`: Full technical specification with decision log
 - `README.md`: User-facing documentation and quick start
+- `PLAN.md`: Implementation phases and status

@@ -192,6 +192,33 @@ This is not prompt engineering. This is **inference-time scaling** — treating 
   - Link related notes automatically
   - Progressive standardization ("Gardener Pattern")
 
+### Phase 8 — Sources Scheduler (COMPLETE)
+
+**Decision**: Automated sync scheduling with multiple source types
+
+- [x] **Source Types**
+  - GitHub repositories (clone and process)
+  - URLs (fetch and convert to markdown)
+  - RSS/Atom feeds (fetch entries)
+  - Local folders (watch and sync)
+
+- [x] **Scheduling**
+  - Frequencies: `manual`, `hourly`, `daily`, `weekly`, `monthly`
+  - Track last sync time and next scheduled sync
+  - Force sync option to override schedule
+
+- [x] **CLI Commands**
+  - `shad sources add <type> <url> --vault <path> --schedule <freq>`
+  - `shad sources list` — List all configured sources
+  - `shad sources status` — View detailed sync status
+  - `shad sources sync [--force]` — Sync due sources
+  - `shad sources remove <source_id>` — Remove a source
+
+- [x] **Integration**
+  - Sources stored in `~/.shad/sources.json`
+  - Leverages existing ingestion pipeline from Phase 7
+  - Respects ingestion presets (mirror/docs/deep)
+
 ---
 
 ## Current Status
@@ -204,6 +231,7 @@ This is not prompt engineering. This is **inference-time scaling** — treating 
 - Phase 5: Verification Layer (Syntax/import/type checks, error classification, repair actions)
 - Phase 6: Iterative Refinement (Run states, delta verification, HITL checkpoints)
 - Phase 7: Vault Curation Tools (Ingestion pipeline, shadow index, gap detection)
+- Phase 8: Sources Scheduler (Automated sync from GitHub, URLs, feeds, folders)
 
 ### Test Coverage
 - 271 passing tests across all phases
@@ -221,10 +249,14 @@ All modules now integrated into RLMEngine:
 7. **Refinement Manager**: State tracking with delta verification on resume
 8. **CLI Commands**: `--strategy`, `--verify`, `--write-files`, `shad export`, `shad ingest github`
 9. **Parallel Execution**: Dependency-aware parallel node execution using asyncio.gather
+10. **Sources Scheduler**: `shad sources add|list|status|sync|remove` for automated ingestion
+11. **Project Setup**: `shad init` and `shad check-permissions` for Claude Code integration
+12. **Default Vault**: Falls back to `OBSIDIAN_VAULT_PATH` env var when `--vault` not specified
 
 ### Architecture
 All modules implemented per SPEC.md:
 - `engine/rlm.py`: Core engine with all integrations wired in
+- `engine/llm.py`: LLM abstraction (Claude Code CLI primary, Anthropic/OpenAI fallback)
 - `engine/strategies.py`: Strategy skeletons and heuristic selection
 - `engine/decomposition.py`: LLM-driven decomposition with constraints
 - `engine/context_packets.py`: Cross-subtask context sharing
@@ -235,6 +267,8 @@ All modules implemented per SPEC.md:
 - `vault/ingestion.py`: Repository ingestion with presets
 - `vault/shadow_index.py`: SQLite-backed source/snapshot tracking
 - `vault/gap_detection.py`: Combined scoring for vault gaps
+- `sources/manager.py`: Source synchronization manager
+- `sources/scheduler.py`: Automated sync scheduling
 - `cli/main.py`: Full CLI with all commands and options
 
 ---

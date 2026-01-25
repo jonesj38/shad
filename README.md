@@ -304,6 +304,16 @@ shad server logs      # View API logs
 shad server logs -f   # Follow logs
 ```
 
+### Project Setup
+
+```bash
+# Initialize project permissions for Claude Code integration
+shad init
+
+# Verify permissions are configured correctly
+shad check-permissions
+```
+
 ### Task Execution
 
 ```bash
@@ -320,6 +330,7 @@ Options:
   --write-files     Write output files to disk
   --output, -o      Output directory (requires --write-files)
   --no-code-mode    Disable Code Mode (use direct search)
+  --quiet, -q       Suppress verbose output (logging enabled by default)
 
 # Check status
 shad status <run_id>
