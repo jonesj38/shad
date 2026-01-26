@@ -8,7 +8,9 @@ import logging
 from enum import Enum
 from typing import Any
 
+from shad.models.run import ModelConfig
 from shad.utils.config import get_settings
+from shad.utils.models import normalize_model_name
 
 logger = logging.getLogger(__name__)
 
@@ -26,22 +28,44 @@ class ModelTier(str, Enum):
 class LLMProvider:
     """Abstraction over LLM providers with tiered model support."""
 
-    def __init__(self, use_claude_code: bool = True) -> None:
+    def __init__(
+        self,
+        use_claude_code: bool = True,
+        model_config: ModelConfig | None = None,
+    ) -> None:
         self.settings = get_settings()
         self.use_claude_code = use_claude_code
         self._anthropic_client: Any = None
         self._openai_client: Any = None
 
+        # Model overrides (normalized to full model IDs)
+        self._orchestrator_override: str | None = None
+        self._worker_override: str | None = None
+        self._leaf_override: str | None = None
+
+        if model_config:
+            if model_config.orchestrator_model:
+                self._orchestrator_override = normalize_model_name(
+                    model_config.orchestrator_model
+                )
+            if model_config.worker_model:
+                self._worker_override = normalize_model_name(model_config.worker_model)
+            if model_config.leaf_model:
+                self._leaf_override = normalize_model_name(model_config.leaf_model)
+
     def get_model_for_tier(self, tier: ModelTier) -> str:
-        """Get the model name for a given tier."""
+        """Get the model name for a given tier.
+
+        Checks for overrides first, then falls back to settings.
+        """
         if tier == ModelTier.ORCHESTRATOR:
-            return self.settings.orchestrator_model
+            return self._orchestrator_override or self.settings.orchestrator_model
         elif tier == ModelTier.WORKER:
-            return self.settings.worker_model
+            return self._worker_override or self.settings.worker_model
         elif tier in (ModelTier.LEAF, ModelTier.JUDGE):
-            return self.settings.leaf_model
+            return self._leaf_override or self.settings.leaf_model
         else:
-            return self.settings.worker_model
+            return self._worker_override or self.settings.worker_model
 
     async def complete(
         self,
