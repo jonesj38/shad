@@ -883,6 +883,13 @@ This section documents what is already implemented (Phases 1-2).
 - Per-run override via CLI flags: `-O/--orchestrator-model`, `-W/--worker-model`, `-L/--leaf-model`
 - Shorthand aliases: `opus`, `sonnet`, `haiku` (resolved to full API model IDs)
 - `shad models` command lists available models from Anthropic API (cached 24h)
+- `shad models --ollama` also lists locally installed Ollama models
+
+**Ollama integration**:
+- Any model not matching Claude patterns (opus/sonnet/haiku/claude-*) is treated as Ollama
+- Ollama models are passed to Claude Code CLI with special env vars per-call
+- Allows mixing Claude and Ollama models across tiers (e.g., `-O opus -W llama3 -L qwen3`)
+- Requires Ollama installed locally: https://ollama.com
 
 ### 3.2 MCP Client (Vault Operations)
 

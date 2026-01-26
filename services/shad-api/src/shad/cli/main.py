@@ -511,18 +511,26 @@ def debug(run_id: str) -> None:
 
 @cli.command("models")
 @click.option("--refresh", is_flag=True, help="Force refresh from Anthropic API")
-def list_models(refresh: bool) -> None:
-    """List available Claude models.
+@click.option("--ollama", is_flag=True, help="Also list locally installed Ollama models")
+def list_models(refresh: bool, ollama: bool) -> None:
+    """List available models (Claude and optionally Ollama).
 
-    Shows available models from the Anthropic API (cached for 24 hours).
+    Shows available Claude models from the Anthropic API (cached for 24 hours).
     Use --refresh to force a fresh fetch from the API.
+    Use --ollama to also list locally installed Ollama models.
 
     \b
     Examples:
-        shad models              # List from cache or API
+        shad models              # List Claude models
         shad models --refresh    # Force refresh from API
+        shad models --ollama     # Include Ollama models
     """
-    from shad.utils.models import get_available_models, get_default_models
+    from shad.utils.models import (
+        get_available_models,
+        get_default_models,
+        is_ollama_available,
+        list_ollama_models,
+    )
 
     try:
         models = get_available_models(force_refresh=refresh)
@@ -531,22 +539,44 @@ def list_models(refresh: bool) -> None:
         sys.exit(1)
 
     if not models:
-        console.print("[yellow]No models available[/yellow]")
+        console.print("[yellow]No Claude models available[/yellow]")
         console.print("[dim]Set ANTHROPIC_API_KEY to fetch models from API[/dim]")
-        sys.exit(1)
 
-    # Build table
-    table = Table(title="Available Claude Models")
-    table.add_column("Model ID", style="cyan")
-    table.add_column("Shorthand", style="green")
-    table.add_column("Display Name")
+    # Build Claude models table
+    if models:
+        table = Table(title="Claude Models")
+        table.add_column("Model ID", style="cyan")
+        table.add_column("Shorthand", style="green")
+        table.add_column("Display Name")
 
-    for model in models:
-        shorthand = model.shorthand or "-"
-        display_name = model.display_name or model.id
-        table.add_row(model.id, shorthand, display_name)
+        for model in models:
+            shorthand = model.shorthand or "-"
+            display_name = model.display_name or model.id
+            table.add_row(model.id, shorthand, display_name)
 
-    console.print(table)
+        console.print(table)
+
+    # List Ollama models if requested
+    if ollama:
+        if is_ollama_available():
+            ollama_models = list_ollama_models()
+            if ollama_models:
+                console.print()
+                ollama_table = Table(title="Ollama Models (Local)")
+                ollama_table.add_column("Model ID", style="magenta")
+                ollama_table.add_column("Display Name")
+
+                for model in ollama_models:
+                    display_name = model.display_name or model.id
+                    ollama_table.add_row(model.id, display_name)
+
+                console.print(ollama_table)
+            else:
+                console.print("\n[yellow]No Ollama models installed[/yellow]")
+                console.print("[dim]Run 'ollama pull <model>' to install models[/dim]")
+        else:
+            console.print("\n[yellow]Ollama not available[/yellow]")
+            console.print("[dim]Install Ollama from https://ollama.com[/dim]")
 
     # Show defaults
     defaults = get_default_models()
@@ -556,6 +586,8 @@ def list_models(refresh: bool) -> None:
     console.print(f"  Leaf:         [cyan]{defaults['leaf']}[/cyan]")
 
     console.print("\n[dim]Use: shad run \"task\" -O <model> -W <model> -L <model>[/dim]")
+    if not ollama:
+        console.print("[dim]Use --ollama to see locally installed Ollama models[/dim]")
 
 
 # =============================================================================

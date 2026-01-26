@@ -253,6 +253,7 @@ All modules now integrated into RLMEngine:
 11. **Project Setup**: `shad init` and `shad check-permissions` for Claude Code integration
 12. **Default Vault**: Falls back to `OBSIDIAN_VAULT_PATH` env var when `--vault` not specified
 13. **Model Selection**: `-O/-W/-L` flags for per-tier model override, `shad models` to list available
+14. **Ollama Integration**: Mix Claude and Ollama models per-tier, auto-detects Ollama models and routes via local server
 
 ### Architecture
 All modules implemented per SPEC.md:

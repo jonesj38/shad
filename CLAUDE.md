@@ -112,10 +112,15 @@ shad run "Build REST API" --vault ~/v --strategy software --verify strict --writ
 shad run "Build app" --vault ~/Project --vault ~/Patterns
 
 # Model selection (per-tier override)
-shad models                                    # List available models
+shad models                                    # List Claude models
 shad models --refresh                          # Force refresh from API
+shad models --ollama                           # Include Ollama models
 shad run "Complex task" -O opus -W sonnet -L haiku
 shad run "Simple task" -O haiku -W haiku -L haiku
+
+# Ollama integration (free local models)
+shad run "Task" -O qwen3-coder -W llama3 -L llama3   # All Ollama
+shad run "Task" -O opus -W llama3 -L qwen3:latest   # Mixed
 
 # Check status / inspect
 shad status <run_id>

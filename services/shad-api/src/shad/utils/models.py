@@ -16,12 +16,18 @@ from shad.utils.config import get_settings
 
 logger = logging.getLogger(__name__)
 
-# Shorthand aliases for common models
+# Shorthand aliases for common Claude models
 MODEL_ALIASES: dict[str, str] = {
     "opus": "claude-opus-4-20250514",
     "sonnet": "sonnet",  # Will be resolved from API or cache
     "haiku": "haiku",  # Will be resolved from API or cache
 }
+
+# Claude model shorthands (for quick detection)
+CLAUDE_SHORTHANDS = {"opus", "sonnet", "haiku"}
+
+# Default Ollama configuration
+DEFAULT_OLLAMA_BASE_URL = "http://localhost:11434"
 
 # Built-in defaults (used only when no cache and no API key)
 BUILTIN_MODELS: list[dict[str, Any]] = [
@@ -260,40 +266,48 @@ def normalize_model_name(name: str) -> str:
     """Normalize a model name (shorthand or full ID) to a full model ID.
 
     Accepts:
-    - Full model IDs: returned as-is
-    - Shorthands: resolved to full model ID
+    - Full Claude model IDs (claude-*): returned as-is
+    - Claude shorthands (opus, sonnet, haiku): resolved to full model ID
+    - Ollama model names: returned as-is (pass-through)
 
     Args:
-        name: Model name (shorthand or full ID)
+        name: Model name (shorthand, full ID, or Ollama model name)
 
     Returns:
-        Full model ID
+        Full model ID or Ollama model name
 
     Raises:
-        ValueError: If shorthand cannot be resolved
+        ValueError: If Claude shorthand cannot be resolved
     """
-    # Check if it's already a full model ID
+    # Check if it's already a full Claude model ID
     if name.startswith("claude-"):
         return name
 
-    # Try to resolve as shorthand
-    resolved = get_model_by_shorthand(name.lower())
-    if resolved:
-        return resolved
+    # Check if it's a Claude shorthand
+    name_lower = name.lower()
+    if name_lower in CLAUDE_SHORTHANDS:
+        # Try to resolve as shorthand
+        resolved = get_model_by_shorthand(name_lower)
+        if resolved:
+            return resolved
 
-    # Check built-in aliases as fallback
-    for shorthand, full_id in MODEL_ALIASES.items():
-        if name.lower() == shorthand:
-            # For dynamic shorthands (sonnet, haiku), check settings
-            if full_id == shorthand:
-                settings = get_settings()
-                if shorthand == "sonnet":
-                    return settings.worker_model
-                elif shorthand == "haiku":
-                    return settings.leaf_model
-            return full_id
+        # Check built-in aliases as fallback
+        for shorthand, full_id in MODEL_ALIASES.items():
+            if name_lower == shorthand:
+                # For dynamic shorthands (sonnet, haiku), check settings
+                if full_id == shorthand:
+                    settings = get_settings()
+                    if shorthand == "sonnet":
+                        return settings.worker_model
+                    elif shorthand == "haiku":
+                        return settings.leaf_model
+                return full_id
 
-    raise ValueError(f"Unknown model: {name}. Use 'shad models' to see available models.")
+        raise ValueError(f"Unknown Claude model: {name}. Use 'shad models' to see available models.")
+
+    # Assume it's an Ollama model - pass through as-is
+    logger.debug(f"Treating '{name}' as Ollama model (pass-through)")
+    return name
 
 
 def get_default_models() -> dict[str, str]:
@@ -308,3 +322,132 @@ def get_default_models() -> dict[str, str]:
         "worker": settings.worker_model,
         "leaf": settings.leaf_model,
     }
+
+
+# =============================================================================
+# Ollama Integration
+# =============================================================================
+
+
+def is_ollama_model(name: str) -> bool:
+    """Check if a model name refers to an Ollama model.
+
+    A model is considered an Ollama model if it:
+    - Does NOT start with "claude-"
+    - Is NOT one of the Claude shorthands (opus, sonnet, haiku)
+
+    Args:
+        name: Model name to check
+
+    Returns:
+        True if this is an Ollama model
+    """
+    name_lower = name.lower().strip()
+
+    # Claude models start with "claude-"
+    if name_lower.startswith("claude-"):
+        return False
+
+    # Claude shorthands
+    if name_lower in CLAUDE_SHORTHANDS:
+        return False
+
+    # Everything else is assumed to be Ollama
+    return True
+
+
+def get_ollama_env(base_url: str | None = None) -> dict[str, str]:
+    """Get environment variables for Ollama integration with Claude Code.
+
+    Per https://docs.ollama.com/integrations/claude-code:
+    - ANTHROPIC_AUTH_TOKEN=ollama
+    - ANTHROPIC_API_KEY="" (empty string)
+    - ANTHROPIC_BASE_URL=http://localhost:11434
+
+    Args:
+        base_url: Optional custom Ollama base URL
+
+    Returns:
+        Dict of environment variables to set
+    """
+    return {
+        "ANTHROPIC_AUTH_TOKEN": "ollama",
+        "ANTHROPIC_API_KEY": "",
+        "ANTHROPIC_BASE_URL": base_url or DEFAULT_OLLAMA_BASE_URL,
+    }
+
+
+def list_ollama_models() -> list[ModelInfo]:
+    """List available Ollama models by calling 'ollama list'.
+
+    Returns:
+        List of ModelInfo objects for installed Ollama models
+    """
+    import subprocess
+
+    try:
+        result = subprocess.run(
+            ["ollama", "list"],
+            capture_output=True,
+            text=True,
+            timeout=10,
+        )
+
+        if result.returncode != 0:
+            logger.debug(f"ollama list failed: {result.stderr}")
+            return []
+
+        models: list[ModelInfo] = []
+        lines = result.stdout.strip().split("\n")
+
+        # Skip header line (NAME ID SIZE MODIFIED)
+        for line in lines[1:]:
+            if not line.strip():
+                continue
+
+            # Parse: NAME:TAG  ID  SIZE  MODIFIED
+            parts = line.split()
+            if parts:
+                model_name = parts[0]  # e.g., "qwen3:latest" or "llama3:8b"
+                # Extract base name without tag for display
+                base_name = model_name.split(":")[0]
+                models.append(
+                    ModelInfo(
+                        id=model_name,
+                        shorthand=None,
+                        display_name=f"Ollama: {base_name}",
+                        metadata={"provider": "ollama"},
+                    )
+                )
+
+        logger.info(f"Found {len(models)} Ollama models")
+        return models
+
+    except FileNotFoundError:
+        logger.debug("ollama CLI not found")
+        return []
+    except subprocess.TimeoutExpired:
+        logger.warning("ollama list timed out")
+        return []
+    except Exception as e:
+        logger.debug(f"Error listing Ollama models: {e}")
+        return []
+
+
+def is_ollama_available() -> bool:
+    """Check if Ollama is installed and running.
+
+    Returns:
+        True if Ollama is available
+    """
+    import subprocess
+
+    try:
+        result = subprocess.run(
+            ["ollama", "list"],
+            capture_output=True,
+            timeout=5,
+        )
+        return result.returncode == 0
+    except (FileNotFoundError, subprocess.TimeoutExpired):
+        return False
