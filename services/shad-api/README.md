@@ -12,6 +12,8 @@ pip install -e .
 
 ```bash
 shad run "Your goal here" --max-depth 2
+shad run "Complex task" -O opus -W sonnet -L haiku  # Model selection
+shad models                          # List available models
 shad status <run_id>
 shad trace tree <run_id>
 shad resume <run_id>

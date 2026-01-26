@@ -252,6 +252,7 @@ All modules now integrated into RLMEngine:
 10. **Sources Scheduler**: `shad sources add|list|status|sync|remove` for automated ingestion
 11. **Project Setup**: `shad init` and `shad check-permissions` for Claude Code integration
 12. **Default Vault**: Falls back to `OBSIDIAN_VAULT_PATH` env var when `--vault` not specified
+13. **Model Selection**: `-O/-W/-L` flags for per-tier model override, `shad models` to list available
 
 ### Architecture
 All modules implemented per SPEC.md:
