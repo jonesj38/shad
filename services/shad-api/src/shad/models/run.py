@@ -56,6 +56,20 @@ class Budget(BaseModel):
     max_branching_factor: int = Field(default=7, description="Maximum children per node")
 
 
+class ModelConfig(BaseModel):
+    """Model configuration for different execution tiers."""
+
+    orchestrator_model: str | None = Field(
+        default=None, description="Model for planning/synthesis (top level)"
+    )
+    worker_model: str | None = Field(
+        default=None, description="Model for mid-depth execution"
+    )
+    leaf_model: str | None = Field(
+        default=None, description="Model for fast parallel execution (leaves)"
+    )
+
+
 class RunConfig(BaseModel):
     """Configuration for a run."""
 
@@ -73,6 +87,11 @@ class RunConfig(BaseModel):
     # Output configuration (Phase 4)
     write_files: bool = Field(default=False, description="Write output files to disk")
     output_path: str | None = Field(default=None, description="Output directory for files")
+
+    # Model configuration
+    model_config_override: ModelConfig | None = Field(
+        default=None, description="Override default model selection per tier"
+    )
 
 
 class DAGNode(BaseModel):

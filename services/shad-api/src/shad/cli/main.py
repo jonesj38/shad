@@ -20,7 +20,7 @@ from shad import __version__
 from shad.engine import LLMProvider, RLMEngine
 from shad.history import HistoryManager
 from shad.mcp import ObsidianMCPClient
-from shad.models import Budget, RunConfig
+from shad.models import Budget, ModelConfig, RunConfig
 from shad.models.run import NodeStatus, Run, RunStatus
 from shad.utils.config import get_settings
 
@@ -102,6 +102,9 @@ def cli() -> None:
 @click.option("--write-files", is_flag=True, help="Write output files to disk (for software strategy)")
 @click.option("--output-dir", type=click.Path(), help="Output directory for files (requires --write-files)")
 @click.option("--quiet", "-q", is_flag=True, help="Suppress verbose output")
+@click.option("--orchestrator-model", "-O", help="Model for planning/synthesis (e.g., opus, sonnet, haiku)")
+@click.option("--worker-model", "-W", help="Model for mid-depth execution (e.g., opus, sonnet, haiku)")
+@click.option("--leaf-model", "-L", help="Model for fast parallel execution (e.g., opus, sonnet, haiku)")
 def run(
     goal: str,
     vault: str | None,
@@ -118,6 +121,9 @@ def run(
     write_files: bool,
     output_dir: str | None,
     quiet: bool,
+    orchestrator_model: str | None,
+    worker_model: str | None,
+    leaf_model: str | None,
 ) -> None:
     """Execute a reasoning task.
 
@@ -126,6 +132,7 @@ def run(
         shad run "Explain quantum computing"
         shad run "Summarize research" --vault ~/Notes
         shad run "Build REST API" --strategy software --verify strict --write-files
+        shad run "Complex task" -O opus -W sonnet -L haiku
     """
     # Configure logging (verbose by default, --quiet to suppress)
     if not quiet:
@@ -193,10 +200,26 @@ def run(
     if write_files:
         console.print(f"[dim][OUTPUT] Write files enabled{f' → {output_dir}' if output_dir else ''}[/dim]")
 
+    # Create model config if any model overrides specified
+    model_config: ModelConfig | None = None
+    if orchestrator_model or worker_model or leaf_model:
+        model_config = ModelConfig(
+            orchestrator_model=orchestrator_model,
+            worker_model=worker_model,
+            leaf_model=leaf_model,
+        )
+        console.print("[dim][MODELS] Custom model selection:[/dim]")
+        if orchestrator_model:
+            console.print(f"[dim]  Orchestrator: {orchestrator_model}[/dim]")
+        if worker_model:
+            console.print(f"[dim]  Worker: {worker_model}[/dim]")
+        if leaf_model:
+            console.print(f"[dim]  Leaf: {leaf_model}[/dim]")
+
     async def _execute_run() -> Run:
         """Execute run."""
         engine = RLMEngine(
-            llm_provider=LLMProvider(),
+            llm_provider=LLMProvider(model_config=model_config),
             mcp_client=mcp_client,
             vault_path=vault_path,
             use_code_mode=use_code_mode,
@@ -479,6 +502,60 @@ def debug(run_id: str) -> None:
         table.add_row("Duration", f"{duration:.2f}s")
 
     console.print(table)
+
+
+# =============================================================================
+# Models Command
+# =============================================================================
+
+
+@cli.command("models")
+@click.option("--refresh", is_flag=True, help="Force refresh from Anthropic API")
+def list_models(refresh: bool) -> None:
+    """List available Claude models.
+
+    Shows available models from the Anthropic API (cached for 24 hours).
+    Use --refresh to force a fresh fetch from the API.
+
+    \b
+    Examples:
+        shad models              # List from cache or API
+        shad models --refresh    # Force refresh from API
+    """
+    from shad.utils.models import get_available_models, get_default_models
+
+    try:
+        models = get_available_models(force_refresh=refresh)
+    except ValueError as e:
+        console.print(f"[red]Error: {e}[/red]")
+        sys.exit(1)
+
+    if not models:
+        console.print("[yellow]No models available[/yellow]")
+        console.print("[dim]Set ANTHROPIC_API_KEY to fetch models from API[/dim]")
+        sys.exit(1)
+
+    # Build table
+    table = Table(title="Available Claude Models")
+    table.add_column("Model ID", style="cyan")
+    table.add_column("Shorthand", style="green")
+    table.add_column("Display Name")
+
+    for model in models:
+        shorthand = model.shorthand or "-"
+        display_name = model.display_name or model.id
+        table.add_row(model.id, shorthand, display_name)
+
+    console.print(table)
+
+    # Show defaults
+    defaults = get_default_models()
+    console.print("\n[bold]Current Defaults:[/bold]")
+    console.print(f"  Orchestrator: [cyan]{defaults['orchestrator']}[/cyan]")
+    console.print(f"  Worker:       [cyan]{defaults['worker']}[/cyan]")
+    console.print(f"  Leaf:         [cyan]{defaults['leaf']}[/cyan]")
+
+    console.print("\n[dim]Use: shad run \"task\" -O <model> -W <model> -L <model>[/dim]")
 
 
 # =============================================================================
