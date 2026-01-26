@@ -354,14 +354,15 @@ shad export <run_id> --output ./out
 
 ### Model Selection
 
-Shad uses different models for different execution tiers. You can override the defaults:
+Shad uses different models for different execution tiers. You can override the defaults with Claude models or Ollama open-source models:
 
 ```bash
 # List available models
 shad models
 shad models --refresh    # Force refresh from API
+shad models --ollama     # Include locally installed Ollama models
 
-# Use specific models for each tier
+# Use specific Claude models for each tier
 shad run "Complex task" -O opus -W sonnet -L haiku
 
 # Use haiku for everything (cost-effective)
@@ -369,12 +370,20 @@ shad run "Simple task" -O haiku -W haiku -L haiku
 
 # Full API names also work
 shad run "Task" --orchestrator-model claude-opus-4-20250514
+
+# Mix Claude and Ollama models
+shad run "Task" -O opus -W llama3 -L qwen3:latest
+
+# Use all Ollama models (free, runs locally)
+shad run "Task" -O qwen3-coder -W llama3 -L llama3
 ```
 
 Model tiers:
 - **Orchestrator (-O)**: Planning and synthesis (default: sonnet)
 - **Worker (-W)**: Mid-depth execution (default: sonnet)
 - **Leaf (-L)**: Fast parallel execution (default: haiku)
+
+**Ollama Integration**: Any model name that isn't a Claude model (opus, sonnet, haiku, or claude-*) is treated as an Ollama model. Requires [Ollama](https://ollama.com) installed locally with models pulled (e.g., `ollama pull llama3`).
 
 ### Vault Management
 

@@ -10,7 +10,7 @@ from typing import Any
 
 from shad.models.run import ModelConfig
 from shad.utils.config import get_settings
-from shad.utils.models import normalize_model_name
+from shad.utils.models import get_ollama_env, is_ollama_model, normalize_model_name
 
 logger = logging.getLogger(__name__)
 
@@ -117,8 +117,16 @@ class LLMProvider:
     def _get_cli_model_name(self, model: str) -> str:
         """Convert API model name to Claude CLI model name.
 
-        API names like 'claude-sonnet-4-20250514' -> CLI names like 'sonnet'
+        For Claude models:
+            API names like 'claude-sonnet-4-20250514' -> CLI names like 'sonnet'
+        For Ollama models:
+            Pass through as-is (e.g., 'llama3', 'qwen3:latest', 'deepseek-coder:6.7b')
         """
+        # Ollama models are passed through as-is
+        if is_ollama_model(model):
+            return model
+
+        # Claude models get converted to shorthand
         model_lower = model.lower()
         if "opus" in model_lower:
             return "opus"
@@ -127,7 +135,7 @@ class LLMProvider:
         elif "haiku" in model_lower:
             return "haiku"
         else:
-            # Default to sonnet if unknown
+            # Default to sonnet if unknown Claude model
             return "sonnet"
 
     async def _complete_claude_code(
@@ -136,9 +144,18 @@ class LLMProvider:
         system: str | None = None,
         model: str = "claude-sonnet-4-20250514",
     ) -> tuple[str, int]:
-        """Complete using Claude Code CLI (uses subscription, not API costs)."""
+        """Complete using Claude Code CLI (uses subscription, not API costs).
+
+        For Ollama models, this sets special environment variables per-call
+        to route the request through Ollama instead of Anthropic's API.
+        """
+        import os
+
         # Convert to CLI model name
         cli_model = self._get_cli_model_name(model)
+
+        # Check if this is an Ollama model
+        using_ollama = is_ollama_model(model)
 
         # Combine system prompt and user prompt with clear structure
         full_prompt = prompt
@@ -152,16 +169,24 @@ class LLMProvider:
 </task>"""
 
         # Log prompt details
-        logger.info(f"[CLAUDE_CODE] Preparing to call Claude Code CLI (model: {cli_model})")
-        logger.info(f"[CLAUDE_CODE] Prompt length: {len(full_prompt)} chars")
+        provider_label = "OLLAMA" if using_ollama else "CLAUDE_CODE"
+        logger.info(f"[{provider_label}] Preparing to call Claude Code CLI (model: {cli_model})")
+        logger.info(f"[{provider_label}] Prompt length: {len(full_prompt)} chars")
         if "Context:" in prompt:
-            logger.info("[CLAUDE_CODE] Prompt contains context section")
-        logger.debug(f"[CLAUDE_CODE] Full prompt preview:\n{full_prompt[:1000]}...")
+            logger.info(f"[{provider_label}] Prompt contains context section")
+        logger.debug(f"[{provider_label}] Full prompt preview:\n{full_prompt[:1000]}...")
+
+        # Prepare environment: inherit current env, optionally override for Ollama
+        env = os.environ.copy()
+        if using_ollama:
+            ollama_env = get_ollama_env()
+            env.update(ollama_env)
+            logger.info(f"[OLLAMA] Using Ollama backend at {ollama_env['ANTHROPIC_BASE_URL']}")
 
         # Run claude CLI in non-interactive mode
         # Pass prompt via stdin to avoid "Argument list too long" errors
         try:
-            logger.info(f"[CLAUDE_CODE] Executing: claude -p - --model {cli_model} --output-format text (prompt via stdin)")
+            logger.info(f"[{provider_label}] Executing: claude -p - --model {cli_model} --output-format text (prompt via stdin)")
             process = await asyncio.create_subprocess_exec(
                 "claude",
                 "-p", "-",
@@ -171,24 +196,25 @@ class LLMProvider:
                 stdin=asyncio.subprocess.PIPE,
                 stdout=asyncio.subprocess.PIPE,
                 stderr=asyncio.subprocess.PIPE,
+                env=env,  # Pass custom environment
             )
 
             stdout, stderr = await process.communicate(input=full_prompt.encode())
 
             if process.returncode != 0:
                 error_msg = stderr.decode() if stderr else "Unknown error"
-                logger.error(f"[CLAUDE_CODE] CLI error: {error_msg}")
+                logger.error(f"[{provider_label}] CLI error: {error_msg}")
                 raise RuntimeError(f"Claude Code CLI failed: {error_msg}")
 
             response = stdout.decode().strip()
             # Claude Code doesn't report token usage, estimate based on length
             estimated_tokens = len(response.split()) * 2
-            logger.info(f"[CLAUDE_CODE] Success - response length: {len(response)} chars, ~{estimated_tokens} tokens")
-            logger.debug(f"[CLAUDE_CODE] Response preview: {response[:500]}...")
+            logger.info(f"[{provider_label}] Success - response length: {len(response)} chars, ~{estimated_tokens} tokens")
+            logger.debug(f"[{provider_label}] Response preview: {response[:500]}...")
             return response, estimated_tokens
 
         except FileNotFoundError as e:
-            logger.error("[CLAUDE_CODE] claude CLI not found in PATH")
+            logger.error(f"[{provider_label}] claude CLI not found in PATH")
             raise RuntimeError(
                 "Claude Code CLI not found. Install it or set use_claude_code=False"
             ) from e
