@@ -74,6 +74,7 @@ shad run "Build app" --vault ~/MyVault
 | `vault/ingestion.py` | Repository ingestion with presets (mirror/docs/deep) |
 | `sources/manager.py` | Automated source ingestion scheduling |
 | `sources/scheduler.py` | Source sync scheduling (hourly/daily/weekly/monthly) |
+| `utils/models.py` | Model registry, shorthand aliases (opus/sonnet/haiku), API cache |
 
 ### Code Mode
 
@@ -109,6 +110,12 @@ shad run "Build REST API" --vault ~/v --strategy software --verify strict --writ
 
 # Multi-vault (priority order)
 shad run "Build app" --vault ~/Project --vault ~/Patterns
+
+# Model selection (per-tier override)
+shad models                                    # List available models
+shad models --refresh                          # Force refresh from API
+shad run "Complex task" -O opus -W sonnet -L haiku
+shad run "Simple task" -O haiku -W haiku -L haiku
 
 # Check status / inspect
 shad status <run_id>

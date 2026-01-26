@@ -878,6 +878,12 @@ This section documents what is already implemented (Phases 1-2).
 - `ModelTier.JUDGE`: Evaluation/verification (uses leaf_model)
 - `ModelTier.EMBEDDER`: Routing/similarity (uses worker_model)
 
+**Model selection**:
+- Defaults configurable via environment/settings
+- Per-run override via CLI flags: `-O/--orchestrator-model`, `-W/--worker-model`, `-L/--leaf-model`
+- Shorthand aliases: `opus`, `sonnet`, `haiku` (resolved to full API model IDs)
+- `shad models` command lists available models from Anthropic API (cached 24h)
+
 ### 3.2 MCP Client (Vault Operations)
 
 **Read operations**:
@@ -1214,6 +1220,9 @@ shad check-permissions [path]       # Verify project permissions are configured
 --no-checkpoints            # Disable non-safety checkpoints
 --tests <mode>              # Test generation (off|stubs|post|tdd|co)
 --quiet, -q                 # Suppress verbose output (logging enabled by default)
+-O, --orchestrator-model    # Model for planning/synthesis (opus, sonnet, haiku, or full ID)
+-W, --worker-model          # Model for mid-depth execution
+-L, --leaf-model            # Model for fast parallel execution
 
 # Vault commands
 shad vault                          # Check vault connection
@@ -1238,6 +1247,10 @@ shad server start [-f|--foreground]
 shad server stop
 shad server status
 shad server logs [-f|--follow] [-n|--lines N]
+
+# Model commands
+shad models                         # List available models (from cache or API)
+shad models --refresh               # Force refresh from Anthropic API
 
 # Cache commands
 shad cache clear [--scope run|source|all]

@@ -331,6 +331,9 @@ Options:
   --output, -o      Output directory (requires --write-files)
   --no-code-mode    Disable Code Mode (use direct search)
   --quiet, -q       Suppress verbose output (logging enabled by default)
+  -O, --orchestrator-model   Model for planning/synthesis (opus, sonnet, haiku)
+  -W, --worker-model         Model for mid-depth execution
+  -L, --leaf-model           Model for fast parallel execution
 
 # Check status
 shad status <run_id>
@@ -348,6 +351,30 @@ shad resume <run_id> --replay stale
 # Export files from completed run
 shad export <run_id> --output ./out
 ```
+
+### Model Selection
+
+Shad uses different models for different execution tiers. You can override the defaults:
+
+```bash
+# List available models
+shad models
+shad models --refresh    # Force refresh from API
+
+# Use specific models for each tier
+shad run "Complex task" -O opus -W sonnet -L haiku
+
+# Use haiku for everything (cost-effective)
+shad run "Simple task" -O haiku -W haiku -L haiku
+
+# Full API names also work
+shad run "Task" --orchestrator-model claude-opus-4-20250514
+```
+
+Model tiers:
+- **Orchestrator (-O)**: Planning and synthesis (default: sonnet)
+- **Worker (-W)**: Mid-depth execution (default: sonnet)
+- **Leaf (-L)**: Fast parallel execution (default: haiku)
 
 ### Vault Management
 
