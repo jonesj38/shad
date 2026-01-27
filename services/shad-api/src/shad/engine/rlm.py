@@ -835,9 +835,10 @@ class RLMEngine:
 
         try:
             # Search using the retrieval layer with extracted keywords
+            # Note: hybrid mode requires GPU for LLM reranking
             results = await self.retriever.search(
                 search_query,
-                mode="hybrid",  # Best quality (BM25 + vectors + reranking)
+                mode="bm25",  # Keyword search (no GPU required)
                 collections=self.collections if self.collections else None,
                 limit=limit,
             )

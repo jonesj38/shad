@@ -110,13 +110,21 @@ setup_repo() {
         cd "$SHAD_HOME/repo"
         git fetch origin
         git reset --hard "origin/$SHAD_BRANCH"
+        git clean -fd  # Remove untracked files that might conflict
     else
         # Check if we're running from within the repo
         local script_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
         if [[ -f "$script_dir/services/shad-api/pyproject.toml" ]]; then
             log_info "Using local repository..."
+            # Remove old repo if exists (for clean upgrade from local)
+            rm -rf "$SHAD_HOME/repo" 2>/dev/null || true
             mkdir -p "$SHAD_HOME/repo"
-            cp -r "$script_dir"/* "$SHAD_HOME/repo/"
+            # Use rsync if available for better handling, else cp
+            if command -v rsync &> /dev/null; then
+                rsync -a --delete --exclude='.git' --exclude='__pycache__' --exclude='*.egg-info' --exclude='.venv' --exclude='venv' "$script_dir/" "$SHAD_HOME/repo/"
+            else
+                cp -r "$script_dir"/* "$SHAD_HOME/repo/"
+            fi
         else
             log_info "Cloning repository..."
             git clone --depth 1 -b "$SHAD_BRANCH" "$SHAD_REPO" "$SHAD_HOME/repo"
@@ -136,9 +144,20 @@ setup_python() {
     if [[ ! -d "$SHAD_HOME/venv" ]]; then
         python3 -m venv "$SHAD_HOME/venv"
         log_success "Created virtual environment"
+    else
+        log_info "Using existing virtual environment"
     fi
 
     source "$SHAD_HOME/venv/bin/activate"
+
+    # Clean up stale bytecode and build artifacts for upgrades
+    log_info "Cleaning stale build artifacts..."
+    find "$SHAD_HOME/repo/services/shad-api/src" -type d -name "__pycache__" -exec rm -rf {} + 2>/dev/null || true
+    rm -rf "$SHAD_HOME/repo/services/shad-api/src/shad.egg-info" 2>/dev/null || true
+    rm -rf "$SHAD_HOME/repo/services/shad-api/build" 2>/dev/null || true
+
+    # Uninstall existing shad to ensure clean reinstall
+    pip uninstall -y shad 2>/dev/null || true
 
     log_info "Installing dependencies (this may take a minute)..."
     pip install --quiet --upgrade pip
