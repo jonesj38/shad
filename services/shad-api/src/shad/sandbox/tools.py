@@ -39,12 +39,24 @@ class ObsidianTools:
 
     # Common stop words for keyword extraction
     STOP_WORDS = frozenset({
+        # Standard stop words
         'the', 'a', 'an', 'is', 'are', 'was', 'were', 'be', 'been',
         'do', 'does', 'did', 'have', 'has', 'had', 'to', 'of', 'in',
         'for', 'on', 'with', 'at', 'by', 'from', 'we', 'how', 'what',
         'which', 'who', 'when', 'where', 'why', 'and', 'or', 'not',
         'it', 'its', 'this', 'that', 'these', 'those', 'can', 'could',
         'would', 'should', 'will', 'may', 'might', 'must', 'shall',
+        'into', 'onto', 'upon', 'about', 'after', 'before', 'between',
+        'through', 'during', 'under', 'over', 'above', 'below',
+        'all', 'any', 'each', 'every', 'both', 'few', 'more', 'most',
+        'other', 'some', 'such', 'than', 'too', 'very', 'just', 'also',
+        # Task/goal meta-words (describe what to do, not what to search for)
+        'goal', 'goals', 'task', 'tasks', 'run', 'runs', 'statement',
+        'build', 'create', 'make', 'implement', 'add', 'update', 'fix',
+        'write', 'develop', 'design', 'setup', 'configure', 'enable',
+        'use', 'using', 'need', 'needs', 'want', 'wants', 'please',
+        'help', 'ensure', 'provide', 'include', 'support', 'allow',
+        'following', 'based', 'like', 'new', 'existing', 'current',
     })
 
     def __init__(
