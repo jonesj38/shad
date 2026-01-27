@@ -66,6 +66,10 @@ class ObsidianTools:
         if not full_path.exists():
             return None
 
+        if full_path.is_dir():
+            logger.error(f"Cannot read directory as note: {path}")
+            return None
+
         try:
             return full_path.read_text(encoding="utf-8")
         except Exception as e:
@@ -160,17 +164,23 @@ class ObsidianTools:
                 args,
                 capture_output=True,
                 text=True,
-                timeout=30,
+                timeout=60,  # Increased timeout for large vaults
             )
 
             if result.returncode != 0:
                 logger.warning(f"qmd search failed: {result.stderr}")
                 return None
 
-            if not result.stdout:
+            if not result.stdout or not result.stdout.strip():
                 return []
 
-            data = json.loads(result.stdout)
+            # Handle potential non-JSON output (e.g., progress messages)
+            stdout = result.stdout.strip()
+            if not stdout.startswith(("[", "{")):
+                logger.warning(f"qmd returned non-JSON output: {stdout[:100]}")
+                return None
+
+            data = json.loads(stdout)
             results = []
 
             # Handle both list and dict formats

@@ -97,7 +97,17 @@ class QmdRetriever:
                 stdout=asyncio.subprocess.PIPE,
                 stderr=asyncio.subprocess.PIPE,
             )
-            stdout, stderr = await process.communicate()
+
+            try:
+                stdout, stderr = await asyncio.wait_for(
+                    process.communicate(),
+                    timeout=60.0,  # 60 second timeout for large vaults
+                )
+            except asyncio.TimeoutError:
+                process.kill()
+                await process.wait()
+                logger.warning("qmd search timed out after 60s")
+                return []
 
             if process.returncode != 0:
                 error_msg = stderr.decode().strip() if stderr else "Unknown error"
@@ -107,8 +117,14 @@ class QmdRetriever:
             if not stdout:
                 return []
 
+            # Handle potential non-JSON output
+            output = stdout.decode().strip()
+            if not output or not output.startswith(("[", "{")):
+                logger.warning(f"qmd returned non-JSON output: {output[:100]}")
+                return []
+
             # Parse JSON output
-            data = json.loads(stdout.decode())
+            data = json.loads(output)
             return self._parse_results(data)
 
         except json.JSONDecodeError as e:
