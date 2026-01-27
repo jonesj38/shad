@@ -837,7 +837,7 @@ class RLMEngine:
             # Search using the retrieval layer with extracted keywords
             results = await self.retriever.search(
                 search_query,
-                mode="hybrid",  # Use hybrid search for best quality
+                mode="hybrid",  # Best quality (BM25 + vectors + reranking)
                 collections=self.collections if self.collections else None,
                 limit=limit,
             )
@@ -879,6 +879,7 @@ class RLMEngine:
 
     # Common stop words for keyword extraction
     STOP_WORDS = frozenset({
+        # Standard stop words
         'the', 'a', 'an', 'is', 'are', 'was', 'were', 'be', 'been',
         'do', 'does', 'did', 'have', 'has', 'had', 'to', 'of', 'in',
         'for', 'on', 'with', 'at', 'by', 'from', 'we', 'how', 'what',
@@ -889,9 +890,16 @@ class RLMEngine:
         'through', 'during', 'under', 'over', 'above', 'below',
         'all', 'any', 'each', 'every', 'both', 'few', 'more', 'most',
         'other', 'some', 'such', 'than', 'too', 'very', 'just', 'also',
+        # Task/goal meta-words (describe what to do, not what to search for)
+        'goal', 'goals', 'task', 'tasks', 'run', 'runs', 'statement',
+        'build', 'create', 'make', 'implement', 'add', 'update', 'fix',
+        'write', 'develop', 'design', 'setup', 'configure', 'enable',
+        'use', 'using', 'need', 'needs', 'want', 'wants', 'please',
+        'help', 'ensure', 'provide', 'include', 'support', 'allow',
+        'following', 'based', 'like', 'new', 'existing', 'current',
     })
 
-    def _extract_search_keywords(self, query: str, max_keywords: int = 15) -> str:
+    def _extract_search_keywords(self, query: str, max_keywords: int = 8) -> str:
         """Extract search keywords from a goal/task description.
 
         Removes stop words, short words, and markdown formatting to create
