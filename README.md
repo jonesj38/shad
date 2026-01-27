@@ -48,10 +48,11 @@ This allows Shad to effectively utilize **gigabytes** of context — not by load
 ### Prerequisites
 
 - Python 3.11+
-- Docker (for Redis)
-- [Claude CLI](https://claude.ai/code) installed and authenticated
+- [Claude CLI](https://claude.ai/code) installed and authenticated (handles all LLM calls)
 - An Obsidian vault (or any directory of markdown files)
+- (Optional) Docker for Redis (enables cross-run caching)
 - (Optional) [qmd](https://github.com/tobi/qmd) for hybrid semantic search
+- (Optional) [Ollama](https://ollama.com) for local open-source models
 
 ### Installation
 
@@ -362,22 +363,19 @@ shad export <run_id> --output ./out
 
 ### Model Selection
 
-Shad uses different models for different execution tiers. You can override the defaults with Claude models or Ollama open-source models:
+All models are accessed through Claude CLI. You can use Claude models (via your subscription) or Ollama models (local, free):
 
 ```bash
 # List available models
 shad models
-shad models --refresh    # Force refresh from API
+shad models --refresh    # Force refresh
 shad models --ollama     # Include locally installed Ollama models
 
 # Use specific Claude models for each tier
 shad run "Complex task" -O opus -W sonnet -L haiku
 
-# Use haiku for everything (cost-effective)
+# Use haiku for everything (faster, uses less of your subscription)
 shad run "Simple task" -O haiku -W haiku -L haiku
-
-# Full API names also work
-shad run "Task" --orchestrator-model claude-opus-4-20250514
 
 # Mix Claude and Ollama models
 shad run "Task" -O opus -W llama3 -L qwen3:latest
@@ -391,7 +389,7 @@ Model tiers:
 - **Worker (-W)**: Mid-depth execution (default: sonnet)
 - **Leaf (-L)**: Fast parallel execution (default: haiku)
 
-**Ollama Integration**: Any model name that isn't a Claude model (opus, sonnet, haiku, or claude-*) is treated as an Ollama model. Requires [Ollama](https://ollama.com) installed locally with models pulled (e.g., `ollama pull llama3`).
+**Ollama Integration**: Any model not matching Claude patterns (opus, sonnet, haiku, claude-*) routes to Ollama via Claude CLI. Requires [Ollama](https://ollama.com) installed with models pulled (`ollama pull llama3`).
 
 ### Vault Management
 
@@ -460,17 +458,13 @@ Schedules: `manual`, `hourly`, `daily`, `weekly`, `monthly`
 
 ## Configuration
 
-Shad works with minimal configuration. Set environment variables directly or in a `.env` file:
+Shad works with minimal configuration. The only requirement is having [Claude CLI](https://claude.ai/code) installed and authenticated.
 
 ```bash
-# API Keys (set in shell or .env)
-ANTHROPIC_API_KEY=your_key_here     # Required for Claude models
-OPENAI_API_KEY=your_key_here        # Optional fallback
-
 # Optional: Default vault path (so you don't need --vault every time)
 OBSIDIAN_VAULT_PATH=/path/to/your/vault
 
-# Optional: Redis (defaults to localhost:6379)
+# Optional: Redis for cross-run caching (defaults to localhost:6379)
 REDIS_URL=redis://localhost:6379/0
 
 # Optional: Budget defaults
@@ -478,7 +472,19 @@ DEFAULT_MAX_DEPTH=3
 DEFAULT_MAX_NODES=50
 DEFAULT_MAX_WALL_TIME=300
 DEFAULT_MAX_TOKENS=2000000
+
+# Legacy fallback (only if Claude CLI unavailable)
+# ANTHROPIC_API_KEY=your_key_here
+# OPENAI_API_KEY=your_key_here
 ```
+
+### LLM Access
+
+All LLM calls go through Claude CLI, which supports:
+- **Claude models**: opus, sonnet, haiku (uses your Claude subscription)
+- **Ollama models**: llama3, qwen3, etc. (runs locally, free)
+
+No API keys needed - Claude CLI handles authentication via your Claude account.
 
 ### Data Directories
 

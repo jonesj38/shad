@@ -872,30 +872,32 @@ This section documents what is already implemented (Phases 1-3).
 
 ### 3.1 LLM Provider Support
 
-**Supported providers**:
-- **Claude Code CLI** (primary, uses subscription)
-- **Anthropic API** (fallback with API key)
-- **OpenAI API** (fallback with API key)
+**Primary provider**: Claude Code CLI (handles all LLM calls)
+- Uses your Claude subscription (no per-token API costs)
+- Supports both Claude models and Ollama models
+- No API keys required
+
+**Legacy fallbacks** (only if Claude CLI unavailable):
+- Anthropic API (requires `ANTHROPIC_API_KEY`)
+- OpenAI API (requires `OPENAI_API_KEY`)
 
 **Model tiers**:
-- `ModelTier.ORCHESTRATOR`: Best reasoning/planning (claude-sonnet-4)
-- `ModelTier.WORKER`: Balanced mid-depth work (claude-sonnet-4)
-- `ModelTier.LEAF`: Fast/cheap parallel execution (claude-haiku-4)
+- `ModelTier.ORCHESTRATOR`: Best reasoning/planning (default: claude-sonnet-4)
+- `ModelTier.WORKER`: Balanced mid-depth work (default: claude-sonnet-4)
+- `ModelTier.LEAF`: Fast parallel execution (default: claude-haiku-4)
 - `ModelTier.JUDGE`: Evaluation/verification (uses leaf_model)
 - `ModelTier.EMBEDDER`: Routing/similarity (uses worker_model)
 
 **Model selection**:
-- Defaults configurable via environment/settings
 - Per-run override via CLI flags: `-O/--orchestrator-model`, `-W/--worker-model`, `-L/--leaf-model`
-- Shorthand aliases: `opus`, `sonnet`, `haiku` (resolved to full API model IDs)
-- `shad models` command lists available models from Anthropic API (cached 24h)
-- `shad models --ollama` also lists locally installed Ollama models
+- Shorthand aliases: `opus`, `sonnet`, `haiku`
+- `shad models` lists available Claude models
+- `shad models --ollama` includes locally installed Ollama models
 
-**Ollama integration**:
-- Any model not matching Claude patterns (opus/sonnet/haiku/claude-*) is treated as Ollama
-- Ollama models are passed to Claude Code CLI with special env vars per-call
-- Allows mixing Claude and Ollama models across tiers (e.g., `-O opus -W llama3 -L qwen3`)
-- Requires Ollama installed locally: https://ollama.com
+**Ollama integration** (via Claude CLI):
+- Any model not matching Claude patterns (opus/sonnet/haiku/claude-*) routes to Ollama
+- Mix Claude and Ollama models across tiers (e.g., `-O opus -W llama3 -L qwen3`)
+- Requires [Ollama](https://ollama.com) installed locally with models pulled
 
 ### 3.2 Retrieval Layer (Vault Operations)
 

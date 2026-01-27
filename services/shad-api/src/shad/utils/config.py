@@ -36,7 +36,8 @@ class Settings(BaseSettings):
     # Vault Settings
     obsidian_vault_path: str = ""  # Default vault path (for env var fallback)
 
-    # LLM Provider Settings
+    # LLM Provider Settings (legacy fallback - Claude CLI is primary)
+    # API keys only needed if Claude CLI is unavailable
     anthropic_api_key: str = ""
     openai_api_key: str = ""
 
