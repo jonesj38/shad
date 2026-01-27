@@ -78,6 +78,17 @@ check_dependencies() {
         log_warn "Claude CLI not found - install from https://claude.ai/code"
     fi
 
+    # bun or npm (for qmd installation)
+    if command -v bun &> /dev/null; then
+        log_success "bun $(bun --version)"
+        HAS_BUN=true
+    elif command -v npm &> /dev/null; then
+        log_success "npm $(npm --version)"
+        HAS_NPM=true
+    else
+        log_warn "Neither bun nor npm found - qmd (semantic search) won't be installed"
+    fi
+
     if [[ ${#missing[@]} -gt 0 ]]; then
         log_error "Missing dependencies: ${missing[*]}"
         echo ""
@@ -134,6 +145,40 @@ setup_python() {
     pip install --quiet -e .
 
     log_success "Python environment ready"
+    echo ""
+}
+
+# Install qmd for semantic search (optional)
+setup_qmd() {
+    log_info "Setting up qmd (semantic search)..."
+
+    # Check if qmd is already installed
+    if command -v qmd &> /dev/null; then
+        log_success "qmd already installed ($(qmd --version 2>/dev/null || echo 'version unknown'))"
+        return 0
+    fi
+
+    # Try to install qmd
+    if [[ "${HAS_BUN:-false}" == "true" ]]; then
+        log_info "Installing qmd via bun..."
+        if bun install -g https://github.com/tobi/qmd 2>/dev/null; then
+            log_success "qmd installed via bun"
+        else
+            log_warn "Failed to install qmd via bun - using filesystem search fallback"
+        fi
+    elif [[ "${HAS_NPM:-false}" == "true" ]]; then
+        log_info "Installing qmd via npm..."
+        if npm install -g https://github.com/tobi/qmd 2>/dev/null; then
+            log_success "qmd installed via npm"
+        else
+            log_warn "Failed to install qmd via npm - using filesystem search fallback"
+        fi
+    else
+        log_warn "Skipping qmd installation (no bun/npm) - using filesystem search fallback"
+        echo "  To enable semantic search later, install bun and run:"
+        echo "    bun install -g https://github.com/tobi/qmd"
+    fi
+
     echo ""
 }
 
@@ -223,6 +268,11 @@ print_success() {
     echo "  shad status <id>    - Check run status"
     echo "  shad --help         - Show all commands"
     echo ""
+    echo "Semantic Search (optional):"
+    echo "  If qmd is installed, register your vault for hybrid search:"
+    echo -e "     ${BLUE}qmd collection add ~/MyVault --name myvault${NC}"
+    echo -e "     ${BLUE}qmd embed${NC}  # Generate embeddings"
+    echo ""
 }
 
 # Main installation flow
@@ -236,6 +286,7 @@ main() {
     check_dependencies
     setup_repo
     setup_python
+    setup_qmd
     setup_scripts
     setup_shell
     print_success
