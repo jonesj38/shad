@@ -533,15 +533,16 @@ The quality of Shad's output depends on your vault's content. Good vaults includ
 All phases complete:
 
 - [x] **Phase 1**: Foundation (CLI, API, RLM engine, Redis caching)
-- [x] **Phase 2**: Obsidian integration (Code Mode, per-subtask retrieval)
-- [x] **Phase 3**: Task-aware decomposition (strategy skeletons, soft dependencies)
-- [x] **Phase 4**: File output mode (two-pass imports, contracts-first)
-- [x] **Phase 5**: Verification layer (progressive strictness, repair loops)
-- [x] **Phase 6**: Iterative refinement (HITL checkpoints, delta resume)
-- [x] **Phase 7**: Vault curation tools (ingestion, gap detection)
-- [x] **Phase 8**: Sources scheduler (automated sync from GitHub, URLs, feeds, folders)
+- [x] **Phase 2**: Obsidian integration (superseded by Phase 3)
+- [x] **Phase 3**: qmd migration (hybrid search, multi-vault, no Obsidian dependency)
+- [x] **Phase 4**: Task-aware decomposition (strategy skeletons, soft dependencies)
+- [x] **Phase 5**: File output mode (two-pass imports, contracts-first)
+- [x] **Phase 6**: Verification layer (progressive strictness, repair loops)
+- [x] **Phase 7**: Iterative refinement (HITL checkpoints, delta resume)
+- [x] **Phase 8**: Vault curation tools (ingestion, gap detection)
+- [x] **Phase 9**: Sources scheduler (automated sync from GitHub, URLs, feeds, folders)
 
-See [SPEC.md](SPEC.md) for detailed technical specification and [PLAN.md](PLAN.md) for implementation details.
+See [SPEC.md](SPEC.md) for detailed technical specification, [PLAN.md](PLAN.md) for implementation details, and [QMD_PIVOT.md](QMD_PIVOT.md) for the qmd migration rationale.
 
 ---
 

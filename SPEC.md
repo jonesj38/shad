@@ -58,13 +58,14 @@ Shad CLI / API
 | Phase | Status | Description |
 |-------|--------|-------------|
 | 1. Foundation | Complete | CLI, API, RLM Engine, budgets |
-| 2. Obsidian Integration | Complete | Retrieval layer, qmd, Code Mode, citations |
-| 3. Task-Aware Decomposition | Complete | Strategy skeletons, domain-specific |
-| 4. File Output Mode | Complete | Multi-file codebases, manifests |
-| 5. Verification Layer | Complete | Syntax, types, tests, repair |
-| 6. Iterative Refinement | Complete | Error feedback, HITL checkpoints |
-| 7. Vault Curation Tools | Complete | Ingestion, analysis, gap detection |
-| 8. Sources Scheduler | Complete | Automated sync from GitHub, URLs, feeds, folders |
+| 2. Obsidian Integration | Superseded | MCP client (replaced by Phase 3) |
+| 3. qmd Migration | Complete | RetrievalLayer, hybrid search, multi-vault |
+| 4. Task-Aware Decomposition | Complete | Strategy skeletons, domain-specific |
+| 5. File Output Mode | Complete | Multi-file codebases, manifests |
+| 6. Verification Layer | Complete | Syntax, types, tests, repair |
+| 7. Iterative Refinement | Complete | Error feedback, HITL checkpoints |
+| 8. Vault Curation Tools | Complete | Ingestion, analysis, gap detection |
+| 9. Sources Scheduler | Complete | Automated sync from GitHub, URLs, feeds, folders |
 
 ---
 
@@ -867,7 +868,7 @@ gap_score = 0.55 * history_pain + 0.25 * coverage_miss + 0.20 * llm_score
 
 ## 3. Existing Implementation Details
 
-This section documents what is already implemented (Phases 1-2).
+This section documents what is already implemented (Phases 1-3).
 
 ### 3.1 LLM Provider Support
 
