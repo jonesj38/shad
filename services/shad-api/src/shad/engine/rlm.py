@@ -770,8 +770,7 @@ class RLMEngine:
         Phase 1 (Search): Use qmd/retriever to quickly find relevant documents
         Phase 2 (Extract): LLM generates script to extract/filter/synthesize from found docs
 
-        This separation keeps search fast (qmd) while letting Code Mode focus on
-        intelligent extraction rather than reinventing search.
+        If extraction fails, returns raw search results (no second search needed).
         """
         if not self.code_executor:
             return ""
@@ -786,13 +785,13 @@ class RLMEngine:
 
         logger.info(f"[CODE_MODE] Found {len(search_results)} documents for extraction")
 
+        # Format search results (used for both extraction and fallback)
+        docs_for_extraction = self._format_docs_for_extraction(search_results)
+
         # Phase 2: Generate extraction script that processes the found documents
         logger.info(f"[CODE_MODE] Phase 2: Generating extraction script for: {query[:60]}...")
 
         try:
-            # Format search results as input for the extraction script
-            docs_for_extraction = self._format_docs_for_extraction(search_results)
-
             # Have LLM generate an extraction-focused script
             script, tokens = await self.llm.generate_extraction_script(
                 task=query,
@@ -800,11 +799,18 @@ class RLMEngine:
             )
 
             if not script:
-                logger.warning("[CODE_MODE] LLM generated empty script")
-                return ""
+                logger.warning("[CODE_MODE] LLM generated empty script, returning raw results")
+                return self._format_raw_results(search_results)
 
             logger.info(f"[CODE_MODE] Executing extraction script ({len(script)} chars)...")
             logger.debug(f"[CODE_MODE] Script:\n{script}")
+
+            # Quick syntax check before execution
+            try:
+                compile(script, "<pre-check>", "exec")
+            except SyntaxError as e:
+                logger.error(f"[CODE_MODE] Script has syntax error: {e}, returning raw results")
+                return self._format_raw_results(search_results)
 
             # Execute the script in sandbox with DOCUMENTS variable
             result = await self.code_executor.execute(
@@ -821,12 +827,11 @@ class RLMEngine:
                     logger.info(f"[CODE_MODE] Extraction returned {len(result.stdout)} chars via stdout")
                     return result.stdout
                 else:
-                    logger.warning("[CODE_MODE] Script succeeded but returned no output")
-                    return ""
+                    logger.warning("[CODE_MODE] Script returned nothing, using raw results")
+                    return self._format_raw_results(search_results)
             else:
-                logger.error(f"[CODE_MODE] Extraction failed: {result.error_message}")
-                logger.error(f"[CODE_MODE] stderr: {result.stderr}")
-                return ""
+                logger.error(f"[CODE_MODE] Extraction failed: {result.error_message}, using raw results")
+                return self._format_raw_results(search_results)
 
         except Exception as e:
             logger.error(f"[CODE_MODE] Error: {e}")
@@ -884,6 +889,22 @@ class RLMEngine:
                 content = content[:8000] + "\n... [truncated]"
             parts.append(f"=== DOCUMENT {i+1}: {path} ===\n{content}")
         return "\n\n".join(parts)
+
+    def _format_raw_results(self, results: list[dict[str, Any]]) -> str:
+        """Format search results as context when extraction fails.
+
+        This is a fallback that returns the raw search results formatted
+        for the orchestrator, avoiding a second search.
+        """
+        parts = []
+        for r in results:
+            path = r.get("path", "unknown")
+            content = r.get("content", "")
+            # Truncate for context window
+            if len(content) > 3000:
+                content = content[:3000] + "\n... [truncated]"
+            parts.append(f"## {path}\n{content}")
+        return "\n\n---\n\n".join(parts)
 
     async def _retrieve_direct(self, query: str, limit: int = 10) -> str:
         """Direct retriever search fallback (non-Code Mode).
