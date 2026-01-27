@@ -27,18 +27,32 @@ This is not prompt engineering. This is **inference-time scaling** — treating 
 - [x] History artifacts (DAG, metrics, reports)
 - [x] Redis caching with hierarchical keys
 
-### Phase 2 — Obsidian Integration (COMPLETE)
+### Phase 2 — Obsidian Integration (SUPERSEDED)
 
-- [x] Retrieval layer abstraction (RetrievalLayer protocol)
-- [x] qmd integration for hybrid BM25 + vector search
-- [x] Filesystem fallback when qmd not installed
-- [x] Per-subtask context retrieval with search modes (hybrid/bm25/vector)
+> **Note**: This phase was superseded by Phase 3 (qmd Migration). See [QMD_PIVOT.md](QMD_PIVOT.md) for details.
+
+Original implementation:
+- [x] MCP client for Obsidian REST API
+- [x] Per-subtask context retrieval
 - [x] Code Mode: LLM generates Python scripts for custom retrieval
 - [x] Sandbox execution with `obsidian.search()`, `obsidian.read_note()`, etc.
 - [x] Fallback to direct search when scripts fail
 - [x] Full-path wikilink citations
 
-### Phase 3 — Task-Aware Decomposition (COMPLETE)
+### Phase 3 — qmd Migration (COMPLETE)
+
+> See [QMD_PIVOT.md](QMD_PIVOT.md) for rationale.
+
+- [x] RetrievalLayer protocol abstraction
+- [x] QmdRetriever for hybrid BM25 + vector + LLM reranking search
+- [x] FilesystemRetriever fallback when qmd not installed
+- [x] Multi-vault support (`--vault` repeatable)
+- [x] Search modes: hybrid (default), bm25, vector
+- [x] `--retriever` flag for backend selection
+- [x] Removed Obsidian REST API dependency
+- [x] Updated install.sh to install qmd via bun/npm
+
+### Phase 4 — Task-Aware Decomposition (COMPLETE)
 
 **Decision**: Hybrid template skeletons + LLM refinement (see SPEC.md D10)
 
@@ -67,7 +81,7 @@ This is not prompt engineering. This is **inference-time scaling** — treating 
   - Scheduler injects packets into pending nodes' retrieval
   - Limited rerun gate when soft dep completes and node would benefit
 
-### Phase 4 — Code Generation Output (COMPLETE)
+### Phase 5 — Code Generation Output (COMPLETE)
 
 **Decision**: Two-pass with manifest + convention-based validation (see SPEC.md D3)
 
@@ -95,7 +109,7 @@ This is not prompt engineering. This is **inference-time scaling** — treating 
   - `--overwrite` flag for conflicts (default: fail)
   - Emit write report with paths, skipped conflicts, hashes
 
-### Phase 5 — Verification Layer (COMPLETE)
+### Phase 6 — Verification Layer (COMPLETE)
 
 **Decision**: Progressive strictness with configurable per-check (see SPEC.md D7)
 
@@ -129,7 +143,7 @@ This is not prompt engineering. This is **inference-time scaling** — treating 
   - Tests advisory by default, blocking in `--verify=strict`
   - Override: `--tests off|stubs|post|tdd|co`
 
-### Phase 6 — Iterative Refinement (COMPLETE)
+### Phase 7 — Iterative Refinement (COMPLETE)
 
 **Decision**: Tiered fallback with NEEDS_HUMAN as default for high-impact (see SPEC.md D8)
 
@@ -162,7 +176,7 @@ This is not prompt engineering. This is **inference-time scaling** — treating 
   - Max 5 checkpoints per run, then degrade to batch review at end
   - Checkpoint presents: node summary, decision to approve, confidence signals, options
 
-### Phase 7 — Vault Curation Tools (COMPLETE)
+### Phase 8 — Vault Curation Tools (COMPLETE)
 
 **Decision**: Combined scoring for gap detection, configurable ingestion presets (see SPEC.md D14)
 
@@ -194,7 +208,7 @@ This is not prompt engineering. This is **inference-time scaling** — treating 
   - Link related notes automatically
   - Progressive standardization ("Gardener Pattern")
 
-### Phase 8 — Sources Scheduler (COMPLETE)
+### Phase 9 — Sources Scheduler (COMPLETE)
 
 **Decision**: Automated sync scheduling with multiple source types
 
@@ -218,7 +232,7 @@ This is not prompt engineering. This is **inference-time scaling** — treating 
 
 - [x] **Integration**
   - Sources stored in `~/.shad/sources.json`
-  - Leverages existing ingestion pipeline from Phase 7
+  - Leverages existing ingestion pipeline from Phase 8
   - Respects ingestion presets (mirror/docs/deep)
 
 ---
@@ -227,13 +241,14 @@ This is not prompt engineering. This is **inference-time scaling** — treating 
 
 ### Complete
 - Phase 1: Foundation (RLM Engine, budget enforcement, history artifacts, Redis caching)
-- Phase 2: Obsidian Integration (MCP client, Code Mode, per-subtask context retrieval)
-- Phase 3: Task-Aware Decomposition (Strategy skeletons, heuristic selection, soft dependencies)
-- Phase 4: Code Generation Output (File manifests, two-pass import resolution, contracts-first)
-- Phase 5: Verification Layer (Syntax/import/type checks, error classification, repair actions)
-- Phase 6: Iterative Refinement (Run states, delta verification, HITL checkpoints)
-- Phase 7: Vault Curation Tools (Ingestion pipeline, shadow index, gap detection)
-- Phase 8: Sources Scheduler (Automated sync from GitHub, URLs, feeds, folders)
+- Phase 2: Obsidian Integration (MCP client — superseded by Phase 3)
+- Phase 3: qmd Migration (RetrievalLayer, hybrid search, multi-vault, no Obsidian dependency)
+- Phase 4: Task-Aware Decomposition (Strategy skeletons, heuristic selection, soft dependencies)
+- Phase 5: Code Generation Output (File manifests, two-pass import resolution, contracts-first)
+- Phase 6: Verification Layer (Syntax/import/type checks, error classification, repair actions)
+- Phase 7: Iterative Refinement (Run states, delta verification, HITL checkpoints)
+- Phase 8: Vault Curation Tools (Ingestion pipeline, shadow index, gap detection)
+- Phase 9: Sources Scheduler (Automated sync from GitHub, URLs, feeds, folders)
 
 ### Test Coverage
 - 271 passing tests across all phases
