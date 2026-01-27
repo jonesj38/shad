@@ -624,11 +624,14 @@ ABSOLUTE RULES - VIOLATIONS CAUSE ERRORS:
 2. NO list comprehensions or generator expressions - USE EXPLICIT FOR LOOPS ONLY
 3. NO referencing variables from outer scopes in any expression
 4. Initialize ALL variables before use
+5. NO triple-quoted strings (""" or ''') - use single-line strings only
+6. Use + to concatenate strings, not f-strings with complex expressions
 
-BANNED (causes NameError):
+BANNED:
   [x for x in items]           # NO comprehensions!
   (x for x in items)           # NO generators!
-  content_lower = c.lower()    # then using content_lower elsewhere - NO!
+  """multi-line"""             # NO triple quotes!
+  f"{complex.expr}"            # NO complex f-strings!
 
 REQUIRED PATTERN - follow this exactly:
 ```python
