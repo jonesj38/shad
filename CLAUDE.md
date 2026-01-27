@@ -66,7 +66,9 @@ shad run "Build app" --vault ~/MyVault
 | `engine/context_packets.py` | Cross-subtask context sharing |
 | `sandbox/executor.py` | Sandboxed Python execution for Code Mode scripts |
 | `sandbox/tools.py` | `ObsidianTools` API available to retrieval scripts |
-| `mcp/client.py` | Direct filesystem client for vault operations |
+| `retrieval/layer.py` | RetrievalLayer protocol and RetrievalResult dataclass |
+| `retrieval/qmd.py` | QmdRetriever - hybrid BM25 + vector search via qmd CLI |
+| `retrieval/filesystem.py` | FilesystemRetriever - fallback when qmd not installed |
 | `verification/layer.py` | Verification orchestration (syntax, types, imports) |
 | `output/manifest.py` | File manifest generation and writing |
 | `output/import_resolution.py` | Two-pass import validation |
@@ -81,12 +83,13 @@ shad run "Build app" --vault ~/MyVault
 LLM generates Python scripts for targeted retrieval:
 
 ```python
-results = obsidian.search("authentication", limit=10)
+results = obsidian.search("authentication", limit=10, mode="hybrid")
 pattern = obsidian.read_note("Patterns/Auth.md")
 __result__ = {"context": ..., "citations": [...], "confidence": 0.72}
 ```
 
-Scripts run in a sandbox with restricted builtins and only vault access via `ObsidianTools`.
+Scripts run in a sandbox with restricted builtins and vault access via `ObsidianTools`.
+Search modes: `hybrid` (default, BM25 + vectors), `bm25` (fast keyword), `vector` (semantic).
 
 ### Strategy Skeletons
 
@@ -111,6 +114,10 @@ shad run "Build REST API" --vault ~/v --strategy software --verify strict --writ
 # Multi-vault (priority order)
 shad run "Build app" --vault ~/Project --vault ~/Patterns
 
+# Retriever selection (auto-detects qmd by default)
+shad run "Task" --retriever qmd          # Force qmd
+shad run "Task" --retriever filesystem   # Force filesystem fallback
+
 # Model selection (per-tier override)
 shad models                                    # List Claude models
 shad models --refresh                          # Force refresh from API
@@ -131,8 +138,10 @@ shad export <run_id> --output ./out
 shad debug <run_id>
 
 # Vault operations
-shad vault                    # Check connection
-shad search "query"           # Search vault
+shad vault                           # Check retriever status
+shad search "query"                  # Hybrid search (default)
+shad search "query" --mode bm25      # Fast keyword search
+shad search "query" --mode vector    # Semantic search
 
 # Ingest content
 shad ingest github <url> --vault ~/v --preset docs

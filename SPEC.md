@@ -39,7 +39,12 @@ Shad CLI / API
    ├── RLM Engine (recursive decomposition + execution)
    │       │
    │       ├── Strategy Selection → Decomposition
-   │       ├── Code Mode → CodeExecutor → ObsidianTools → Vault(s)
+   │       ├── Code Mode → CodeExecutor → RetrievalLayer → Vault(s)
+   │       │                                    │
+   │       │                              ┌─────┴─────┐
+   │       │                              │           │
+   │       │                            qmd      Filesystem
+   │       │                         (hybrid)    (fallback)
    │       ├── Verification Layer → Repair Loop
    │       └── Synthesis → File Output
    │
@@ -53,7 +58,7 @@ Shad CLI / API
 | Phase | Status | Description |
 |-------|--------|-------------|
 | 1. Foundation | Complete | CLI, API, RLM Engine, budgets |
-| 2. Obsidian Integration | Complete | MCP client, Code Mode, citations |
+| 2. Obsidian Integration | Complete | Retrieval layer, qmd, Code Mode, citations |
 | 3. Task-Aware Decomposition | Complete | Strategy skeletons, domain-specific |
 | 4. File Output Mode | Complete | Multi-file codebases, manifests |
 | 5. Verification Layer | Complete | Syntax, types, tests, repair |
@@ -891,22 +896,33 @@ This section documents what is already implemented (Phases 1-2).
 - Allows mixing Claude and Ollama models across tiers (e.g., `-O opus -W llama3 -L qwen3`)
 - Requires Ollama installed locally: https://ollama.com
 
-### 3.2 MCP Client (Vault Operations)
+### 3.2 Retrieval Layer (Vault Operations)
 
-**Read operations**:
-- `read_note(path)` → VaultNote with content, metadata, hash, mtime
-- `search(query, limit, path_filter, type_filter)` → Keyword-based search with scoring
-- `list_notes(directory, recursive)` → Directory enumeration
-- `get_file_hash(path)` → SHA256 hash for cache validation
+**RetrievalLayer Protocol**:
+- `search(query, mode, collections, limit, min_score)` → Hybrid/BM25/vector search
+- `get(path, collection)` → Read document content
+- `status()` → Check retriever availability
+- `available` → Property indicating if backend is ready
 
-**Write operations**:
-- `write_note(path, content, metadata, resolve_wikilinks)`
-- `update_note(path, content, append)`
-- `update_frontmatter(path, updates)`
+**Backends**:
 
-**Delete operations** (HITL gated):
-- `delete_note(path)` → Queues for human review
-- `execute_delete(path)` → Executes pre-approved deletion
+| Backend | Search Modes | When Used |
+|---------|--------------|-----------|
+| `QmdRetriever` | hybrid, bm25, vector | qmd installed (primary) |
+| `FilesystemRetriever` | bm25 only | Fallback when qmd unavailable |
+
+**qmd Integration**:
+- `qmd search` → BM25 keyword search
+- `qmd vsearch` → Vector similarity search
+- `qmd query` → Hybrid with LLM reranking (default)
+
+**ObsidianTools API** (for Code Mode scripts):
+- `obsidian.search(query, limit, mode)` → Search with mode: hybrid|bm25|vector
+- `obsidian.read_note(path)` → Read note content
+- `obsidian.list_notes(directory, recursive)` → Directory enumeration
+- `obsidian.get_hash(path)` → SHA256 hash for cache validation
+- `obsidian.write_note(path, content, note_type, frontmatter)` → Write note
+- `obsidian.get_frontmatter(path)` → Parse YAML frontmatter
 
 ### 3.3 Code Executor (Sandbox)
 
@@ -1212,6 +1228,7 @@ shad check-permissions [path]       # Verify project permissions are configured
 
 # Run options
 --vault <path>              # Vault path (repeatable for layering; falls back to OBSIDIAN_VAULT_PATH env)
+--retriever <name>          # Retrieval backend (auto|qmd|filesystem, default: auto)
 --strategy <name>           # Force strategy (software|research|analysis|planning)
 --max-depth <n>             # Max recursion depth (default: 3)
 --max-nodes <n>             # Max DAG nodes (default: 50)
@@ -1232,8 +1249,10 @@ shad check-permissions [path]       # Verify project permissions are configured
 -L, --leaf-model            # Model for fast parallel execution
 
 # Vault commands
-shad vault                          # Check vault connection
-shad search <query>                 # Search the vault
+shad vault                          # Check retriever status
+shad search <query>                 # Search vault (default: hybrid mode)
+shad search <query> --mode bm25     # Keyword search only
+shad search <query> --mode vector   # Semantic search only
 shad ingest github <url> [--preset docs|mirror|deep] --vault <path>
 shad ingest <path> [--type file|folder]
 shad enrich <snapshot_id> --deep
@@ -1333,6 +1352,8 @@ shad cache clear [--scope run|source|all]
 | **Hard deps** | Dependencies that must complete before node starts |
 | **HITL** | Human-in-the-loop checkpoint |
 | **Manifest** | Structured file output (paths, content, metadata) |
+| **qmd** | Hybrid search tool (BM25 + vectors + LLM reranking) - primary retrieval backend |
+| **RetrievalLayer** | Protocol abstracting vault search (qmd or filesystem) |
 | **RLM** | Recursive Language Model engine |
 | **Shadow index** | External DB mapping source URLs to latest snapshots |
 | **Skeleton** | Strategy template with required/optional stages |
