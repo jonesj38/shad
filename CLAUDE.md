@@ -176,9 +176,13 @@ shad sources remove <source_id>
 
 ## Configuration
 
+**Required**: [Claude CLI](https://claude.ai/code) installed and authenticated (handles all LLM calls)
+
 Environment variables (or `.env` file):
 - `OBSIDIAN_VAULT_PATH`: Default vault path (optional, CLI `--vault` overrides)
-- `REDIS_URL`: Redis connection (default: `redis://localhost:6379/0`)
+- `REDIS_URL`: Redis connection for caching (default: `redis://localhost:6379/0`)
+
+No API keys needed - Claude CLI handles authentication and supports both Claude and Ollama models.
 
 ## Reference
 
