@@ -50,8 +50,8 @@ This allows Shad to effectively utilize **gigabytes** of context — not by load
 - Python 3.11+
 - Docker (for Redis)
 - [Claude CLI](https://claude.ai/code) installed and authenticated
-- An Obsidian vault with relevant content
-- (Optional) [Obsidian Local REST API](https://github.com/coddingtonbear/obsidian-local-rest-api) plugin
+- An Obsidian vault (or any directory of markdown files)
+- (Optional) [qmd](https://github.com/tobi/qmd) for hybrid semantic search
 
 ### Installation
 
@@ -69,6 +69,7 @@ The installer will:
 - Clone the repo to `~/.shad`
 - Create a Python virtual environment
 - Install dependencies
+- Install qmd for semantic search (if bun/npm available)
 - Add `shad` to your PATH
 
 After installation, restart your terminal or run:
@@ -268,7 +269,12 @@ Shad CLI / API
    │       ├── Code Mode (LLM generates retrieval scripts)
    │       │       │
    │       │       ▼
-   │       ├── CodeExecutor ──> ObsidianTools ──> Your Vault(s)
+   │       ├── CodeExecutor ──> RetrievalLayer ──> Your Vault(s)
+   │       │                         │
+   │       │                    ┌────┴────┐
+   │       │                    │         │
+   │       │                   qmd    Filesystem
+   │       │               (semantic)  (fallback)
    │       │
    │       ├── Verification (syntax, types, tests)
    │       │
@@ -286,7 +292,8 @@ Shad CLI / API
 | **Strategy Skeletons** | Domain-specific decomposition templates |
 | **Code Mode** | LLM-generated retrieval scripts |
 | **CodeExecutor** | Sandboxed Python execution (configurable profiles) |
-| **ObsidianTools** | Vault operations (`search`, `read_note`, `list_notes`) |
+| **RetrievalLayer** | Vault search abstraction (qmd or filesystem) |
+| **qmd** | Hybrid BM25 + vector search with LLM reranking |
 | **Verification Layer** | Syntax, type, import, test checking |
 | **Redis Cache** | Cache subtask results with hash validation |
 
@@ -321,7 +328,8 @@ shad check-permissions
 shad run "Your task" [options]
 
 Options:
-  --vault, -v       Path to Obsidian vault (optional if OBSIDIAN_VAULT_PATH is set; repeatable for layering)
+  --vault, -v       Path to vault (repeatable; falls back to OBSIDIAN_VAULT_PATH)
+  --retriever, -r   Retrieval backend: auto|qmd|filesystem (default: auto)
   --strategy        Force strategy (software|research|analysis|planning)
   --max-depth, -d   Maximum recursion depth (default: 3)
   --max-nodes       Maximum DAG nodes (default: 50)
@@ -388,11 +396,36 @@ Model tiers:
 ### Vault Management
 
 ```bash
+# Check retriever status
+shad vault
+
+# Search your vault
+shad search "query"                    # Hybrid search (default)
+shad search "query" --mode bm25        # Fast keyword search
+shad search "query" --mode vector      # Semantic search
+
 # Ingest external content into vault
 shad ingest github <url> --preset docs --vault ~/MyVault
 
 # Presets: mirror (all files), docs (documentation only), deep (with code)
 ```
+
+### Semantic Search Setup (Optional)
+
+For hybrid BM25 + vector search with LLM reranking, install [qmd](https://github.com/tobi/qmd):
+
+```bash
+# Install qmd (installer does this automatically if bun/npm available)
+bun install -g https://github.com/tobi/qmd
+
+# Register your vault as a collection
+qmd collection add ~/MyVault --name myvault
+
+# Generate embeddings (required for semantic search)
+qmd embed
+```
+
+Without qmd, shad falls back to filesystem search (basic keyword matching).
 
 ### Sources Scheduler
 
@@ -427,19 +460,18 @@ Schedules: `manual`, `hourly`, `daily`, `weekly`, `monthly`
 
 ## Configuration
 
-Copy `.env.example` to `.env` and configure:
+Shad works with minimal configuration. Set environment variables directly or in a `.env` file:
 
 ```bash
-# Required
-REDIS_URL=redis://localhost:6379/0
+# API Keys (set in shell or .env)
+ANTHROPIC_API_KEY=your_key_here     # Required for Claude models
+OPENAI_API_KEY=your_key_here        # Optional fallback
 
-# Optional: Default vault path
-# If set, you don't need to pass --vault to every command
+# Optional: Default vault path (so you don't need --vault every time)
 OBSIDIAN_VAULT_PATH=/path/to/your/vault
 
-# Optional: Obsidian Local REST API (for advanced vault features)
-OBSIDIAN_API_KEY=your_key_here
-OBSIDIAN_BASE_URL=https://127.0.0.1:27124
+# Optional: Redis (defaults to localhost:6379)
+REDIS_URL=redis://localhost:6379/0
 
 # Optional: Budget defaults
 DEFAULT_MAX_DEPTH=3
@@ -450,11 +482,11 @@ DEFAULT_MAX_TOKENS=100000
 
 ### Default Vault
 
-Set `OBSIDIAN_VAULT_PATH` in your `.env` file to use a default vault:
+Set `OBSIDIAN_VAULT_PATH` to skip `--vault` on every command:
 
 ```bash
-# In .env
-OBSIDIAN_VAULT_PATH=/home/user/MyVault
+# In your shell profile (~/.zshrc or ~/.bashrc)
+export OBSIDIAN_VAULT_PATH=/home/user/MyVault
 
 # Now you can run without --vault
 shad run "Summarize my notes"

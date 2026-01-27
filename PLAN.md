@@ -29,8 +29,10 @@ This is not prompt engineering. This is **inference-time scaling** — treating 
 
 ### Phase 2 — Obsidian Integration (COMPLETE)
 
-- [x] MCP client for vault operations
-- [x] Per-subtask context retrieval
+- [x] Retrieval layer abstraction (RetrievalLayer protocol)
+- [x] qmd integration for hybrid BM25 + vector search
+- [x] Filesystem fallback when qmd not installed
+- [x] Per-subtask context retrieval with search modes (hybrid/bm25/vector)
 - [x] Code Mode: LLM generates Python scripts for custom retrieval
 - [x] Sandbox execution with `obsidian.search()`, `obsidian.read_note()`, etc.
 - [x] Fallback to direct search when scripts fail
@@ -254,6 +256,8 @@ All modules now integrated into RLMEngine:
 12. **Default Vault**: Falls back to `OBSIDIAN_VAULT_PATH` env var when `--vault` not specified
 13. **Model Selection**: `-O/-W/-L` flags for per-tier model override, `shad models` to list available
 14. **Ollama Integration**: Mix Claude and Ollama models per-tier, auto-detects Ollama models and routes via local server
+15. **Retrieval Layer**: qmd for hybrid search, filesystem fallback, `--retriever` flag, search modes (hybrid/bm25/vector)
+16. **Multi-vault Support**: Specify multiple `--vault` flags for layered context
 
 ### Architecture
 All modules implemented per SPEC.md:
@@ -262,6 +266,9 @@ All modules implemented per SPEC.md:
 - `engine/strategies.py`: Strategy skeletons and heuristic selection
 - `engine/decomposition.py`: LLM-driven decomposition with constraints
 - `engine/context_packets.py`: Cross-subtask context sharing
+- `retrieval/layer.py`: RetrievalLayer protocol and RetrievalResult
+- `retrieval/qmd.py`: QmdRetriever for hybrid BM25 + vector search
+- `retrieval/filesystem.py`: FilesystemRetriever fallback
 - `output/manifest.py`: File manifest output with content hashing
 - `output/import_resolution.py`: Two-pass import validation
 - `verification/layer.py`: Progressive verification with error classification
