@@ -19,9 +19,9 @@ from rich.tree import Tree
 from shad import __version__
 from shad.engine import LLMProvider, RLMEngine
 from shad.history import HistoryManager
-from shad.mcp import ObsidianMCPClient
 from shad.models import Budget, ModelConfig, RunConfig
 from shad.models.run import NodeStatus, Run, RunStatus
+from shad.retrieval import FilesystemRetriever, QmdRetriever, get_retriever
 from shad.utils.config import get_settings
 
 console = Console()
@@ -86,7 +86,9 @@ def cli() -> None:
 
 @cli.command("run")
 @click.argument("goal")
-@click.option("--vault", "-v", help="Obsidian vault path for context")
+@click.option("--vault", "-v", multiple=True, help="Vault path(s) for context (can specify multiple)")
+@click.option("--retriever", "-r", type=click.Choice(["auto", "qmd", "filesystem"]), default="auto",
+              help="Retrieval backend (auto detects qmd)")
 @click.option("--max-depth", "-d", default=3, help="Maximum recursion depth")
 @click.option("--max-nodes", default=50, help="Maximum DAG nodes")
 @click.option("--max-time", "-t", default=300, help="Maximum wall time in seconds")
@@ -107,7 +109,8 @@ def cli() -> None:
 @click.option("--leaf-model", "-L", help="Model for fast parallel execution (e.g., opus, sonnet, haiku)")
 def run(
     goal: str,
-    vault: str | None,
+    vault: tuple[str, ...],
+    retriever: str,
     max_depth: int,
     max_nodes: int,
     max_time: int,
@@ -131,7 +134,7 @@ def run(
     Examples:
         shad run "Explain quantum computing"
         shad run "Summarize research" --vault ~/Notes
-        shad run "Build REST API" --strategy software --verify strict --write-files
+        shad run "Build REST API" --vault ~/Project --vault ~/Patterns
         shad run "Complex task" -O opus -W sonnet -L haiku
     """
     # Configure logging (verbose by default, --quiet to suppress)
@@ -146,12 +149,32 @@ def run(
 
     # If API specified, use remote execution
     if api:
-        _run_via_api(goal, vault, max_depth, api)
+        _run_via_api(goal, vault[0] if vault else None, max_depth, api)
         return
+
+    # Build vault paths from CLI args or env fallback
+    vault_paths: list[Path] = []
+    collection_names: dict[str, Path] = {}
+
+    if vault:
+        for v in vault:
+            vp = Path(v).expanduser()
+            if not vp.is_absolute():
+                vp = Path.cwd() / vp
+            vault_paths.append(vp)
+            collection_names[vp.name] = vp
+    elif get_settings().obsidian_vault_path:
+        # Fall back to env var
+        vp = Path(get_settings().obsidian_vault_path).expanduser()
+        vault_paths.append(vp)
+        collection_names[vp.name] = vp
+
+    # Primary vault path (first one) for backward compatibility
+    primary_vault = vault_paths[0] if vault_paths else None
 
     config = RunConfig(
         goal=goal,
-        vault_path=vault,
+        vault_path=str(primary_vault) if primary_vault else None,
         budget=Budget(
             max_depth=max_depth,
             max_nodes=max_nodes,
@@ -167,21 +190,27 @@ def run(
 
     console.print(Panel(f"[bold]Goal:[/bold] {goal}", title="Shad Run", border_style="blue"))
 
-    # Initialize MCP client if vault specified (CLI arg or env fallback)
-    mcp_client: ObsidianMCPClient | None = None
-    vault_path: Path | None = None
+    # Initialize retriever
+    retriever_instance = None
+    collections: list[str] = []
 
-    # Use CLI arg, or fall back to env var
-    effective_vault = vault or get_settings().obsidian_vault_path
-
-    if effective_vault:
-        # Resolve vault path (support relative paths)
-        vault_path = Path(effective_vault).expanduser()
-        if not vault_path.is_absolute():
-            vault_path = Path.cwd() / vault_path
+    if vault_paths:
         source = "CLI" if vault else "env"
-        console.print(f"[dim][CONTEXT] Using vault ({source}): {vault_path}[/dim]")
-        mcp_client = ObsidianMCPClient(vault_path=vault_path)
+        if len(vault_paths) == 1:
+            console.print(f"[dim][CONTEXT] Using vault ({source}): {vault_paths[0]}[/dim]")
+        else:
+            console.print(f"[dim][CONTEXT] Using {len(vault_paths)} vaults ({source}):[/dim]")
+            for vp in vault_paths:
+                console.print(f"[dim]  - {vp.name}: {vp}[/dim]")
+        collections = list(collection_names.keys())
+
+        # Get retriever based on preference
+        retriever_instance = get_retriever(
+            paths=vault_paths,
+            collection_names=collection_names,
+            prefer=retriever,
+        )
+        console.print(f"[dim][RETRIEVER] Using {type(retriever_instance).__name__}[/dim]")
 
         # Show Code Mode status
         use_code_mode = not no_code_mode
@@ -220,8 +249,9 @@ def run(
         """Execute run."""
         engine = RLMEngine(
             llm_provider=LLMProvider(model_config=model_config),
-            mcp_client=mcp_client,
-            vault_path=vault_path,
+            retriever=retriever_instance,
+            vault_path=primary_vault,
+            collections=collections,
             use_code_mode=use_code_mode,
         )
         return await engine.execute(config)
@@ -595,79 +625,112 @@ def list_models(refresh: bool, ollama: bool) -> None:
 # =============================================================================
 
 @cli.command("vault")
-@click.option("--api", default="http://localhost:8000", help="Shad API URL")
-def vault_status(api: str) -> None:
-    """Check Obsidian vault connection status.
+def vault_status() -> None:
+    """Check vault and retriever status.
 
     \b
     Example:
         shad vault
     """
-    try:
-        with httpx.Client(timeout=30.0) as client:
-            response = client.get(f"{api}/v1/vault/status")
-            response.raise_for_status()
-            data = response.json()
-    except httpx.ConnectError:
-        console.print("[red]Could not connect to Shad API. Is it running?[/red]")
-        console.print(f"[dim]Tried: {api}[/dim]")
-        sys.exit(1)
-    except Exception as e:
-        console.print(f"[red]Error: {e}[/red]")
-        sys.exit(1)
+    # Check retriever availability
+    qmd_retriever = QmdRetriever()
+    if qmd_retriever.available:
+        console.print("[green]✓ qmd retriever available[/green]")
 
-    if data.get("connected"):
-        console.print("[green]✓ Obsidian vault connected[/green]")
-        if data.get("vault_path"):
-            console.print(f"[dim]Path: {data['vault_path']}[/dim]")
+        # Get qmd status
+        async def get_status() -> dict:
+            return await qmd_retriever.status()
+
+        status = run_async(get_status())
+        if status.get("collections"):
+            console.print("[dim]Collections:[/dim]")
+            for coll in status.get("collections", []):
+                name = coll.get("name", "unknown")
+                path = coll.get("path", "")
+                console.print(f"  - {name}: {path}")
     else:
-        console.print("[yellow]⚠ Obsidian vault not connected[/yellow]")
-        console.print("[dim]Configure OBSIDIAN_VAULT_PATH in your environment[/dim]")
+        console.print("[yellow]⚠ qmd not installed (falling back to filesystem search)[/yellow]")
+        console.print("[dim]Install with: bun install -g https://github.com/tobi/qmd[/dim]")
+
+    # Show default vault from env
+    default_vault = get_settings().obsidian_vault_path
+    if default_vault:
+        console.print(f"\n[dim]Default vault (env): {default_vault}[/dim]")
+    else:
+        console.print("\n[dim]No default vault configured[/dim]")
+        console.print("[dim]Set OBSIDIAN_VAULT_PATH or use --vault with commands[/dim]")
 
 
 @cli.command("search")
 @click.argument("query")
+@click.option("--vault", "-v", multiple=True, help="Vault path(s) to search")
 @click.option("--limit", "-l", default=10, help="Maximum results")
-@click.option("--api", default="http://localhost:8000", help="Shad API URL")
-def search(query: str, limit: int, api: str) -> None:
-    """Search the Obsidian vault.
+@click.option("--mode", "-m", type=click.Choice(["hybrid", "bm25", "vector"]), default="hybrid",
+              help="Search mode (default: hybrid)")
+def search(query: str, vault: tuple[str, ...], limit: int, mode: str) -> None:
+    """Search vault(s) for matching documents.
 
     \b
-    Example:
+    Examples:
         shad search "machine learning"
+        shad search "authentication" --vault ~/Notes
+        shad search "API design" --mode bm25 --limit 20
     """
-    try:
-        with httpx.Client(timeout=30.0) as client:
-            response = client.get(
-                f"{api}/v1/vault/search",
-                params={"query": query, "limit": limit},
-            )
-            response.raise_for_status()
-            data = response.json()
-    except httpx.ConnectError:
-        console.print("[red]Could not connect to Shad API. Is it running?[/red]")
-        sys.exit(1)
-    except httpx.HTTPStatusError as e:
-        if e.response.status_code == 503:
-            console.print("[yellow]Obsidian vault not connected[/yellow]")
-        else:
-            console.print(f"[red]Error: {e}[/red]")
+    # Build vault paths
+    vault_paths: list[Path] = []
+    collection_names: dict[str, Path] = {}
+
+    if vault:
+        for v in vault:
+            vp = Path(v).expanduser()
+            if not vp.is_absolute():
+                vp = Path.cwd() / vp
+            vault_paths.append(vp)
+            collection_names[vp.name] = vp
+    elif get_settings().obsidian_vault_path:
+        vp = Path(get_settings().obsidian_vault_path).expanduser()
+        vault_paths.append(vp)
+        collection_names[vp.name] = vp
+    else:
+        console.print("[yellow]No vault specified. Use --vault or set OBSIDIAN_VAULT_PATH[/yellow]")
         sys.exit(1)
 
-    results = data.get("results", [])
+    # Get retriever
+    retriever = get_retriever(paths=vault_paths, collection_names=collection_names)
+
+    async def do_search() -> list:
+        return await retriever.search(
+            query,
+            mode=mode,
+            collections=list(collection_names.keys()),
+            limit=limit,
+        )
+
+    results = run_async(do_search())
+
     if not results:
         console.print(f"[dim]No results found for '{query}'[/dim]")
         return
 
     console.print(Panel(f"Search: {query}", title="Vault Search", border_style="blue"))
+    console.print(f"[dim]Mode: {mode} | Backend: {type(retriever).__name__}[/dim]\n")
 
     for i, result in enumerate(results, 1):
-        path = result.get("path", "Unknown")
-        content = result.get("content", "")[:200]
-        score = result.get("score", 0)
+        path = result.path
+        collection = result.collection
+        content = result.content[:200] if result.content else ""
+        score = result.score
 
-        console.print(f"\n[bold cyan]{i}. {path}[/bold cyan] [dim](score: {score:.2f})[/dim]")
-        console.print(f"   {content}...")
+        # Show collection if multiple vaults
+        if len(vault_paths) > 1 and collection:
+            console.print(f"[bold cyan]{i}. [{collection}] {path}[/bold cyan] [dim](score: {score:.2f})[/dim]")
+        else:
+            console.print(f"[bold cyan]{i}. {path}[/bold cyan] [dim](score: {score:.2f})[/dim]")
+
+        if result.snippet:
+            console.print(f"   {result.snippet[:200]}...")
+        elif content:
+            console.print(f"   {content}...")
 
 
 # =============================================================================

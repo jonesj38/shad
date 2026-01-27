@@ -33,11 +33,8 @@ class Settings(BaseSettings):
     # Redis Settings
     redis_url: str = "redis://localhost:6379/0"
 
-    # Obsidian MCP Settings
-    obsidian_api_key: str = ""
-    obsidian_base_url: str = "https://127.0.0.1:27124"
-    obsidian_verify_ssl: bool = False
-    obsidian_vault_path: str = ""  # Path to vault for direct file access
+    # Vault Settings
+    obsidian_vault_path: str = ""  # Default vault path (for env var fallback)
 
     # LLM Provider Settings
     anthropic_api_key: str = ""

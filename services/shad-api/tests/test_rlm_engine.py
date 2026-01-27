@@ -148,44 +148,41 @@ class TestRLMEngine:
         assert len(execution_order) >= 1
 
 
-class TestRLMEngineWithObsidian:
-    """Tests for RLM Engine with Obsidian integration."""
+class TestRLMEngineWithRetriever:
+    """Tests for RLM Engine with retriever integration."""
 
     @pytest.fixture
-    def mock_mcp_client(self, temp_vault: Path) -> MagicMock:
-        """Create mock MCP client."""
-        client = MagicMock()
-        client.vault_path = temp_vault
-        client.is_connected = True
-        client.connect = AsyncMock(return_value=True)
-        client.read_note = AsyncMock(return_value=MagicMock(
-            content="# Test\nContent here",
-            metadata=MagicMock(note_type="note"),
-        ))
-        client.search = AsyncMock(return_value=[
-            MagicMock(path="note1.md", content="Result 1", score=0.9),
+    def mock_retriever(self, temp_vault: Path) -> MagicMock:
+        """Create mock retriever."""
+        from shad.retrieval import RetrievalResult
+
+        retriever = MagicMock()
+        retriever.available = True
+        retriever.search = AsyncMock(return_value=[
+            RetrievalResult(path="note1.md", content="Result 1", score=0.9, collection="test"),
         ])
-        return client
+        retriever.get = AsyncMock(return_value="# Test\nContent here")
+        retriever.status = AsyncMock(return_value={"available": True})
+        return retriever
 
     @pytest.fixture
-    def engine_with_obsidian(
-        self, mock_mcp_client: MagicMock
+    def engine_with_retriever(
+        self, mock_retriever: MagicMock, temp_vault: Path
     ) -> RLMEngine:
-        """Create engine with Obsidian support."""
+        """Create engine with retriever support."""
         mock_llm = MagicMock()
         mock_llm.answer_task = AsyncMock(return_value=("Answer", 100))
         mock_llm.decompose_task = AsyncMock(return_value=["Sub1"])
         mock_llm.synthesize_results = AsyncMock(return_value="Synthesis")
 
-        engine = RLMEngine(llm_provider=mock_llm)
-        engine.mcp_client = mock_mcp_client
+        engine = RLMEngine(llm_provider=mock_llm, retriever=mock_retriever, vault_path=temp_vault)
         return engine
 
     @pytest.mark.asyncio
-    async def test_context_retrieval_from_obsidian(
-        self, engine_with_obsidian: RLMEngine, temp_vault: Path
+    async def test_context_retrieval_from_vault(
+        self, engine_with_retriever: RLMEngine, temp_vault: Path
     ) -> None:
-        """Test retrieving context from Obsidian vault."""
+        """Test retrieving context from vault via retriever."""
         # Create test notes in vault
         note_path = temp_vault / "context_note.md"
         note_path.write_text("---\ntype: note\n---\n# Relevant Info\nThis is context.")
@@ -196,7 +193,7 @@ class TestRLMEngineWithObsidian:
             budget=Budget(max_depth=2),
         )
 
-        # The engine should use MCP client to retrieve context
+        # The engine should use retriever to retrieve context
         # This test verifies the integration point exists
 
 

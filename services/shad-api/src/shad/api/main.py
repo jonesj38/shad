@@ -16,9 +16,9 @@ from shad.engine import LLMProvider, RLMEngine
 from shad.history import HistoryManager
 from shad.integrations import N8NClient
 from shad.learnings import LearningsStore
-from shad.mcp import ObsidianMCPClient
 from shad.models import Budget, RunConfig
 from shad.models.run import Run, RunStatus
+from shad.retrieval import RetrievalLayer, get_retriever
 from shad.skills import SkillRouter
 from shad.utils.config import get_settings
 from shad.verification import HITLQueue
@@ -35,14 +35,14 @@ voice_renderer: VoiceRenderer | None = None
 n8n_client: N8NClient | None = None
 hitl_queue: HITLQueue | None = None
 learnings_store: LearningsStore | None = None
-obsidian_client: ObsidianMCPClient | None = None
+retriever: RetrievalLayer | None = None
 
 
 @asynccontextmanager
 async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
     """Application lifespan manager."""
     global engine, history, cache, skill_router, voice_renderer
-    global n8n_client, hitl_queue, learnings_store, obsidian_client
+    global n8n_client, hitl_queue, learnings_store, retriever
 
     settings = get_settings()
 
@@ -53,20 +53,21 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
     cache = RedisCache()
     await cache.connect()
 
-    # Initialize Obsidian MCP client
-    obsidian_client = ObsidianMCPClient(
-        base_url=settings.obsidian_base_url,
-        api_key=settings.obsidian_api_key,
-        vault_path=settings.obsidian_vault_path,
-        verify_ssl=settings.obsidian_verify_ssl,
+    # Initialize retriever
+    from pathlib import Path
+    vault_path = Path(settings.obsidian_vault_path) if settings.obsidian_vault_path else None
+    retriever = get_retriever(
+        paths=[vault_path] if vault_path else None,
+        collection_names={vault_path.name: vault_path} if vault_path else None,
     )
-    await obsidian_client.connect()
+    logger.info(f"Initialized retriever: {type(retriever).__name__}")
 
-    # Initialize engine with cache and Obsidian client
+    # Initialize engine with cache and retriever
     engine = RLMEngine(
         llm_provider=llm_provider,
         cache=cache,
-        mcp_client=obsidian_client,
+        retriever=retriever,
+        vault_path=vault_path,
     )
     history = HistoryManager()
 
@@ -371,26 +372,28 @@ async def list_voices() -> dict[str, Any]:
     return {"voices": voice_renderer.list_voices()}
 
 
-# Vault router - Obsidian vault operations
+# Vault router - vault operations
 @vault_router.get("/status")
 async def vault_status() -> dict[str, Any]:
-    """Get Obsidian vault connection status."""
-    if obsidian_client is None:
-        return {"connected": False}
+    """Get retriever status."""
+    if retriever is None:
+        return {"available": False}
 
-    return {
-        "connected": obsidian_client.is_connected,
-        "vault_path": str(obsidian_client.vault_path) if obsidian_client.vault_path else None,
-    }
+    status = await retriever.status()
+    return status
 
 
 @vault_router.get("/search")
-async def search_vault(query: str, limit: int = 10) -> dict[str, Any]:
-    """Search the Obsidian vault."""
-    if obsidian_client is None or not obsidian_client.is_connected:
-        raise HTTPException(status_code=503, detail="Obsidian not connected")
+async def search_vault(
+    query: str,
+    limit: int = 10,
+    mode: str = "hybrid",
+) -> dict[str, Any]:
+    """Search the vault."""
+    if retriever is None or not retriever.available:
+        raise HTTPException(status_code=503, detail="Retriever not available")
 
-    results = await obsidian_client.search(query, limit=limit)
+    results = await retriever.search(query, mode=mode, limit=limit)
     return {
         "results": [r.to_dict() for r in results],
         "query": query,
@@ -399,32 +402,38 @@ async def search_vault(query: str, limit: int = 10) -> dict[str, Any]:
 
 
 @vault_router.get("/note/{path:path}")
-async def read_note(path: str) -> dict[str, Any]:
+async def read_note(path: str, collection: str | None = None) -> dict[str, Any]:
     """Read a note from the vault."""
-    if obsidian_client is None or not obsidian_client.is_connected:
-        raise HTTPException(status_code=503, detail="Obsidian not connected")
+    if retriever is None or not retriever.available:
+        raise HTTPException(status_code=503, detail="Retriever not available")
 
-    note = await obsidian_client.read_note(path)
-    if note is None:
+    content = await retriever.get(path, collection=collection)
+    if content is None:
         raise HTTPException(status_code=404, detail=f"Note {path} not found")
 
     return {
-        "path": note.path,
-        "content": note.content,
-        "metadata": note.metadata.to_frontmatter() if note.metadata else {},
+        "path": path,
+        "content": content,
+        "collection": collection,
     }
 
 
 @vault_router.get("/notes")
 async def list_vault_notes(directory: str = "", recursive: bool = False) -> dict[str, Any]:
-    """List notes in the vault."""
-    if obsidian_client is None or not obsidian_client.is_connected:
-        raise HTTPException(status_code=503, detail="Obsidian not connected")
+    """List notes in the vault.
 
-    files = await obsidian_client.list_notes(directory, recursive=recursive)
+    Note: This endpoint has limited functionality with the new retriever architecture.
+    Use search for finding notes instead.
+    """
+    if retriever is None or not retriever.available:
+        raise HTTPException(status_code=503, detail="Retriever not available")
+
+    # For now, return a basic status since the retriever doesn't have list_notes
+    status = await retriever.status()
     return {
-        "files": [{"path": f.relative_path, "exists": f.exists} for f in files],
-        "count": len(files),
+        "message": "Use search to find notes",
+        "retriever": type(retriever).__name__,
+        "status": status,
     }
 
 
