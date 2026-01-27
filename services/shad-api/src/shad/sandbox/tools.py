@@ -1,19 +1,25 @@
-"""Obsidian Tools for sandboxed code execution.
+"""Vault Tools for sandboxed code execution.
 
-Per OBSIDIAN_PIVOT.md Section 3.1:
 These tools are importable by RLM-generated scripts for
-interacting with the Obsidian vault.
+interacting with the vault(s).
+
+Supports:
+- Direct filesystem operations (read, write, list)
+- Search via qmd (hybrid BM25 + vectors) if available
+- Fallback to filesystem search
 """
 
 from __future__ import annotations
 
 import hashlib
+import json
 import logging
 import re
+import shutil
+import subprocess
 from pathlib import Path
 from typing import Any
 
-import httpx
 import yaml
 
 logger = logging.getLogger(__name__)
@@ -22,34 +28,29 @@ logger = logging.getLogger(__name__)
 class ObsidianTools:
     """Synchronous tools for vault operations in sandboxed scripts.
 
-    These mirror the MCP tools but are synchronous for use in exec'd code:
-    - read_note -> obsidian_read_note
-    - write_note -> obsidian_create_note
-    - search -> obsidian_global_search
-    - list_notes -> obsidian_list_notes
-    - update_frontmatter -> obsidian_manage_frontmatter
+    Provides:
+    - read_note: Read a note's content
+    - write_note: Create/update a note
+    - search: Search for notes (uses qmd if available)
+    - list_notes: List notes in a directory
+    - get_frontmatter: Extract YAML frontmatter
+    - update_frontmatter: Update frontmatter properties
     """
 
     def __init__(
         self,
         vault_path: Path | str,
-        api_url: str | None = None,
-        api_key: str | None = None,
-        verify_ssl: bool = False,
+        collection_name: str | None = None,
     ):
-        """Initialize with vault path and optional API configuration.
+        """Initialize with vault path.
 
         Args:
-            vault_path: Path to the Obsidian vault
-            api_url: Optional Obsidian Local REST API URL for indexed search
-            api_key: Optional API key for authentication
-            verify_ssl: Whether to verify SSL certificates (default False for local)
+            vault_path: Path to the vault
+            collection_name: Optional qmd collection name for this vault
         """
         self.vault_path = Path(vault_path)
-        self.api_url = api_url
-        self.api_key = api_key
-        self.verify_ssl = verify_ssl
-        self._client: httpx.Client | None = None
+        self.collection_name = collection_name or self.vault_path.name
+        self._qmd_available: bool | None = None
 
     def read_note(self, path: str) -> str | None:
         """Read a note's content.
@@ -111,78 +112,92 @@ class ObsidianTools:
             logger.error(f"Error writing {path}: {e}")
             return False
 
-    def _get_client(self) -> httpx.Client | None:
-        """Get or create HTTP client for API calls.
+    @property
+    def qmd_available(self) -> bool:
+        """Check if qmd is available on the system."""
+        if self._qmd_available is None:
+            self._qmd_available = shutil.which("qmd") is not None
+        return self._qmd_available
 
-        Returns:
-            httpx.Client if API is configured, None otherwise
-        """
-        if not self.api_url:
-            return None
-
-        if self._client is None:
-            headers = {}
-            if self.api_key:
-                headers["Authorization"] = f"Bearer {self.api_key}"
-
-            self._client = httpx.Client(
-                base_url=self.api_url,
-                headers=headers,
-                verify=self.verify_ssl,
-                timeout=30.0,
-            )
-
-        return self._client
-
-    def _search_via_api(
+    def _search_via_qmd(
         self,
         query: str,
         limit: int = 10,
+        mode: str = "hybrid",
     ) -> list[dict[str, Any]] | None:
-        """Search via Obsidian Local REST API.
+        """Search via qmd CLI.
 
-        Uses Obsidian's indexed search for faster queries on large vaults.
+        Uses qmd's hybrid search (BM25 + vectors + reranking).
 
         Args:
             query: Search query string
             limit: Maximum results
+            mode: Search mode - "bm25", "vector", or "hybrid"
 
         Returns:
-            List of search results, or None if API unavailable
+            List of search results, or None if qmd unavailable
         """
-        client = self._get_client()
-        if client is None:
+        if not self.qmd_available:
             return None
+
+        # Map mode to qmd command
+        cmd_map = {
+            "bm25": "search",
+            "vector": "vsearch",
+            "hybrid": "query",
+        }
+        cmd = cmd_map.get(mode, "query")
+
+        args = [
+            "qmd", cmd, query,
+            "-n", str(limit),
+            "--json",
+            "-c", self.collection_name,
+        ]
 
         try:
-            response = client.post(
-                "/search/simple",
-                params={"query": query},
+            result = subprocess.run(
+                args,
+                capture_output=True,
+                text=True,
+                timeout=30,
             )
 
-            if response.status_code == 200:
-                data = response.json()
-                results = []
-                for item in data[:limit]:
-                    path = item.get("filename", "")
-                    # Read full content for consistency with local search
-                    content = self.read_note(path) or item.get("content", "")
-                    results.append({
-                        "path": path,
-                        "content": content,
-                        "score": item.get("score", 0.0),
-                        "matched_line": item.get("matches", [None])[0] if item.get("matches") else None,
-                    })
-                return results
-            else:
-                logger.warning(f"Obsidian API returned status {response.status_code}")
+            if result.returncode != 0:
+                logger.warning(f"qmd search failed: {result.stderr}")
                 return None
 
-        except httpx.ConnectError:
-            logger.debug("Obsidian API not available, falling back to local search")
+            if not result.stdout:
+                return []
+
+            data = json.loads(result.stdout)
+            results = []
+
+            # Handle both list and dict formats
+            items = data if isinstance(data, list) else data.get("results", [])
+
+            for item in items:
+                path = item.get("path", item.get("filepath", ""))
+                results.append({
+                    "path": path,
+                    "content": item.get("content", ""),
+                    "score": float(item.get("score", 0.0)),
+                    "snippet": item.get("snippet", item.get("context", "")),
+                    "matched_line": item.get("matched_line"),
+                    "collection": item.get("collection", self.collection_name),
+                    "docid": item.get("docid", ""),
+                })
+
+            return results
+
+        except subprocess.TimeoutExpired:
+            logger.warning("qmd search timed out")
+            return None
+        except json.JSONDecodeError as e:
+            logger.warning(f"Failed to parse qmd output: {e}")
             return None
         except Exception as e:
-            logger.warning(f"Obsidian API search error: {e}")
+            logger.warning(f"qmd search error: {e}")
             return None
 
     def _search_local(
@@ -260,29 +275,38 @@ class ObsidianTools:
         query: str,
         limit: int = 10,
         path_filter: str | None = None,
+        mode: str = "hybrid",
     ) -> list[dict[str, Any]]:
         """Search for notes matching query.
 
-        Attempts to use Obsidian's indexed search API first for performance,
-        falling back to local filesystem search if unavailable.
+        Uses qmd for hybrid search (BM25 + vectors) if available,
+        falling back to local filesystem search.
 
         Args:
             query: Search query string
             limit: Maximum results
-            path_filter: Optional path prefix filter
+            path_filter: Optional path prefix filter (only for filesystem search)
+            mode: Search mode - "bm25" (fast), "vector" (semantic), "hybrid" (best)
 
         Returns:
-            List of search results
+            List of search results with keys:
+            - path: Relative path to the note
+            - content: Full note content
+            - score: Relevance score (0.0 to 1.0)
+            - snippet: Highlighted snippet (qmd only)
+            - matched_line: First line containing match
         """
-        # Try API search first (much faster for large vaults)
-        if self.api_url and not path_filter:
-            # Note: API doesn't support path_filter, so skip for filtered searches
-            api_results = self._search_via_api(query, limit)
-            if api_results is not None:
-                logger.debug(f"Search via Obsidian API returned {len(api_results)} results")
-                return api_results
+        # Try qmd search first (hybrid search with vectors)
+        if self.qmd_available and not path_filter:
+            # Note: qmd doesn't support path_filter, so skip for filtered searches
+            qmd_results = self._search_via_qmd(query, limit, mode)
+            if qmd_results is not None:
+                logger.debug(f"Search via qmd returned {len(qmd_results)} results")
+                return qmd_results
 
-        # Fall back to local search
+        # Fall back to local filesystem search
+        if mode in ("vector", "hybrid"):
+            logger.debug(f"Falling back to bm25 search (qmd unavailable for {mode})")
         return self._search_local(query, limit, path_filter)
 
     def list_notes(
@@ -423,17 +447,13 @@ obsidian: ObsidianTools | None = None
 
 def init_tools(
     vault_path: Path,
-    api_url: str | None = None,
-    api_key: str | None = None,
-    verify_ssl: bool = False,
+    collection_name: str | None = None,
 ) -> ObsidianTools:
     """Initialize the global obsidian tools instance.
 
     Args:
         vault_path: Path to the vault
-        api_url: Optional Obsidian Local REST API URL for indexed search
-        api_key: Optional API key for authentication
-        verify_ssl: Whether to verify SSL certificates
+        collection_name: Optional qmd collection name for this vault
 
     Returns:
         ObsidianTools instance
@@ -441,8 +461,6 @@ def init_tools(
     global obsidian
     obsidian = ObsidianTools(
         vault_path=vault_path,
-        api_url=api_url,
-        api_key=api_key,
-        verify_ssl=verify_ssl,
+        collection_name=collection_name,
     )
     return obsidian

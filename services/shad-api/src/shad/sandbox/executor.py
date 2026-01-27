@@ -26,13 +26,14 @@ logger = logging.getLogger(__name__)
 class SandboxConfig:
     """Configuration for the code execution sandbox.
 
-    Per OBSIDIAN_PIVOT.md Section 12.2:
-    - Vault bind-mounted at /mnt/data (in Docker mode)
-    - No system file access outside vault
-    - Network restricted to host.docker.internal
+    Sandboxed scripts have access to:
+    - Vault filesystem via ObsidianTools
+    - Search via qmd (if available) or filesystem
+    - Limited Python builtins
     """
 
     vault_path: Path
+    collection_name: str | None = None  # qmd collection name for this vault
     timeout_seconds: int = 60
     max_memory_mb: int = 512
     network_enabled: bool = False
@@ -41,10 +42,6 @@ class SandboxConfig:
         "functools", "math", "statistics", "hashlib", "pathlib",
         "typing", "dataclasses", "enum", "yaml",
     ])
-    # Obsidian API settings for indexed search
-    obsidian_api_url: str | None = None
-    obsidian_api_key: str | None = None
-    obsidian_verify_ssl: bool = False
 
 
 @dataclass
@@ -95,12 +92,10 @@ class CodeExecutor:
         # Import sandbox tools module
         from shad.sandbox import tools
 
-        # Create obsidian tools instance with API config for indexed search
+        # Create obsidian tools instance
         obsidian_tools = tools.ObsidianTools(
             vault_path=self.config.vault_path,
-            api_url=self.config.obsidian_api_url,
-            api_key=self.config.obsidian_api_key,
-            verify_ssl=self.config.obsidian_verify_ssl,
+            collection_name=self.config.collection_name,
         )
 
         # Set up globals with safe builtins and tools

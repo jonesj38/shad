@@ -42,6 +42,7 @@ from shad.refinement.manager import (
     RunState,
     RunStateManager,
 )
+from shad.retrieval import RetrievalLayer, get_retriever
 from shad.sandbox.executor import CodeExecutor, SandboxConfig
 from shad.utils.config import get_settings
 from shad.verification.layer import (
@@ -53,7 +54,6 @@ from shad.verification.layer import (
 
 if TYPE_CHECKING:
     from shad.cache.redis_cache import RedisCache
-    from shad.mcp.client import ObsidianMCPClient
 
 logger = logging.getLogger(__name__)
 
@@ -86,31 +86,43 @@ class RLMEngine:
         self,
         llm_provider: LLMProvider | None = None,
         cache: RedisCache | None = None,
-        mcp_client: ObsidianMCPClient | None = None,
+        retriever: RetrievalLayer | None = None,
         code_executor: CodeExecutor | None = None,
         vault_path: Path | str | None = None,
+        collections: list[str] | None = None,
         use_code_mode: bool = True,
     ):
         self.llm = llm_provider or LLMProvider()
         self.cache: RedisCache | None = cache
-        self.mcp_client: ObsidianMCPClient | None = mcp_client
         self.settings = get_settings()
 
-        # Resolve vault path from mcp_client if not provided
-        if vault_path is None and mcp_client is not None:
-            vault_path = mcp_client.vault_path
+        # Store vault path
         self.vault_path = Path(vault_path) if vault_path else None
 
+        # Store collection names for multi-vault search
+        self.collections = collections or []
+
+        # Initialize retrieval layer
+        if retriever:
+            self.retriever = retriever
+        else:
+            # Auto-detect best available retriever
+            collection_paths = {}
+            if self.vault_path:
+                collection_paths[self.vault_path.name] = self.vault_path
+            self.retriever = get_retriever(
+                paths=[self.vault_path] if self.vault_path else None,
+                collection_names=collection_paths if collection_paths else None,
+            )
+        logger.info(f"[RETRIEVAL] Using {type(self.retriever).__name__}")
+
         # Initialize CodeExecutor for Code Mode
-        self._use_code_mode = use_code_mode and mcp_client is not None
+        self._use_code_mode = use_code_mode and self.vault_path is not None
         if code_executor:
             self.code_executor = code_executor
         elif self._use_code_mode and self.vault_path:
             sandbox_config = SandboxConfig(
                 vault_path=self.vault_path,
-                obsidian_api_url=self.settings.obsidian_base_url,
-                obsidian_api_key=self.settings.obsidian_api_key,
-                obsidian_verify_ssl=self.settings.obsidian_verify_ssl,
             )
             self.code_executor = CodeExecutor(sandbox_config)
             logger.info(f"[CODE_MODE] Initialized CodeExecutor with vault: {self.vault_path}")
@@ -159,20 +171,20 @@ class RLMEngine:
             logger.info(f"[STRATEGY] Selected: {strategy_result.strategy_type.value} "
                        f"(confidence: {strategy_result.confidence:.2f}, override: {strategy_result.is_override})")
 
-            # Retrieve context from Obsidian vault if specified
+            # Retrieve context from vault(s) if specified
             context = ""
-            if config.vault_path:
-                logger.debug(f"[CONTEXT] Vault path: {config.vault_path}")
-                if self.mcp_client:
+            if config.vault_path or self.collections:
+                logger.debug(f"[CONTEXT] Vault path: {config.vault_path}, collections: {self.collections}")
+                if self.retriever.available:
                     context = await self._retrieve_vault_context(goal_spec.normalized_goal)
                     if context:
                         logger.debug(f"[CONTEXT] Context length: {len(context)} chars")
                     else:
                         logger.debug("[CONTEXT] No context retrieved from vault")
                 else:
-                    logger.debug("[CONTEXT] MCP client NOT available - cannot retrieve context")
+                    logger.debug("[CONTEXT] Retriever NOT available - cannot retrieve context")
             else:
-                logger.debug("[CONTEXT] No vault_path specified")
+                logger.debug("[CONTEXT] No vault_path or collections specified")
 
             # Create root node
             root_node = DAGNode(
@@ -375,7 +387,7 @@ class RLMEngine:
                 node.error = None
 
                 context = ""  # Retrieve fresh context
-                if self.mcp_client:
+                if self.retriever.available:
                     context = await self._retrieve_vault_context(node.task, limit=5)
 
                 await self._execute_node(run, node, context)
@@ -563,7 +575,7 @@ class RLMEngine:
                         logger.info(f"[CONTEXT] Injected {len(soft_dep_context)} chars from soft deps: {soft_deps}")
 
                 # Retrieve subtask-specific context from vault
-                if self.mcp_client:
+                if self.retriever.available:
                     fresh_context = await self._retrieve_vault_context(task, limit=5)
                     if fresh_context:
                         logger.info(f"[CONTEXT] Retrieved {len(fresh_context)} chars for subtask: {task[:50]}...")
@@ -698,24 +710,30 @@ class RLMEngine:
     async def _get_context_hash(self, query: str) -> str | None:
         """Get hash of context sources for cache validation.
 
-        Per OBSIDIAN_PIVOT.md Section 6.2: Before cache lookup,
-        query MCP server for current file hash.
+        Searches for relevant documents and hashes their content to detect changes.
         """
-        if not self.mcp_client:
+        if not self.retriever.available:
             return None
 
         try:
-            # Get hashes of relevant files
-            results = await self.mcp_client.search(query, limit=5)
+            # Get relevant results
+            results = await self.retriever.search(
+                query,
+                mode="bm25",  # Fast keyword search for hash computation
+                collections=self.collections if self.collections else None,
+                limit=5,
+            )
             if not results:
                 return None
 
-            # Combine hashes
+            # Combine content hashes
             hashes = []
             for result in results:
-                file_hash = await self.mcp_client.get_file_hash(result.path)
-                if file_hash:
-                    hashes.append(file_hash)
+                # Hash the content (or docid if available)
+                content_hash = hashlib.sha256(
+                    result.content.encode() if result.content else result.docid.encode()
+                ).hexdigest()[:8]
+                hashes.append(content_hash)
 
             if hashes:
                 combined = ":".join(sorted(hashes))
@@ -726,14 +744,13 @@ class RLMEngine:
         return None
 
     async def _retrieve_vault_context(self, query: str, limit: int = 10) -> str:
-        """Retrieve relevant context from the Obsidian vault.
+        """Retrieve relevant context from the vault(s).
 
-        Per OBSIDIAN_PIVOT.md Section 3:
-        - If Code Mode enabled: LLM generates Python script to query vault
-        - Fallback: Direct MCP search with keyword extraction
+        Uses the configured retrieval backend (qmd or filesystem).
+        If Code Mode is enabled, tries LLM-generated scripts first.
         """
-        if not self.mcp_client:
-            logger.warning("[RETRIEVAL] No MCP client configured")
+        if not self.retriever.available:
+            logger.warning("[RETRIEVAL] No retriever available")
             return ""
 
         # Try Code Mode first if enabled
@@ -743,7 +760,7 @@ class RLMEngine:
                 return context
             logger.warning("[RETRIEVAL] Code Mode failed, falling back to direct search")
 
-        # Fallback: Direct MCP search
+        # Fallback: Direct retriever search
         return await self._retrieve_direct(query, limit)
 
     async def _retrieve_via_code_mode(self, query: str) -> str:
@@ -798,18 +815,25 @@ class RLMEngine:
             return ""
 
     async def _retrieve_direct(self, query: str, limit: int = 10) -> str:
-        """Direct MCP search fallback (non-Code Mode).
+        """Direct retriever search fallback (non-Code Mode).
 
-        Uses the MCP client to search the vault and format results.
+        Uses the configured retriever (qmd or filesystem) to search and format results.
         Extracts content around matched keywords rather than from file start.
         """
-        if not self.mcp_client:
+        if not self.retriever.available:
             return ""
 
         logger.info(f"[RETRIEVAL] Direct search for: {query[:100]}...")
 
         try:
-            results = await self.mcp_client.search(query, limit=limit)
+            # Search using the retrieval layer
+            results = await self.retriever.search(
+                query,
+                mode="hybrid",  # Use hybrid search for best quality
+                collections=self.collections if self.collections else None,
+                limit=limit,
+            )
+
             if not results:
                 logger.info("[RETRIEVAL] No results found")
                 return ""
@@ -819,13 +843,18 @@ class RLMEngine:
             # Format results as context
             parts = []
             for result in results:
-                # Create wikilink for citation per Section 4.3
+                # Create wikilink for citation
                 path = result.path
                 if path.endswith(".md"):
                     path = path[:-3]
-                link = f"[[{path}]]"
 
-                title = result.path
+                # Include collection name if multi-vault
+                if result.collection:
+                    link = f"[[{result.collection}:{path}]]"
+                    title = f"{result.collection}/{result.path}"
+                else:
+                    link = f"[[{path}]]"
+                    title = result.path
 
                 # Extract content around matched keywords instead of file start
                 content = self._extract_relevant_sections(
@@ -1278,7 +1307,7 @@ __result__ = {{
         """
         hashes: dict[str, str] = {}
 
-        if not self.mcp_client:
+        if not self.retriever.available:
             return hashes
 
         # Get all used notes from tracked nodes
@@ -1287,8 +1316,10 @@ __result__ = {{
             if info:
                 for path in info.used_notes:
                     if path not in hashes:
-                        file_hash = await self.mcp_client.get_file_hash(path)
-                        if file_hash:
+                        # Get content and hash it
+                        content = await self.retriever.get(path)
+                        if content:
+                            file_hash = hashlib.sha256(content.encode()).hexdigest()[:16]
                             hashes[path] = file_hash
 
         return hashes
