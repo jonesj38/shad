@@ -18,6 +18,7 @@ from __future__ import annotations
 import asyncio
 import hashlib
 import logging
+import re
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import TYPE_CHECKING
@@ -823,12 +824,19 @@ class RLMEngine:
         if not self.retriever.available:
             return ""
 
-        logger.info(f"[RETRIEVAL] Direct search for: {query[:100]}...")
+        # Extract keywords from full query (removes stop words, markdown, etc.)
+        search_query = self._extract_search_keywords(query)
+        if not search_query:
+            logger.warning("[RETRIEVAL] No keywords extracted from query")
+            return ""
+
+        retriever_name = type(self.retriever).__name__
+        logger.info(f"[RETRIEVAL] Direct search via {retriever_name} for: {search_query}")
 
         try:
-            # Search using the retrieval layer
+            # Search using the retrieval layer with extracted keywords
             results = await self.retriever.search(
-                query,
+                search_query,
                 mode="hybrid",  # Use hybrid search for best quality
                 collections=self.collections if self.collections else None,
                 limit=limit,
@@ -869,6 +877,55 @@ class RLMEngine:
             logger.error(f"[RETRIEVAL] Failed: {e}")
             return ""
 
+    # Common stop words for keyword extraction
+    STOP_WORDS = frozenset({
+        'the', 'a', 'an', 'is', 'are', 'was', 'were', 'be', 'been',
+        'do', 'does', 'did', 'have', 'has', 'had', 'to', 'of', 'in',
+        'for', 'on', 'with', 'at', 'by', 'from', 'we', 'how', 'what',
+        'which', 'who', 'when', 'where', 'why', 'and', 'or', 'not',
+        'it', 'its', 'this', 'that', 'these', 'those', 'can', 'could',
+        'would', 'should', 'will', 'may', 'might', 'must', 'shall',
+        'into', 'onto', 'upon', 'about', 'after', 'before', 'between',
+        'through', 'during', 'under', 'over', 'above', 'below',
+        'all', 'any', 'each', 'every', 'both', 'few', 'more', 'most',
+        'other', 'some', 'such', 'than', 'too', 'very', 'just', 'also',
+    })
+
+    def _extract_search_keywords(self, query: str, max_keywords: int = 15) -> str:
+        """Extract search keywords from a goal/task description.
+
+        Removes stop words, short words, and markdown formatting to create
+        a clean search query for qmd.
+
+        Args:
+            query: Full goal or task description (may be multi-line)
+            max_keywords: Maximum number of keywords to return
+
+        Returns:
+            Space-separated keywords suitable for search
+        """
+        # Remove markdown formatting
+        clean = re.sub(r'#+ ', '', query)  # Headers
+        clean = re.sub(r'\*\*|__|\*|_', '', clean)  # Bold/italic
+        clean = re.sub(r'\[([^\]]+)\]\([^)]+\)', r'\1', clean)  # Links
+        clean = re.sub(r'```[\s\S]*?```', '', clean)  # Code blocks
+        clean = re.sub(r'`[^`]+`', '', clean)  # Inline code
+
+        # Extract words
+        words = re.split(r'\W+', clean.lower())
+
+        # Filter: remove stop words, short words, and duplicates while preserving order
+        seen: set[str] = set()
+        keywords: list[str] = []
+        for w in words:
+            if (w and len(w) > 2 and w not in self.STOP_WORDS and w not in seen):
+                seen.add(w)
+                keywords.append(w)
+                if len(keywords) >= max_keywords:
+                    break
+
+        return " ".join(keywords)
+
     def _extract_relevant_sections(
         self, content: str, query: str, max_chars: int = 4000, context_lines: int = 10
     ) -> str:
@@ -876,15 +933,8 @@ class RLMEngine:
 
         Instead of taking the first N chars, finds sections around keyword matches.
         """
-        import re
-
-        # Extract keywords from query (same logic as search)
-        stop_words = {'the', 'a', 'an', 'is', 'are', 'was', 'were', 'be', 'been',
-                      'do', 'does', 'did', 'have', 'has', 'had', 'to', 'of', 'in',
-                      'for', 'on', 'with', 'at', 'by', 'from', 'we', 'how', 'what',
-                      'which', 'who', 'when', 'where', 'why', 'and', 'or', 'not'}
-        keywords = [w.lower() for w in re.split(r'\W+', query)
-                    if w and len(w) > 2 and w.lower() not in stop_words]
+        # Extract keywords using shared method
+        keywords = self._extract_search_keywords(query).split()
 
         if not keywords:
             return content[:max_chars]

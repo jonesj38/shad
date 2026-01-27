@@ -37,6 +37,16 @@ class ObsidianTools:
     - update_frontmatter: Update frontmatter properties
     """
 
+    # Common stop words for keyword extraction
+    STOP_WORDS = frozenset({
+        'the', 'a', 'an', 'is', 'are', 'was', 'were', 'be', 'been',
+        'do', 'does', 'did', 'have', 'has', 'had', 'to', 'of', 'in',
+        'for', 'on', 'with', 'at', 'by', 'from', 'we', 'how', 'what',
+        'which', 'who', 'when', 'where', 'why', 'and', 'or', 'not',
+        'it', 'its', 'this', 'that', 'these', 'those', 'can', 'could',
+        'would', 'should', 'will', 'may', 'might', 'must', 'shall',
+    })
+
     def __init__(
         self,
         vault_path: Path | str,
@@ -51,6 +61,22 @@ class ObsidianTools:
         self.vault_path = Path(vault_path)
         self.collection_name = collection_name or self.vault_path.name
         self._qmd_available: bool | None = None
+
+    def _extract_keywords(self, query: str, max_keywords: int = 15) -> str:
+        """Extract search keywords from a query string.
+
+        Removes stop words and short words for cleaner search.
+        """
+        words = re.split(r'\W+', query.lower())
+        seen: set[str] = set()
+        keywords: list[str] = []
+        for w in words:
+            if w and len(w) > 2 and w not in self.STOP_WORDS and w not in seen:
+                seen.add(w)
+                keywords.append(w)
+                if len(keywords) >= max_keywords:
+                    break
+        return " ".join(keywords)
 
     def read_note(self, path: str) -> str | None:
         """Read a note's content.
@@ -293,7 +319,7 @@ class ObsidianTools:
         falling back to local filesystem search.
 
         Args:
-            query: Search query string
+            query: Search query string (long queries are automatically reduced to keywords)
             limit: Maximum results
             path_filter: Optional path prefix filter (only for filesystem search)
             mode: Search mode - "bm25" (fast), "vector" (semantic), "hybrid" (best)
@@ -306,10 +332,21 @@ class ObsidianTools:
             - snippet: Highlighted snippet (qmd only)
             - matched_line: First line containing match
         """
+        # Extract keywords if query is long (> 100 chars or multi-line)
+        if len(query) > 100 or '\n' in query:
+            search_query = self._extract_keywords(query)
+            logger.debug(f"Extracted keywords: {search_query}")
+        else:
+            search_query = query
+
+        if not search_query:
+            logger.warning("No search query after keyword extraction")
+            return []
+
         # Try qmd search first (hybrid search with vectors)
         if self.qmd_available and not path_filter:
             # Note: qmd doesn't support path_filter, so skip for filtered searches
-            qmd_results = self._search_via_qmd(query, limit, mode)
+            qmd_results = self._search_via_qmd(search_query, limit, mode)
             if qmd_results is not None:
                 logger.debug(f"Search via qmd returned {len(qmd_results)} results")
                 return qmd_results
@@ -317,7 +354,7 @@ class ObsidianTools:
         # Fall back to local filesystem search
         if mode in ("vector", "hybrid"):
             logger.debug(f"Falling back to bm25 search (qmd unavailable for {mode})")
-        return self._search_local(query, limit, path_filter)
+        return self._search_local(search_query, limit, path_filter)
 
     def list_notes(
         self,
