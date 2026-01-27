@@ -487,38 +487,38 @@ You have access to an 'obsidian' object with these methods:
 IMPORTANT: Store your final result in __result__ variable. This should be a string
 containing the most relevant context for the task, formatted clearly.
 
-CRITICAL SCOPING RULES - READ CAREFULLY:
-1. In list comprehensions, ONLY use the loop variable. Never reference variables from outer loops.
-   WRONG: [f"{note_path}" for r in results]  # note_path is from a different loop!
-   RIGHT: [f"{r['path']}" for r in results]  # use the loop variable r
+CRITICAL RULES - READ CAREFULLY:
+1. ALWAYS initialize collection variables BEFORE any conditionals or loops:
+   all_results = []  # Initialize at top, not inside if/try blocks
 
-2. Never reuse a loop variable name in a nested context:
-   WRONG:
-     for note_path in notes:
-         process(note_path)
-     summary = [f"{note_path}" for x in items]  # note_path is stale/wrong scope!
-   RIGHT:
-     for note_path in notes:
-         process(note_path)
-     summary = [f"{x['path']}" for x in items]  # use the actual loop variable
+2. NEVER use variables that might not be defined. Check with: if 'var' in dir()
 
-3. When in doubt, use explicit for loops instead of comprehensions.
+3. Keep scripts SIMPLE. One search, extract content, done. Example:
+   results = obsidian.search("keyword", limit=10)
+   __result__ = "\\n".join(r.get("content", "")[:2000] for r in results) if results else ""
 
-Example script:
+4. In comprehensions, ONLY use the loop variable:
+   WRONG: [note_path for r in results]  # note_path undefined!
+   RIGHT: [r['path'] for r in results]   # use r from the loop
+
+5. Handle empty results gracefully:
+   results = obsidian.search("query") or []
+   __result__ = "No results" if not results else format_results(results)
+
+Example script (KEEP IT SIMPLE):
 ```python
-# Search for relevant notes
-results = obsidian.search("machine learning", limit=5)
+# Simple search and format - this is all you need!
+results = obsidian.search("relevant keywords", limit=10) or []
 
-# Extract and combine relevant content (use r['key'] in comprehensions)
-context_parts = [f"## {r['path']}\\n{r['content'][:2000]}" for r in results]
-
-# Or with a for loop:
-# context_parts = []
-# for r in results:
-#     context_parts.append(f"## {r['path']}\\n{r['content'][:2000]}")
-
-# Store final result
-__result__ = "\\n\\n---\\n\\n".join(context_parts)
+if results:
+    parts = []
+    for r in results:
+        path = r.get('path', 'unknown')
+        content = r.get('content', '')[:2000]
+        parts.append(f"## {path}\\n{content}")
+    __result__ = "\\n\\n---\\n\\n".join(parts)
+else:
+    __result__ = "No relevant context found."
 ```
 
 Generate ONLY the Python code, no explanations."""
@@ -563,5 +563,112 @@ Generate only the Python code."""
 
         logger.info(f"[CODE_MODE] Generated script ({len(script)} chars)")
         logger.debug(f"[CODE_MODE] Script:\n{script[:500]}...")
+
+        return script, tokens
+
+    def _extract_code_from_markdown(self, text: str) -> str:
+        """Extract Python code from markdown code blocks."""
+        if "```" not in text:
+            return text.strip()
+
+        # Split by code block markers
+        parts = text.split("```")
+        for part in parts:
+            part = part.strip()
+            # Remove language identifier from first line if present
+            lines = part.split("\n", 1)
+            first_line = lines[0].lower().strip()
+            if first_line in ("python", "py", "python3"):
+                # Return code after language identifier
+                return lines[1].strip() if len(lines) > 1 else ""
+            elif "__result__" in part or "DOCUMENTS" in part or "obsidian." in part:
+                # Looks like code, return as-is
+                return part
+        return text.strip()
+
+    async def generate_extraction_script(
+        self,
+        task: str,
+        documents: str,
+    ) -> tuple[str, int]:
+        """
+        Generate a Python script to extract/filter/synthesize from pre-fetched documents.
+
+        Unlike generate_retrieval_script, this does NOT do search - the documents
+        are already provided. The script focuses purely on extraction and synthesis.
+
+        Args:
+            task: The task requiring context extraction
+            documents: Pre-fetched document content from qmd search
+
+        Returns:
+            Tuple of (script, tokens_used)
+        """
+        logger.info(f"[CODE_MODE] Generating extraction script for: {task[:80]}...")
+
+        system = """You are an extraction expert. Generate Python scripts that extract relevant information from provided documents.
+
+The documents have already been retrieved - your job is to:
+1. Parse and filter the content
+2. Extract sections relevant to the task
+3. Synthesize a clear, focused summary
+
+You have access to:
+- DOCUMENTS variable: A string containing all pre-fetched documents, separated by "=== DOCUMENT N: path ===" headers
+- Standard Python: re, json, collections, etc.
+
+Store your final result in __result__ as a formatted string.
+
+RULES:
+1. Do NOT search or fetch - documents are already provided in DOCUMENTS variable
+2. Focus on EXTRACTION: find relevant sections, filter noise, synthesize
+3. Keep it simple - parse DOCUMENTS, extract what's relevant, format output
+4. Handle empty/missing content gracefully
+
+Example script:
+```python
+import re
+
+# DOCUMENTS is pre-defined with the fetched content
+sections = DOCUMENTS.split("=== DOCUMENT")
+
+relevant_parts = []
+for section in sections:
+    if not section.strip():
+        continue
+    # Extract path from header
+    lines = section.strip().split("\\n")
+    header = lines[0] if lines else ""
+    content = "\\n".join(lines[1:]) if len(lines) > 1 else ""
+
+    # Filter for relevant content (customize based on task)
+    if "relevant_keyword" in content.lower():
+        relevant_parts.append(f"From {header}:\\n{content[:2000]}")
+
+__result__ = "\\n\\n---\\n\\n".join(relevant_parts) if relevant_parts else "No relevant content found."
+```
+
+Generate ONLY Python code, no explanations."""
+
+        prompt = f"""Generate a Python extraction script for this task:
+
+Task: {task}
+
+The DOCUMENTS variable contains {len(documents)} characters of pre-fetched content.
+Extract and synthesize the most relevant information for the task.
+
+Generate only the Python code."""
+
+        response, tokens = await self.complete(
+            prompt=prompt,
+            tier=ModelTier.WORKER,
+            system=system,
+            temperature=0.3,
+        )
+
+        script = self._extract_code_from_markdown(response)
+
+        logger.info(f"[CODE_MODE] Generated extraction script ({len(script)} chars)")
+        logger.debug(f"[CODE_MODE] Extraction script:\n{script[:500]}...")
 
         return script, tokens

@@ -120,6 +120,9 @@ class QmdRetriever:
             # Handle potential non-JSON output
             output = stdout.decode().strip()
             if not output or not output.startswith(("[", "{")):
+                # "No results found." is valid, not an error
+                if not output or "no results" in output.lower():
+                    return []
                 logger.warning(f"qmd returned non-JSON output: {output[:100]}")
                 return []
 
@@ -315,9 +318,9 @@ class QmdRetriever:
 
         results = []
         for item in results_data:
-            # qmd uses different field names depending on output format
+            # qmd uses "file" field for the path
             result = RetrievalResult(
-                path=item.get("path", item.get("filepath", "")),
+                path=item.get("file", item.get("path", item.get("filepath", ""))),
                 content=item.get("content", ""),
                 score=float(item.get("score", 0.0)),
                 snippet=item.get("snippet", item.get("context", None)),
