@@ -477,8 +477,20 @@ REDIS_URL=redis://localhost:6379/0
 DEFAULT_MAX_DEPTH=3
 DEFAULT_MAX_NODES=50
 DEFAULT_MAX_WALL_TIME=300
-DEFAULT_MAX_TOKENS=100000
+DEFAULT_MAX_TOKENS=2000000
 ```
+
+### Data Directories
+
+All shad data is stored under `~/.shad/`:
+
+| Directory | Purpose |
+|-----------|---------|
+| `~/.shad/history/` | Run artifacts and history |
+| `~/.shad/skills/` | Skill definitions |
+| `~/.shad/CORE/` | Core system files |
+| `~/.shad/repo/` | Installed shad source |
+| `~/.shad/venv/` | Python virtual environment |
 
 ### Default Vault
 
