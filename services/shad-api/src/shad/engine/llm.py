@@ -474,6 +474,10 @@ Provide a direct, informative answer. If the retrieved context is relevant, use 
         system = """You are a code generation expert specializing in knowledge retrieval.
 Generate Python scripts that query an Obsidian vault to gather context for a task.
 
+AVAILABLE (already imported - do NOT use import statements):
+- obsidian: Object with search/read methods (see below)
+- re, json, collections, itertools, functools, math, hashlib, pathlib, datetime
+
 You have access to an 'obsidian' object with these methods:
 - obsidian.search(query: str, limit: int = 10, path_filter: str | None = None) -> list[dict]
   Returns: [{"path": "...", "content": "...", "score": float, "matched_line": "..."}]
@@ -521,6 +525,7 @@ else:
     __result__ = "No relevant context found."
 ```
 
+CRITICAL: Do NOT use import statements - all modules are pre-imported!
 Generate ONLY the Python code, no explanations."""
 
         prompt = f"""Generate a Python retrieval script for this task:
@@ -608,47 +613,54 @@ Generate only the Python code."""
 
         system = """You are an extraction expert. Generate Python scripts that extract relevant information from provided documents.
 
-The documents have already been retrieved - your job is to:
-1. Parse and filter the content
-2. Extract sections relevant to the task
-3. Synthesize a clear, focused summary
+AVAILABLE (pre-imported, NO import statements allowed):
+- DOCUMENTS: String with documents separated by "=== DOCUMENT N: path ===" headers
+- re, json, collections, datetime
 
-You have access to:
-- DOCUMENTS variable: A string containing all pre-fetched documents, separated by "=== DOCUMENT N: path ===" headers
-- Standard Python: re, json, collections, etc.
+Store result in __result__ as a formatted string.
 
-Store your final result in __result__ as a formatted string.
+ABSOLUTE RULES - VIOLATIONS CAUSE ERRORS:
+1. NO import statements - modules are pre-imported
+2. NO list comprehensions or generator expressions - USE EXPLICIT FOR LOOPS ONLY
+3. NO referencing variables from outer scopes in any expression
+4. Initialize ALL variables before use
 
-RULES:
-1. Do NOT search or fetch - documents are already provided in DOCUMENTS variable
-2. Focus on EXTRACTION: find relevant sections, filter noise, synthesize
-3. Keep it simple - parse DOCUMENTS, extract what's relevant, format output
-4. Handle empty/missing content gracefully
+BANNED (causes NameError):
+  [x for x in items]           # NO comprehensions!
+  (x for x in items)           # NO generators!
+  content_lower = c.lower()    # then using content_lower elsewhere - NO!
 
-Example script:
+REQUIRED PATTERN - follow this exactly:
 ```python
-import re
-
-# DOCUMENTS is pre-defined with the fetched content
+# Parse documents
 sections = DOCUMENTS.split("=== DOCUMENT")
-
 relevant_parts = []
+
 for section in sections:
     if not section.strip():
         continue
-    # Extract path from header
     lines = section.strip().split("\\n")
     header = lines[0] if lines else ""
-    content = "\\n".join(lines[1:]) if len(lines) > 1 else ""
+    content = "\\n".join(lines[1:])
 
-    # Filter for relevant content (customize based on task)
-    if "relevant_keyword" in content.lower():
-        relevant_parts.append(f"From {header}:\\n{content[:2000]}")
+    # Check relevance (do ALL logic inside the loop)
+    is_relevant = False
+    if "keyword1" in content.lower():
+        is_relevant = True
+    if "keyword2" in content.lower():
+        is_relevant = True
 
-__result__ = "\\n\\n---\\n\\n".join(relevant_parts) if relevant_parts else "No relevant content found."
+    if is_relevant:
+        relevant_parts.append(f"## {header}\\n{content[:2000]}")
+
+# Join results
+if relevant_parts:
+    __result__ = "\\n\\n---\\n\\n".join(relevant_parts)
+else:
+    __result__ = "No relevant content found."
 ```
 
-Generate ONLY Python code, no explanations."""
+Generate ONLY Python code following the pattern above. No comprehensions, no generators."""
 
         prompt = f"""Generate a Python extraction script for this task:
 
