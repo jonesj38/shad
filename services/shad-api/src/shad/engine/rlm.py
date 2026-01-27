@@ -21,7 +21,7 @@ import logging
 import re
 from datetime import UTC, datetime
 from pathlib import Path
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any
 
 from shad.engine.context_packets import NodeContextManager
 from shad.engine.decomposition import StrategyDecomposer
@@ -765,49 +765,66 @@ class RLMEngine:
         return await self._retrieve_direct(query, limit)
 
     async def _retrieve_via_code_mode(self, query: str) -> str:
-        """Retrieve context using LLM-generated Code Mode script.
+        """Retrieve context using two-phase approach: Search + Code Mode extraction.
 
-        Per OBSIDIAN_PIVOT.md Section 3.1:
-        1. LLM generates Python script for this specific query
-        2. Script executes in sandboxed environment with vault access
-        3. Script filters/aggregates data before returning
-        4. Only final distilled output enters context window
+        Phase 1 (Search): Use qmd/retriever to quickly find relevant documents
+        Phase 2 (Extract): LLM generates script to extract/filter/synthesize from found docs
+
+        This separation keeps search fast (qmd) while letting Code Mode focus on
+        intelligent extraction rather than reinventing search.
         """
         if not self.code_executor:
             return ""
 
-        logger.info(f"[CODE_MODE] Generating retrieval script for: {query[:80]}...")
+        # Phase 1: Fast search via qmd to find relevant documents
+        logger.info(f"[CODE_MODE] Phase 1: Searching for relevant documents...")
+        search_results = await self._search_for_code_mode(query, limit=15)
+
+        if not search_results:
+            logger.warning("[CODE_MODE] No documents found in search phase")
+            return ""
+
+        logger.info(f"[CODE_MODE] Found {len(search_results)} documents for extraction")
+
+        # Phase 2: Generate extraction script that processes the found documents
+        logger.info(f"[CODE_MODE] Phase 2: Generating extraction script for: {query[:60]}...")
 
         try:
-            # Have LLM generate a custom retrieval script
-            script, tokens = await self.llm.generate_retrieval_script(
+            # Format search results as input for the extraction script
+            docs_for_extraction = self._format_docs_for_extraction(search_results)
+
+            # Have LLM generate an extraction-focused script
+            script, tokens = await self.llm.generate_extraction_script(
                 task=query,
-                vault_info=f"vault_path: {self.vault_path}" if self.vault_path else "",
+                documents=docs_for_extraction,
             )
 
             if not script:
                 logger.warning("[CODE_MODE] LLM generated empty script")
                 return ""
 
-            logger.info(f"[CODE_MODE] Executing generated script ({len(script)} chars)...")
+            logger.info(f"[CODE_MODE] Executing extraction script ({len(script)} chars)...")
             logger.debug(f"[CODE_MODE] Script:\n{script}")
 
-            # Execute the script in sandbox
-            result = await self.code_executor.execute(script)
+            # Execute the script in sandbox with DOCUMENTS variable
+            result = await self.code_executor.execute(
+                script,
+                extra_vars={"DOCUMENTS": docs_for_extraction},
+            )
 
             if result.success:
                 if result.return_value:
                     context = str(result.return_value)
-                    logger.info(f"[CODE_MODE] Script returned {len(context)} chars via __result__")
+                    logger.info(f"[CODE_MODE] Extraction returned {len(context)} chars")
                     return context
                 elif result.stdout:
-                    logger.info(f"[CODE_MODE] Script returned {len(result.stdout)} chars via stdout")
+                    logger.info(f"[CODE_MODE] Extraction returned {len(result.stdout)} chars via stdout")
                     return result.stdout
                 else:
                     logger.warning("[CODE_MODE] Script succeeded but returned no output")
                     return ""
             else:
-                logger.error(f"[CODE_MODE] Script execution failed: {result.error_message}")
+                logger.error(f"[CODE_MODE] Extraction failed: {result.error_message}")
                 logger.error(f"[CODE_MODE] stderr: {result.stderr}")
                 return ""
 
@@ -815,39 +832,107 @@ class RLMEngine:
             logger.error(f"[CODE_MODE] Error: {e}")
             return ""
 
+    async def _search_for_code_mode(self, query: str, limit: int = 15) -> list[dict[str, Any]]:
+        """Fast search phase for Code Mode using qmd/retriever.
+
+        Searches each keyword separately for OR-style matching.
+        Returns raw search results for the extraction phase.
+        """
+        if not self.retriever.available:
+            return []
+
+        keywords = self._extract_search_keywords(query).split()
+        if not keywords:
+            return []
+
+        # Search each keyword (OR-style matching)
+        all_results: dict[str, dict[str, Any]] = {}
+        path_scores: dict[str, float] = {}
+
+        for keyword in keywords:
+            results = await self.retriever.search(
+                keyword,
+                mode="bm25",
+                collections=self.collections if self.collections else None,
+                limit=limit,
+            )
+            for r in results:
+                path = r.path
+                if path not in all_results:
+                    all_results[path] = {
+                        "path": path,
+                        "content": r.content,
+                        "score": r.score,
+                        "snippet": r.snippet,
+                    }
+                    path_scores[path] = r.score
+                else:
+                    path_scores[path] += r.score
+
+        # Sort by score and return top results
+        sorted_paths = sorted(path_scores.keys(), key=lambda p: path_scores[p], reverse=True)
+        return [all_results[p] for p in sorted_paths[:limit]]
+
+    def _format_docs_for_extraction(self, results: list[dict[str, Any]]) -> str:
+        """Format search results as input for extraction script."""
+        parts = []
+        for i, r in enumerate(results):
+            path = r.get("path", "unknown")
+            content = r.get("content", "")
+            # Truncate very long documents
+            if len(content) > 8000:
+                content = content[:8000] + "\n... [truncated]"
+            parts.append(f"=== DOCUMENT {i+1}: {path} ===\n{content}")
+        return "\n\n".join(parts)
+
     async def _retrieve_direct(self, query: str, limit: int = 10) -> str:
         """Direct retriever search fallback (non-Code Mode).
 
         Uses the configured retriever (qmd or filesystem) to search and format results.
-        Extracts content around matched keywords rather than from file start.
+        Searches each keyword separately for OR-style matching, then deduplicates.
         """
         if not self.retriever.available:
             return ""
 
         # Extract keywords from full query (removes stop words, markdown, etc.)
-        search_query = self._extract_search_keywords(query)
-        if not search_query:
+        keywords = self._extract_search_keywords(query).split()
+        if not keywords:
             logger.warning("[RETRIEVAL] No keywords extracted from query")
             return ""
 
         retriever_name = type(self.retriever).__name__
-        logger.info(f"[RETRIEVAL] Direct search via {retriever_name} for: {search_query}")
+        logger.info(f"[RETRIEVAL] Direct search via {retriever_name} for keywords: {keywords}")
 
         try:
-            # Search using the retrieval layer with extracted keywords
-            # Note: hybrid mode requires GPU for LLM reranking
-            results = await self.retriever.search(
-                search_query,
-                mode="bm25",  # Keyword search (no GPU required)
-                collections=self.collections if self.collections else None,
-                limit=limit,
-            )
+            # Search each keyword separately (OR-style matching)
+            # This finds documents matching ANY keyword, not ALL keywords
+            all_results: dict[str, Any] = {}  # path -> result (dedupe by path)
+            path_scores: dict[str, float] = {}  # path -> cumulative score
 
-            if not results:
+            for keyword in keywords:
+                results = await self.retriever.search(
+                    keyword,
+                    mode="bm25",
+                    collections=self.collections if self.collections else None,
+                    limit=limit,
+                )
+                for r in results:
+                    if r.path not in all_results:
+                        all_results[r.path] = r
+                        path_scores[r.path] = r.score
+                    else:
+                        # Boost score for documents matching multiple keywords
+                        path_scores[r.path] += r.score
+
+            if not all_results:
                 logger.info("[RETRIEVAL] No results found")
                 return ""
 
-            logger.info(f"[RETRIEVAL] Found {len(results)} results")
+            # Sort by cumulative score (documents matching more keywords rank higher)
+            sorted_paths = sorted(path_scores.keys(), key=lambda p: path_scores[p], reverse=True)
+            results = [all_results[p] for p in sorted_paths[:limit]]
+
+            logger.info(f"[RETRIEVAL] Found {len(results)} unique results from {len(keywords)} keyword searches")
 
             # Format results as context
             parts = []

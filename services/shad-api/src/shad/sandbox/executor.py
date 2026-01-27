@@ -163,19 +163,24 @@ class CodeExecutor:
 
         return open(file_path, mode, *args, **kwargs)
 
-    async def execute(self, script: str) -> ExecutionResult:
+    async def execute(
+        self,
+        script: str,
+        extra_vars: dict[str, Any] | None = None,
+    ) -> ExecutionResult:
         """Execute a Python script in the sandbox.
 
         Args:
             script: Python code to execute
+            extra_vars: Optional extra variables to inject (e.g., DOCUMENTS for extraction)
 
         Returns:
             ExecutionResult with output and return value
         """
         start_time = time.time()
 
-        # Create a fresh locals dict for this execution
-        local_vars: dict[str, Any] = {}
+        # Create a fresh locals dict for this execution, with any extra vars
+        local_vars: dict[str, Any] = extra_vars.copy() if extra_vars else {}
 
         # We need to capture stdout/stderr in the thread
         def run_in_thread() -> tuple[str, str]:

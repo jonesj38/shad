@@ -165,11 +165,11 @@ class ObsidianTools:
         self,
         query: str,
         limit: int = 10,
-        mode: str = "hybrid",
+        mode: str = "bm25",
     ) -> list[dict[str, Any]] | None:
         """Search via qmd CLI.
 
-        Uses qmd's hybrid search (BM25 + vectors + reranking).
+        Uses qmd's BM25 search (fast keyword matching).
 
         Args:
             query: Search query string
@@ -212,11 +212,14 @@ class ObsidianTools:
             if not result.stdout or not result.stdout.strip():
                 return []
 
-            # Handle potential non-JSON output (e.g., progress messages)
+            # Handle potential non-JSON output (e.g., progress messages, "No results found.")
             stdout = result.stdout.strip()
             if not stdout.startswith(("[", "{")):
+                # "No results found." is a valid response, not an error
+                if "no results" in stdout.lower():
+                    return []
                 logger.warning(f"qmd returned non-JSON output: {stdout[:100]}")
-                return None
+                return []
 
             data = json.loads(stdout)
             results = []
@@ -225,7 +228,8 @@ class ObsidianTools:
             items = data if isinstance(data, list) else data.get("results", [])
 
             for item in items:
-                path = item.get("path", item.get("filepath", ""))
+                # qmd uses "file" field for the path
+                path = item.get("file", item.get("path", item.get("filepath", "")))
                 results.append({
                     "path": path,
                     "content": item.get("content", ""),
@@ -323,18 +327,18 @@ class ObsidianTools:
         query: str,
         limit: int = 10,
         path_filter: str | None = None,
-        mode: str = "hybrid",
+        mode: str = "bm25",
     ) -> list[dict[str, Any]]:
         """Search for notes matching query.
 
-        Uses qmd for hybrid search (BM25 + vectors) if available,
+        Uses qmd for BM25 search (fast keyword matching) if available,
         falling back to local filesystem search.
 
         Args:
             query: Search query string (long queries are automatically reduced to keywords)
             limit: Maximum results
             path_filter: Optional path prefix filter (only for filesystem search)
-            mode: Search mode - "bm25" (fast), "vector" (semantic), "hybrid" (best)
+            mode: Search mode - "bm25" (fast, default), "vector" (semantic), "hybrid" (requires GPU)
 
         Returns:
             List of search results with keys:
