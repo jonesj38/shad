@@ -45,16 +45,16 @@ class Settings(BaseSettings):
     worker_model: str = "claude-sonnet-4-20250514"
     leaf_model: str = "claude-haiku-4-20250514"
 
-    # Path Settings
-    history_path: Path = Path("./History")
-    skills_path: Path = Path("./Skills")
-    core_path: Path = Path("./CORE")
+    # Path Settings (default to ~/.shad/)
+    history_path: Path = _shad_home / "history"
+    skills_path: Path = _shad_home / "skills"
+    core_path: Path = _shad_home / "CORE"
 
     # Budget Defaults
     default_max_depth: int = 3
     default_max_nodes: int = 50
     default_max_wall_time: int = 300
-    default_max_tokens: int = 100000
+    default_max_tokens: int = 2000000  # 2M - allows complex tasks spanning many subtasks
 
 
 @lru_cache
