@@ -624,14 +624,12 @@ ABSOLUTE RULES - VIOLATIONS CAUSE ERRORS:
 2. NO list comprehensions or generator expressions - USE EXPLICIT FOR LOOPS ONLY
 3. NO referencing variables from outer scopes in any expression
 4. Initialize ALL variables before use
-5. NO triple-quoted strings (""" or ''') - use single-line strings only
-6. Use + to concatenate strings, not f-strings with complex expressions
+5. NO multi-line strings - use single-line strings with \\n only
+6. Use simple f-strings like f"text {var}" not f"{complex.method()}"
 
 BANNED:
   [x for x in items]           # NO comprehensions!
   (x for x in items)           # NO generators!
-  """multi-line"""             # NO triple quotes!
-  f"{complex.expr}"            # NO complex f-strings!
 
 REQUIRED PATTERN - follow this exactly:
 ```python
