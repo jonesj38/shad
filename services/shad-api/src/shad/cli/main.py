@@ -432,12 +432,18 @@ def trace_node(run_id: str, node_id: str) -> None:
 @click.option("--max-nodes", type=int, help="Override max nodes")
 @click.option("--max-time", "-t", type=int, help="Override max time")
 @click.option("--replay", type=str, help="Replay mode: 'stale', node_id, or 'subtree:node_id'")
+@click.option("--orchestrator-model", "-O", help="Override orchestrator model (e.g., opus, sonnet)")
+@click.option("--worker-model", "-W", help="Override worker model")
+@click.option("--leaf-model", "-L", help="Override leaf model")
 def resume(
     run_id: str,
     max_depth: int | None,
     max_nodes: int | None,
     max_time: int | None,
     replay: str | None,
+    orchestrator_model: str | None,
+    worker_model: str | None,
+    leaf_model: str | None,
 ) -> None:
     """Resume a partial or failed run with delta verification.
 
@@ -446,8 +452,16 @@ def resume(
         shad resume abc12345 --max-depth 4
         shad resume abc12345 --replay stale     # Re-run stale nodes only
         shad resume abc12345 --replay node123   # Re-run specific node
-        shad resume abc12345 --replay subtree:node123  # Re-run subtree
+        shad resume abc12345 -O opus -W sonnet  # Override models
     """
+    # Configure logging
+    logging.basicConfig(
+        level=logging.INFO,
+        format="%(asctime)s [%(levelname)s] %(name)s: %(message)s",
+        datefmt="%H:%M:%S",
+    )
+    logging.getLogger("shad").setLevel(logging.INFO)
+
     history = HistoryManager()
 
     try:
@@ -473,8 +487,31 @@ def resume(
         console.print(f"[dim][REPLAY] Mode: {replay}[/dim]")
 
     async def _resume_run() -> Run:
-        """Resume run."""
-        engine = RLMEngine(llm_provider=LLMProvider())
+        """Resume run using original or overridden model config."""
+        # Start with original model config
+        model_config = run_data.config.model_config_override
+
+        # Apply any overrides
+        if orchestrator_model or worker_model or leaf_model:
+            if model_config:
+                # Update existing config with overrides
+                model_config = ModelConfig(
+                    orchestrator_model=orchestrator_model or model_config.orchestrator_model,
+                    worker_model=worker_model or model_config.worker_model,
+                    leaf_model=leaf_model or model_config.leaf_model,
+                )
+            else:
+                # Create new config from overrides
+                model_config = ModelConfig(
+                    orchestrator_model=orchestrator_model,
+                    worker_model=worker_model,
+                    leaf_model=leaf_model,
+                )
+            console.print(f"[dim]Using models: O={model_config.orchestrator_model}, W={model_config.worker_model}, L={model_config.leaf_model}[/dim]")
+        elif model_config:
+            console.print(f"[dim]Using original models: O={model_config.orchestrator_model}, W={model_config.worker_model}, L={model_config.leaf_model}[/dim]")
+
+        engine = RLMEngine(llm_provider=LLMProvider(model_config=model_config))
         return await engine.resume(run_data, replay_mode=replay)
 
     with Progress(

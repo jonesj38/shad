@@ -343,6 +343,9 @@ class RLMEngine:
         run.stop_reason = None
         run.error = None
 
+        # Reset started_at so budget timer restarts from resume time
+        run.started_at = datetime.now(UTC)
+
         # Re-initialize state manager for resume
         self.state_manager = RunStateManager()
         self.state_manager.transition_to(RunState.RUNNING)
@@ -368,13 +371,23 @@ class RLMEngine:
                 nodes_to_replay = [replay_mode]
             else:
                 # Default: replay pending nodes
-                nodes_to_replay = [n.node_id for n in run.pending_nodes()]
+                pending = run.pending_nodes()
+                logger.info(f"[RESUME] Found {len(pending)} pending nodes")
+                nodes_to_replay = [n.node_id for n in pending]
 
             # If no nodes to replay, check root
             if not nodes_to_replay and run.root_node_id:
                 root = run.get_node(run.root_node_id)
+                logger.info(f"[RESUME] No pending nodes, checking root: {root.status if root else 'None'}")
                 if root and root.status != NodeStatus.SUCCEEDED:
                     nodes_to_replay = [run.root_node_id]
+
+            logger.info(f"[RESUME] Nodes to replay: {len(nodes_to_replay)}")
+
+            if not nodes_to_replay:
+                logger.warning("[RESUME] No nodes to replay - run may already be complete or stuck")
+                run.status = RunStatus.COMPLETE if (root and root.status == NodeStatus.SUCCEEDED) else RunStatus.FAILED
+                return run
 
             # Execute nodes to replay
             for node_id in nodes_to_replay:
@@ -387,11 +400,17 @@ class RLMEngine:
                 node.result = None
                 node.error = None
 
+                logger.info(f"[RESUME] Replaying node {node_id}: {node.task[:50]}...")
+
                 context = ""  # Retrieve fresh context
                 if self.retriever.available:
+                    logger.info(f"[RESUME] Retrieving context for node...")
                     context = await self._retrieve_vault_context(node.task, limit=5)
+                    logger.info(f"[RESUME] Got {len(context)} chars of context")
 
+                logger.info(f"[RESUME] Executing node...")
                 await self._execute_node(run, node, context)
+                logger.info(f"[RESUME] Node complete: {node.status}")
 
             # Update status
             root = run.get_node(run.root_node_id) if run.root_node_id else None
