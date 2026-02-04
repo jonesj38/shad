@@ -97,6 +97,7 @@ def cli() -> None:
 @click.option("--output", "-o", type=click.Path(), help="Output file for results")
 @click.option("--api", default=None, help="Shad API URL (uses local engine if not specified)")
 @click.option("--no-code-mode", is_flag=True, help="Disable Code Mode (LLM-generated retrieval scripts)")
+@click.option("--qmd-hybrid/--no-qmd-hybrid", default=True, help="Use qmd hybrid search for retrieval (fast, default: on)")
 @click.option("--strategy", "-s", type=click.Choice(["software", "research", "analysis", "planning"]),
               help="Override automatic strategy selection")
 @click.option("--verify", type=click.Choice(["off", "basic", "build", "strict"]), default="basic",
@@ -119,6 +120,7 @@ def run(
     output: str | None,
     api: str | None,
     no_code_mode: bool,
+    qmd_hybrid: bool,
     strategy: str | None,
     verify: str,
     write_files: bool,
@@ -214,7 +216,9 @@ def run(
 
         # Show Code Mode status
         use_code_mode = not no_code_mode
-        if use_code_mode:
+        if qmd_hybrid:
+            console.print("[dim][QMD_HYBRID] Enabled - using fast qmd semantic search for retrieval[/dim]")
+        elif use_code_mode:
             console.print("[dim][CODE_MODE] Enabled - LLM will generate custom retrieval scripts[/dim]")
         else:
             console.print("[dim][CODE_MODE] Disabled - using direct search[/dim]")
@@ -253,6 +257,7 @@ def run(
             vault_path=primary_vault,
             collections=collections,
             use_code_mode=use_code_mode,
+            use_qmd_hybrid=qmd_hybrid,
         )
         return await engine.execute(config)
 

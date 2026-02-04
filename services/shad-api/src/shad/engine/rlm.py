@@ -92,6 +92,7 @@ class RLMEngine:
         vault_path: Path | str | None = None,
         collections: list[str] | None = None,
         use_code_mode: bool = True,
+        use_qmd_hybrid: bool = False,
     ):
         self.llm = llm_provider or LLMProvider()
         self.cache: RedisCache | None = cache
@@ -119,6 +120,7 @@ class RLMEngine:
 
         # Initialize CodeExecutor for Code Mode
         self._use_code_mode = use_code_mode and self.vault_path is not None
+        self._use_qmd_hybrid = use_qmd_hybrid
         if code_executor:
             self.code_executor = code_executor
         elif self._use_code_mode and self.vault_path:
@@ -770,21 +772,72 @@ class RLMEngine:
         """Retrieve relevant context from the vault(s).
 
         Uses the configured retrieval backend (qmd or filesystem).
-        If Code Mode is enabled, tries LLM-generated scripts first.
+        
+        Modes:
+        - qmd_hybrid (default): Fast qmd semantic search, no LLM calls for retrieval
+        - Code Mode: LLM-generated extraction scripts (slower but more flexible)
+        - Direct search: BM25 keyword search fallback
         """
         if not self.retriever.available:
             logger.warning("[RETRIEVAL] No retriever available")
             return ""
 
-        # Try Code Mode first if enabled
+        # Preferred: qmd hybrid search (fast, no LLM calls for retrieval)
+        if self._use_qmd_hybrid:
+            logger.info(f"[RETRIEVAL] Using qmd hybrid search for: {query[:60]}...")
+            return await self._retrieve_qmd_hybrid(query, limit)
+
+        # Alternative: Code Mode with LLM extraction scripts
         if self._use_code_mode and self.code_executor:
             context = await self._retrieve_via_code_mode(query)
             if context:
                 return context
             logger.warning("[RETRIEVAL] Code Mode failed, falling back to direct search")
 
-        # Fallback: Direct retriever search
+        # Fallback: Direct retriever search (BM25)
         return await self._retrieve_direct(query, limit)
+
+    async def _retrieve_qmd_hybrid(self, query: str, limit: int = 10) -> str:
+        """Retrieve context using qmd's hybrid semantic search.
+
+        This is the fast path: qmd handles query expansion, vector search,
+        and reranking internally. No LLM calls are made for retrieval.
+
+        Benefits:
+        - Fast (~3-5s with OpenAI embeddings)
+        - High quality (query expansion + hybrid BM25/vector + reranking)
+        - Predictable latency
+        """
+        try:
+            # Use qmd's hybrid mode which does expansion + search + rerank
+            results = await self.retriever.search(
+                query,
+                mode="hybrid",
+                collections=self.collections if self.collections else None,
+                limit=limit,
+            )
+
+            if not results:
+                logger.info(f"[RETRIEVAL] qmd hybrid search found no results for: {query[:60]}...")
+                return ""
+
+            logger.info(f"[RETRIEVAL] qmd hybrid search found {len(results)} results")
+
+            # Format results into context string
+            context_parts = []
+            for result in results:
+                # Include file path, score, and snippet
+                header = f"## {result.path} (score: {result.score:.2f})"
+                snippet = result.snippet or (result.content[:500] if result.content else "")
+                context_parts.append(f"{header}\n\n{snippet}")
+
+            context = "\n\n---\n\n".join(context_parts)
+            logger.info(f"[RETRIEVAL] Retrieved {len(context)} chars of context")
+            return context
+
+        except Exception as e:
+            logger.error(f"[RETRIEVAL] qmd hybrid search failed: {e}")
+            return ""
 
     async def _retrieve_via_code_mode(self, query: str) -> str:
         """Retrieve context using two-phase approach: Search + Code Mode extraction.
