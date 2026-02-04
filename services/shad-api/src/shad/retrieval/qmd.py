@@ -404,9 +404,11 @@ class QmdRetriever:
         results = []
         for item in results_data:
             # qmd uses "file" field for the path
+            # Fall back to snippet/context if content is empty (common with qmd search results)
+            content = item.get("content", "") or item.get("snippet", item.get("context", ""))
             result = RetrievalResult(
                 path=item.get("file", item.get("path", item.get("filepath", ""))),
-                content=item.get("content", ""),
+                content=content,
                 score=float(item.get("score", 0.0)),
                 snippet=item.get("snippet", item.get("context", None)),
                 collection=item.get("collection", ""),
