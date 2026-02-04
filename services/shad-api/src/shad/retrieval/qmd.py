@@ -177,10 +177,15 @@ class QmdRetriever:
 
         try:
             logger.debug(f"Running qmd: {' '.join(args)}")
+            # Pass environment with QMD_OPENAI=1 for fast query expansion
+            import os
+            env = os.environ.copy()
+            env["QMD_OPENAI"] = "1"
             process = await asyncio.create_subprocess_exec(
                 *args,
                 stdout=asyncio.subprocess.PIPE,
                 stderr=asyncio.subprocess.PIPE,
+                env=env,
             )
 
             try:
