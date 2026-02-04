@@ -48,7 +48,7 @@ def get_retriever(
         return FilesystemRetriever(paths=paths, collection_names=collection_names)
 
     # Try qmd first
-    qmd = QmdRetriever()
+    qmd = QmdRetriever(collection_names=collection_names)
     if qmd.available and prefer != "filesystem":
         logger.info("Using qmd retriever")
         return qmd

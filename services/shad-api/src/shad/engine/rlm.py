@@ -122,11 +122,14 @@ class RLMEngine:
         if code_executor:
             self.code_executor = code_executor
         elif self._use_code_mode and self.vault_path:
+            # Use first collection name if available, otherwise default to vault dir name
+            collection_name = self.collections[0] if self.collections else None
             sandbox_config = SandboxConfig(
                 vault_path=self.vault_path,
+                collection_name=collection_name,
             )
             self.code_executor = CodeExecutor(sandbox_config)
-            logger.info(f"[CODE_MODE] Initialized CodeExecutor with vault: {self.vault_path}")
+            logger.info(f"[CODE_MODE] Initialized CodeExecutor with vault: {self.vault_path}, collection: {collection_name or self.vault_path.name}")
         else:
             self.code_executor = None
 

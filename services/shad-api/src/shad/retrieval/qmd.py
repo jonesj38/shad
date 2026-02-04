@@ -35,9 +35,20 @@ class QmdRetriever:
         "hybrid": "query",
     }
 
-    def __init__(self) -> None:
-        """Initialize the qmd retriever."""
+    def __init__(
+        self,
+        collection_names: dict[str, Any] | None = None,
+    ) -> None:
+        """Initialize the qmd retriever.
+
+        Args:
+            collection_names: Optional mapping of collection name -> path.
+                              Used to validate and resolve collection names.
+        """
         self._qmd_path: str | None = None
+        self._collection_names = collection_names or {}
+        # Cache for qmd-registered collection names mapped by path
+        self._qmd_collections_by_path: dict[str, str] | None = None
 
     @property
     def available(self) -> bool:
@@ -45,6 +56,77 @@ class QmdRetriever:
         if self._qmd_path is None:
             self._qmd_path = shutil.which("qmd")
         return self._qmd_path is not None
+
+    async def _load_qmd_collections(self) -> dict[str, str]:
+        """Load qmd-registered collections and map by path.
+
+        Returns:
+            Dict mapping normalized path -> collection name
+        """
+        if self._qmd_collections_by_path is not None:
+            return self._qmd_collections_by_path
+
+        self._qmd_collections_by_path = {}
+        collections = await self.list_collections()
+
+        for coll in collections:
+            # qmd returns collection info with 'name' and 'path' fields
+            name = coll.get("name", "")
+            path = coll.get("path", "")
+            if name and path:
+                # Normalize path for comparison
+                from pathlib import Path
+                normalized = str(Path(path).resolve())
+                self._qmd_collections_by_path[normalized] = name
+                logger.debug(f"Mapped qmd collection: {normalized} -> {name}")
+
+        return self._qmd_collections_by_path
+
+    async def resolve_collection_names(
+        self,
+        requested_names: list[str],
+    ) -> list[str]:
+        """Resolve collection names, mapping by path if needed.
+
+        If a requested collection name doesn't exist in qmd but we have
+        a path mapping for it, look up the qmd-registered name for that path.
+
+        Args:
+            requested_names: List of collection names to resolve
+
+        Returns:
+            List of resolved collection names that exist in qmd
+        """
+        if not requested_names:
+            return []
+
+        # Load qmd collections
+        qmd_by_path = await self._load_qmd_collections()
+        qmd_names = set(qmd_by_path.values())
+
+        resolved = []
+        for name in requested_names:
+            # If name exists in qmd, use it directly
+            if name in qmd_names:
+                resolved.append(name)
+                continue
+
+            # Try to resolve by path
+            if name in self._collection_names:
+                from pathlib import Path
+                path = self._collection_names[name]
+                normalized = str(Path(path).resolve())
+                if normalized in qmd_by_path:
+                    qmd_name = qmd_by_path[normalized]
+                    logger.info(f"Resolved collection '{name}' -> '{qmd_name}' by path")
+                    resolved.append(qmd_name)
+                    continue
+
+            # Fall back to using the name as-is (may fail if not in qmd)
+            logger.debug(f"Collection '{name}' not found in qmd, using as-is")
+            resolved.append(name)
+
+        return resolved
 
     async def search(
         self,
@@ -84,7 +166,10 @@ class QmdRetriever:
 
         # Add collection filter if specified
         if collections:
-            args.extend(["-c", ",".join(collections)])
+            # Resolve collection names (handles path-based lookup)
+            resolved_collections = await self.resolve_collection_names(collections)
+            if resolved_collections:
+                args.extend(["-c", ",".join(resolved_collections)])
 
         # Add minimum score filter
         if min_score > 0:

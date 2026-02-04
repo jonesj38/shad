@@ -63,11 +63,13 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
     logger.info(f"Initialized retriever: {type(retriever).__name__}")
 
     # Initialize engine with cache and retriever
+    collections = [vault_path.name] if vault_path else None
     engine = RLMEngine(
         llm_provider=llm_provider,
         cache=cache,
         retriever=retriever,
         vault_path=vault_path,
+        collections=collections,
     )
     history = HistoryManager()
 
