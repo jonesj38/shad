@@ -515,6 +515,40 @@ shad run "Query other vault" --vault ~/OtherVault
 
 ---
 
+## Vault Strategy: One vs Many
+
+Should you use one large vault or multiple smaller vaults?
+
+| | One Vault | Many Vaults |
+|---|---|---|
+| **Pros** | Single source of truth, cross-topic connections, simpler management | Faster indexing, focused retrieval, easier sharing/permissions |
+| **Cons** | Slower as it grows, noise in retrieval, harder to share subsets | Context fragmentation, can't find cross-vault connections, more overhead |
+
+**Recommendations:**
+
+- **One vault for personal/work knowledge** — memory, tasks, notes, projects all interconnected. You want to find "that thing I wrote about X last month" regardless of which project it was.
+
+- **Separate vaults for:**
+  - **Codebases** you're searching but not writing prose in
+  - **Client/project deliverables** that need isolation or different permissions
+  - **Reference material** (docs, courses) that's read-only
+
+The key question: *does this content benefit from being found alongside everything else?*
+
+If yes → same vault. If no (isolation, permissions, performance) → separate vault.
+
+**Multi-vault queries:**
+
+```bash
+# Primary vault searched first, then secondary
+shad run "Build auth system" \
+  --vault ~/Project \
+  --vault ~/Patterns \
+  --vault ~/Docs
+```
+
+---
+
 ## Vault Preparation
 
 The quality of Shad's output depends on your vault's content. Good vaults include:
