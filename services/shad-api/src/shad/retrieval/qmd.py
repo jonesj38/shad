@@ -9,7 +9,9 @@ from __future__ import annotations
 import asyncio
 import json
 import logging
+import os
 import shutil
+import subprocess
 from typing import Any
 
 from shad.retrieval.layer import RetrievalResult
@@ -177,38 +179,42 @@ class QmdRetriever:
 
         try:
             logger.debug(f"Running qmd: {' '.join(args)}")
-            # Pass environment with QMD_OPENAI=1 for fast query expansion
-            import os
-            env = os.environ.copy()
-            env["QMD_OPENAI"] = "1"
-            process = await asyncio.create_subprocess_exec(
-                *args,
-                stdout=asyncio.subprocess.PIPE,
-                stderr=asyncio.subprocess.PIPE,
-                env=env,
-            )
 
+            # Use synchronous subprocess in thread pool to avoid asyncio subprocess issues
+            # (asyncio subprocess can hang due to event loop/signal handler interference)
+            def _run_qmd() -> subprocess.CompletedProcess[bytes]:
+                env = os.environ.copy()
+                env["QMD_OPENAI"] = "1"
+                return subprocess.run(
+                    args,
+                    capture_output=True,
+                    timeout=60,
+                    env=env,
+                )
+
+            loop = asyncio.get_running_loop()
             try:
-                stdout, stderr = await asyncio.wait_for(
-                    process.communicate(),
-                    timeout=60.0,  # 60 second timeout for large vaults
+                result = await asyncio.wait_for(
+                    loop.run_in_executor(None, _run_qmd),
+                    timeout=65.0,  # Slightly higher than subprocess timeout
                 )
             except asyncio.TimeoutError:
-                process.kill()
-                await process.wait()
+                logger.warning("qmd search timed out after 65s")
+                return []
+            except subprocess.TimeoutExpired:
                 logger.warning("qmd search timed out after 60s")
                 return []
 
-            if process.returncode != 0:
-                error_msg = stderr.decode().strip() if stderr else "Unknown error"
+            if result.returncode != 0:
+                error_msg = result.stderr.decode().strip() if result.stderr else "Unknown error"
                 logger.error(f"qmd search failed: {error_msg}")
                 return []
 
-            if not stdout:
+            if not result.stdout:
                 return []
 
             # Handle potential non-JSON output
-            output = stdout.decode().strip()
+            output = result.stdout.decode().strip()
             if not output or not output.startswith(("[", "{")):
                 # "No results found." is valid, not an error
                 if not output or "no results" in output.lower():
