@@ -10,6 +10,7 @@ import asyncio
 import json
 import logging
 import os
+import re
 import shutil
 import subprocess
 from typing import Any
@@ -36,6 +37,52 @@ class QmdRetriever:
         "vector": "vsearch",
         "hybrid": "query",
     }
+
+    # Stop words for keyword extraction (prevents long queries hanging qmd)
+    STOP_WORDS = frozenset({
+        # Standard stop words
+        'the', 'a', 'an', 'is', 'are', 'was', 'were', 'be', 'been',
+        'do', 'does', 'did', 'have', 'has', 'had', 'to', 'of', 'in',
+        'for', 'on', 'with', 'at', 'by', 'from', 'we', 'how', 'what',
+        'which', 'who', 'when', 'where', 'why', 'and', 'or', 'not',
+        'it', 'its', 'this', 'that', 'these', 'those', 'can', 'could',
+        'would', 'should', 'will', 'may', 'might', 'must', 'shall',
+        'into', 'onto', 'upon', 'about', 'after', 'before', 'between',
+        'through', 'during', 'under', 'over', 'above', 'below',
+        'all', 'any', 'each', 'every', 'both', 'few', 'more', 'most',
+        'other', 'some', 'such', 'than', 'too', 'very', 'just', 'also',
+        # Task/goal meta-words
+        'goal', 'goals', 'task', 'tasks', 'run', 'runs', 'statement',
+        'build', 'create', 'make', 'implement', 'add', 'update', 'fix',
+        'write', 'develop', 'design', 'setup', 'configure', 'enable',
+        'use', 'using', 'need', 'needs', 'want', 'wants', 'please',
+        'help', 'ensure', 'provide', 'include', 'support', 'allow',
+        'following', 'based', 'like', 'new', 'existing', 'current',
+    })
+
+    def _extract_keywords(self, query: str, max_keywords: int = 15) -> str:
+        """Extract search keywords from a query string.
+
+        Removes stop words and short words to prevent qmd hanging on
+        long queries during query expansion.
+
+        Args:
+            query: Raw query string (possibly long/verbose)
+            max_keywords: Maximum keywords to extract
+
+        Returns:
+            Space-separated keywords for search
+        """
+        words = re.split(r'\W+', query.lower())
+        seen: set[str] = set()
+        keywords: list[str] = []
+        for w in words:
+            if w and len(w) > 2 and w not in self.STOP_WORDS and w not in seen:
+                seen.add(w)
+                keywords.append(w)
+                if len(keywords) >= max_keywords:
+                    break
+        return " ".join(keywords)
 
     def __init__(
         self,
@@ -154,6 +201,17 @@ class QmdRetriever:
             logger.warning("qmd not available, returning empty results")
             return []
 
+        # Extract keywords for long queries to prevent qmd hanging during expansion
+        if len(query) > 100 or '\n' in query:
+            search_query = self._extract_keywords(query)
+            logger.debug(f"Extracted keywords from long query: {search_query}")
+        else:
+            search_query = query
+
+        if not search_query:
+            logger.warning("No search query after keyword extraction")
+            return []
+
         # Get the qmd command for this mode
         cmd = self.MODE_COMMANDS.get(mode, "query")
 
@@ -161,7 +219,7 @@ class QmdRetriever:
         args = [
             "qmd",
             cmd,
-            query,
+            search_query,
             "-n", str(limit),
             "--json",
         ]
