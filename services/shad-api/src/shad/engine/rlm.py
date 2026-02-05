@@ -774,7 +774,7 @@ class RLMEngine:
         Uses the configured retrieval backend (qmd or filesystem).
         
         Modes:
-        - qmd_hybrid (default): Fast qmd semantic search, no LLM calls for retrieval
+        - qmd_hybrid (default): Fast qmd vector search, no LLM calls for retrieval
         - Code Mode: LLM-generated extraction scripts (slower but more flexible)
         - Direct search: BM25 keyword search fallback
         """
@@ -782,9 +782,9 @@ class RLMEngine:
             logger.warning("[RETRIEVAL] No retriever available")
             return ""
 
-        # Preferred: qmd hybrid search (fast, no LLM calls for retrieval)
+        # Preferred: qmd vector search (fast, no LLM calls for retrieval)
         if self._use_qmd_hybrid:
-            logger.info(f"[RETRIEVAL] Using qmd hybrid search for: {query[:60]}...")
+            logger.info(f"[RETRIEVAL] Using qmd vector search for: {query[:60]}...")
             return await self._retrieve_qmd_hybrid(query, limit)
 
         # Alternative: Code Mode with LLM extraction scripts
@@ -798,30 +798,30 @@ class RLMEngine:
         return await self._retrieve_direct(query, limit)
 
     async def _retrieve_qmd_hybrid(self, query: str, limit: int = 10) -> str:
-        """Retrieve context using qmd's hybrid semantic search.
+        """Retrieve context using qmd's vector semantic search.
 
-        This is the fast path: qmd handles query expansion, vector search,
-        and reranking internally. No LLM calls are made for retrieval.
+        Uses vector-only mode since Shad's decomposition already crafts
+        targeted queries - no need for qmd's query expansion or BM25.
 
         Benefits:
-        - Fast (~3-5s with OpenAI embeddings)
-        - High quality (query expansion + hybrid BM25/vector + reranking)
-        - Predictable latency
+        - Lower memory footprint (no BM25 index + reranking)
+        - Fast (~2-3s with OpenAI embeddings)
+        - Decomposition handles query targeting
         """
         try:
-            # Use qmd's hybrid mode which does expansion + search + rerank
+            # Use vector-only mode - decomposition makes hybrid redundant
             results = await self.retriever.search(
                 query,
-                mode="hybrid",
+                mode="vector",
                 collections=self.collections if self.collections else None,
                 limit=limit,
             )
 
             if not results:
-                logger.info(f"[RETRIEVAL] qmd hybrid search found no results for: {query[:60]}...")
+                logger.info(f"[RETRIEVAL] qmd vector search found no results for: {query[:60]}...")
                 return ""
 
-            logger.info(f"[RETRIEVAL] qmd hybrid search found {len(results)} results")
+            logger.info(f"[RETRIEVAL] qmd vector search found {len(results)} results")
 
             # Format results into context string
             context_parts = []
@@ -836,7 +836,7 @@ class RLMEngine:
             return context
 
         except Exception as e:
-            logger.error(f"[RETRIEVAL] qmd hybrid search failed: {e}")
+            logger.error(f"[RETRIEVAL] qmd vector search failed: {e}")
             return ""
 
     async def _retrieve_via_code_mode(self, query: str) -> str:
