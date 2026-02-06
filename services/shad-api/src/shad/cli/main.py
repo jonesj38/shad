@@ -888,7 +888,7 @@ def context(
 
     # Synthesize via LLM
     model_config = ModelConfig(leaf_model=leaf_model) if leaf_model else None
-    llm = LLMProvider(use_claude_code=False, model_config=model_config)
+    llm = LLMProvider(model_config=model_config)
     synthesis_model = llm.get_model_for_tier(ModelTier.LEAF)
 
     synthesis_prompt = CONTEXT_SYNTHESIS_PROMPT.format(
