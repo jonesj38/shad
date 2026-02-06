@@ -18,6 +18,7 @@ from rich.tree import Tree
 
 from shad import __version__
 from shad.engine import LLMProvider, RLMEngine
+from shad.engine.llm import ModelTier
 from shad.history import HistoryManager
 from shad.models import Budget, ModelConfig, RunConfig
 from shad.models.run import NodeStatus, Run, RunStatus
@@ -709,7 +710,8 @@ def vault_status() -> None:
 @click.option("--limit", "-l", default=10, help="Maximum results")
 @click.option("--mode", "-m", type=click.Choice(["hybrid", "bm25", "vector"]), default="hybrid",
               help="Search mode (default: hybrid)")
-def search(query: str, vault: tuple[str, ...], limit: int, mode: str) -> None:
+@click.option("--json", "as_json", is_flag=True, default=False, help="Output results as JSON")
+def search(query: str, vault: tuple[str, ...], limit: int, mode: str, as_json: bool) -> None:
     """Search vault(s) for matching documents.
 
     \b
@@ -750,6 +752,13 @@ def search(query: str, vault: tuple[str, ...], limit: int, mode: str) -> None:
 
     results = run_async(do_search())
 
+    if as_json:
+        import json as json_mod
+
+        output = [result.to_dict() for result in results]
+        click.echo(json_mod.dumps(output, ensure_ascii=False))
+        return
+
     if not results:
         console.print(f"[dim]No results found for '{query}'[/dim]")
         return
@@ -773,6 +782,152 @@ def search(query: str, vault: tuple[str, ...], limit: int, mode: str) -> None:
             console.print(f"   {result.snippet[:200]}...")
         elif content:
             console.print(f"   {content}...")
+
+
+# =============================================================================
+# Context Command
+# =============================================================================
+
+
+CONTEXT_SYNTHESIS_PROMPT = """You are a context synthesizer. Given the following documents retrieved from a knowledge vault, \
+produce a concise, information-dense brief relevant to the query. Include key facts, decisions, \
+and context. Do NOT include filler or meta-commentary. Target {max_chars} characters.
+
+Query: {query}
+
+Retrieved documents:
+{documents}"""
+
+
+@cli.command("context")
+@click.argument("query")
+@click.option("--vault", "-v", multiple=True, help="Vault path(s) to search")
+@click.option("--limit", "-l", default=10, help="Max retrieval results")
+@click.option("--max-chars", default=4000, help="Max output chars for brief")
+@click.option("--mode", "-m", type=click.Choice(["hybrid", "bm25", "vector"]), default="hybrid",
+              help="Search mode (default: hybrid)")
+@click.option("--json", "as_json", is_flag=True, default=False, help="JSON output")
+@click.option("--leaf-model", "-L", default=None, help="Model for synthesis (default: leaf tier)")
+def context(
+    query: str,
+    vault: tuple[str, ...],
+    limit: int,
+    max_chars: int,
+    mode: str,
+    as_json: bool,
+    leaf_model: str | None,
+) -> None:
+    """Retrieve and synthesize vault context into a compact brief.
+
+    Faster than `shad run` (no DAG/decomposition), richer than `shad search`
+    (includes LLM synthesis). Returns a concise context brief from vault documents.
+
+    \b
+    Examples:
+        shad context "BSV authentication decisions" -v ~/Notes
+        shad context "API design patterns" -v ~/vault --max-chars 2000
+        shad context "project architecture" -v ~/vault --json
+    """
+    import json as json_mod
+
+    # Build vault paths
+    vault_paths: list[Path] = []
+    collection_names: dict[str, Path] = {}
+
+    if vault:
+        for v in vault:
+            vp = Path(v).expanduser()
+            if not vp.is_absolute():
+                vp = Path.cwd() / vp
+            vault_paths.append(vp)
+            collection_names[vp.name] = vp
+    elif get_settings().obsidian_vault_path:
+        vp = Path(get_settings().obsidian_vault_path).expanduser()
+        vault_paths.append(vp)
+        collection_names[vp.name] = vp
+    else:
+        console.print("[yellow]No vault specified. Use --vault or set OBSIDIAN_VAULT_PATH[/yellow]")
+        sys.exit(1)
+
+    # Retrieve
+    retriever = get_retriever(paths=vault_paths, collection_names=collection_names)
+
+    async def do_search() -> list:
+        return await retriever.search(
+            query,
+            mode=mode,
+            collections=list(collection_names.keys()),
+            limit=limit,
+        )
+
+    results = run_async(do_search())
+
+    if not results:
+        output = {
+            "brief": "",
+            "sources": [],
+            "query": query,
+            "chars": 0,
+            "retrieval_count": 0,
+            "synthesis_model": None,
+        }
+        if as_json:
+            click.echo(json_mod.dumps(output, ensure_ascii=False))
+        else:
+            console.print(f"[dim]No results found for '{query}'[/dim]")
+        return
+
+    # Read full content of top results for synthesis
+    documents_text = ""
+    sources = []
+    for result in results:
+        doc_content = result.content or result.snippet or ""
+        if doc_content:
+            documents_text += f"\n---\nFile: {result.path}\n{doc_content}\n"
+        sources.append({"path": result.path, "score": round(result.score, 4)})
+
+    # Synthesize via LLM
+    model_config = ModelConfig(leaf_model=leaf_model) if leaf_model else None
+    llm = LLMProvider(use_claude_code=False, model_config=model_config)
+    synthesis_model = llm.get_model_for_tier(ModelTier.LEAF)
+
+    synthesis_prompt = CONTEXT_SYNTHESIS_PROMPT.format(
+        max_chars=max_chars,
+        query=query,
+        documents=documents_text,
+    )
+
+    async def do_synthesize() -> tuple[str, int]:
+        return await llm.complete(
+            prompt=synthesis_prompt,
+            tier=ModelTier.LEAF,
+            max_tokens=max_chars // 2,  # rough char-to-token ratio
+            temperature=0.3,
+        )
+
+    brief, _tokens = run_async(do_synthesize())
+
+    # Truncate to max_chars
+    if len(brief) > max_chars:
+        brief = brief[:max_chars]
+
+    output = {
+        "brief": brief,
+        "sources": sources,
+        "query": query,
+        "chars": len(brief),
+        "retrieval_count": len(results),
+        "synthesis_model": synthesis_model,
+    }
+
+    if as_json:
+        click.echo(json_mod.dumps(output, ensure_ascii=False))
+    else:
+        console.print(Panel(brief, title=f"Context: {query}", border_style="green"))
+        console.print(f"\n[dim]Sources ({len(sources)}):[/dim]")
+        for s in sources:
+            console.print(f"  [cyan]{s['path']}[/cyan] [dim](score: {s['score']:.2f})[/dim]")
+        console.print(f"\n[dim]{len(brief)} chars | {len(results)} docs | model: {synthesis_model}[/dim]")
 
 
 # =============================================================================
