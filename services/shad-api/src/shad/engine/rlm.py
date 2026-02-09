@@ -774,7 +774,8 @@ class RLMEngine:
         Uses the configured retrieval backend (qmd or filesystem).
         
         Modes:
-        - qmd_hybrid (default): Fast qmd vector search, no LLM calls for retrieval
+        - qmd_hybrid (default): Full hybrid pipeline (BM25 + vector + RRF + reranking)
+          with vector-only fallback if hybrid fails
         - Code Mode: LLM-generated extraction scripts (slower but more flexible)
         - Direct search: BM25 keyword search fallback
         """
@@ -782,9 +783,9 @@ class RLMEngine:
             logger.warning("[RETRIEVAL] No retriever available")
             return ""
 
-        # Preferred: qmd vector search (fast, no LLM calls for retrieval)
+        # Preferred: qmd hybrid search (BM25 + vector + reranking)
         if self._use_qmd_hybrid:
-            logger.info(f"[RETRIEVAL] Using qmd vector search for: {query[:60]}...")
+            logger.info(f"[RETRIEVAL] Using qmd hybrid search for: {query[:60]}...")
             return await self._retrieve_qmd_hybrid(query, limit)
 
         # Alternative: Code Mode with LLM extraction scripts
@@ -798,30 +799,42 @@ class RLMEngine:
         return await self._retrieve_direct(query, limit)
 
     async def _retrieve_qmd_hybrid(self, query: str, limit: int = 10) -> str:
-        """Retrieve context using qmd's vector semantic search.
+        """Retrieve context using qmd's full hybrid search pipeline.
 
-        Uses vector-only mode since Shad's decomposition already crafts
-        targeted queries - no need for qmd's query expansion or BM25.
+        Uses `qmd query` which provides:
+        - Query expansion via LLM (generates semantic variants)
+        - BM25 keyword search + vector semantic search in parallel
+        - Reciprocal Rank Fusion (RRF) to merge ranked lists
+        - Cross-encoder reranking (gpt-4o-mini for OpenAI mode)
+        - Position-aware blending of RRF + reranker scores
 
-        Benefits:
-        - Lower memory footprint (no BM25 index + reranking)
-        - Fast (~2-3s with OpenAI embeddings)
-        - Decomposition handles query targeting
+        Falls back to vector-only search if hybrid fails or times out.
         """
         try:
-            # Use vector-only mode - decomposition makes hybrid redundant
+            # Use full hybrid pipeline (BM25 + vector + reranking)
             results = await self.retriever.search(
                 query,
-                mode="vector",
+                mode="hybrid",
                 collections=self.collections if self.collections else None,
                 limit=limit,
             )
 
             if not results:
-                logger.info(f"[RETRIEVAL] qmd vector search found no results for: {query[:60]}...")
+                # Fall back to vector-only if hybrid returned nothing
+                # (can happen if BM25 index is empty or query expansion fails)
+                logger.info(f"[RETRIEVAL] Hybrid search empty, falling back to vector for: {query[:60]}...")
+                results = await self.retriever.search(
+                    query,
+                    mode="vector",
+                    collections=self.collections if self.collections else None,
+                    limit=limit,
+                )
+
+            if not results:
+                logger.info(f"[RETRIEVAL] No results found for: {query[:60]}...")
                 return ""
 
-            logger.info(f"[RETRIEVAL] qmd vector search found {len(results)} results")
+            logger.info(f"[RETRIEVAL] Found {len(results)} results (hybrid+rerank)")
 
             # Format results into context string
             context_parts = []
@@ -836,7 +849,23 @@ class RLMEngine:
             return context
 
         except Exception as e:
-            logger.error(f"[RETRIEVAL] qmd vector search failed: {e}")
+            logger.error(f"[RETRIEVAL] Hybrid search failed: {e}, trying vector fallback")
+            try:
+                results = await self.retriever.search(
+                    query,
+                    mode="vector",
+                    collections=self.collections if self.collections else None,
+                    limit=limit,
+                )
+                if results:
+                    context_parts = []
+                    for result in results:
+                        header = f"## {result.path} (score: {result.score:.2f})"
+                        snippet = result.snippet or (result.content[:500] if result.content else "")
+                        context_parts.append(f"{header}\n\n{snippet}")
+                    return "\n\n---\n\n".join(context_parts)
+            except Exception as fallback_err:
+                logger.error(f"[RETRIEVAL] Vector fallback also failed: {fallback_err}")
             return ""
 
     async def _retrieve_via_code_mode(self, query: str) -> str:

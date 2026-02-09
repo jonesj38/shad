@@ -98,7 +98,7 @@ def cli() -> None:
 @click.option("--output", "-o", type=click.Path(), help="Output file for results")
 @click.option("--api", default=None, help="Shad API URL (uses local engine if not specified)")
 @click.option("--no-code-mode", is_flag=True, help="Disable Code Mode (LLM-generated retrieval scripts)")
-@click.option("--qmd-hybrid/--no-qmd-hybrid", default=True, help="Use qmd hybrid search for retrieval (fast, default: on)")
+@click.option("--qmd-hybrid/--no-qmd-hybrid", default=True, help="Use qmd hybrid search with reranking (BM25 + vector + RRF + reranker, default: on)")
 @click.option("--strategy", "-s", type=click.Choice(["software", "research", "analysis", "planning"]),
               help="Override automatic strategy selection")
 @click.option("--verify", type=click.Choice(["off", "basic", "build", "strict"]), default="basic",
@@ -215,10 +215,20 @@ def run(
         )
         console.print(f"[dim][RETRIEVER] Using {type(retriever_instance).__name__}[/dim]")
 
+        # Auto-provision qmd collections for vault paths
+        if isinstance(retriever_instance, QmdRetriever) and collection_names:
+            console.print("[dim][QMD] Ensuring collections are provisioned and indexed...[/dim]")
+            provision_results = await retriever_instance.ensure_collections(collection_names)
+            for cname, success in provision_results.items():
+                if success:
+                    console.print(f"[dim][QMD] ✓ {cname}[/dim]")
+                else:
+                    console.print(f"[yellow][QMD] ✗ {cname} (failed to provision)[/yellow]")
+
         # Show Code Mode status
         use_code_mode = not no_code_mode
         if qmd_hybrid:
-            console.print("[dim][QMD_HYBRID] Enabled - using fast qmd semantic search for retrieval[/dim]")
+            console.print("[dim][QMD_HYBRID] Enabled - BM25 + vector + RRF fusion + reranking[/dim]")
         elif use_code_mode:
             console.print("[dim][CODE_MODE] Enabled - LLM will generate custom retrieval scripts[/dim]")
         else:

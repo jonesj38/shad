@@ -458,6 +458,156 @@ class QmdRetriever:
         except Exception:
             return []
 
+    async def ensure_collections(
+        self,
+        collection_names: dict[str, Any] | None = None,
+    ) -> dict[str, bool]:
+        """Ensure vault paths are registered as qmd collections with up-to-date indexes.
+
+        For each vault path:
+        1. Check if it's already a qmd collection
+        2. If not, add it via `qmd collection add`
+        3. Run `qmd update` to refresh the BM25 index for any new/changed files
+        4. Run `qmd embed` for any chunks missing embeddings
+
+        Args:
+            collection_names: Mapping of collection name -> path. Falls back
+                              to self._collection_names if not provided.
+
+        Returns:
+            Dict mapping collection name -> True if provisioned/updated successfully
+        """
+        if not self.available:
+            return {}
+
+        names = collection_names or self._collection_names
+        if not names:
+            return {}
+
+        # Get existing qmd collections
+        existing = await self.list_collections()
+        existing_by_path: dict[str, str] = {}
+        existing_names: set[str] = set()
+        for coll in existing:
+            cname = coll.get("name", "")
+            cpath = coll.get("path", "")
+            if cname and cpath:
+                from pathlib import Path
+                existing_by_path[str(Path(cpath).resolve())] = cname
+                existing_names.add(cname)
+
+        results: dict[str, bool] = {}
+        added_any = False
+
+        for name, path in names.items():
+            from pathlib import Path
+            resolved = str(Path(str(path)).resolve())
+
+            if resolved in existing_by_path:
+                logger.info(f"[QMD] Collection '{existing_by_path[resolved]}' already exists for {resolved}")
+                results[name] = True
+            elif name in existing_names:
+                logger.info(f"[QMD] Collection '{name}' exists (different path)")
+                results[name] = True
+            else:
+                logger.info(f"[QMD] Auto-provisioning collection '{name}' from {resolved}")
+                success = await self.add_collection(resolved, name=name)
+                results[name] = success
+                if success:
+                    added_any = True
+                    logger.info(f"[QMD] Added collection '{name}'")
+                else:
+                    logger.error(f"[QMD] Failed to add collection '{name}'")
+
+        # Refresh BM25 index for new/changed files
+        await self.update_index()
+
+        # Embed any chunks that are missing embeddings
+        if added_any:
+            logger.info("[QMD] Running embeddings for new collections...")
+            await self.embed()
+        else:
+            # Incremental embed — only embeds chunks without vectors
+            await self.embed_incremental()
+
+        # Invalidate collection cache so next search picks up new collections
+        self._qmd_collections_by_path = None
+
+        return results
+
+    async def update_index(self) -> bool:
+        """Update the BM25 full-text index for all collections.
+
+        Runs `qmd update` which scans for new/modified/deleted files
+        and refreshes the SQLite FTS5 index.
+
+        Returns:
+            True if successful
+        """
+        if not self.available:
+            return False
+
+        try:
+            def _run() -> subprocess.CompletedProcess[bytes]:
+                return subprocess.run(
+                    ["qmd", "update"],
+                    capture_output=True,
+                    timeout=120,
+                )
+
+            loop = asyncio.get_running_loop()
+            result = await loop.run_in_executor(None, _run)
+
+            if result.returncode != 0:
+                stderr = result.stderr.decode().strip() if result.stderr else ""
+                logger.warning(f"qmd update returned non-zero: {stderr}")
+                return False
+
+            logger.info("[QMD] Index updated successfully")
+            return True
+
+        except Exception as e:
+            logger.error(f"qmd update error: {e}")
+            return False
+
+    async def embed_incremental(self) -> bool:
+        """Embed only chunks that are missing embeddings.
+
+        Unlike `embed()` which re-embeds everything, this only processes
+        new content that doesn't have vectors yet.
+
+        Returns:
+            True if successful
+        """
+        if not self.available:
+            return False
+
+        try:
+            def _run() -> subprocess.CompletedProcess[bytes]:
+                env = os.environ.copy()
+                env["QMD_OPENAI"] = "1"
+                return subprocess.run(
+                    ["qmd", "embed"],
+                    capture_output=True,
+                    timeout=300,  # Embedding can take a while
+                    env=env,
+                )
+
+            loop = asyncio.get_running_loop()
+            result = await loop.run_in_executor(None, _run)
+
+            if result.returncode != 0:
+                stderr = result.stderr.decode().strip() if result.stderr else ""
+                logger.warning(f"qmd embed returned non-zero: {stderr}")
+                return False
+
+            logger.info("[QMD] Incremental embedding complete")
+            return True
+
+        except Exception as e:
+            logger.error(f"qmd embed error: {e}")
+            return False
+
     def _parse_results(self, data: list[dict[str, Any]] | dict[str, Any]) -> list[RetrievalResult]:
         """Parse qmd JSON output into RetrievalResult objects.
 
