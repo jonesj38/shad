@@ -218,7 +218,7 @@ def run(
         # Auto-provision qmd collections for vault paths
         if isinstance(retriever_instance, QmdRetriever) and collection_names:
             console.print("[dim][QMD] Ensuring collections are provisioned and indexed...[/dim]")
-            provision_results = await retriever_instance.ensure_collections(collection_names)
+            provision_results = run_async(retriever_instance.ensure_collections(collection_names))
             for cname, success in provision_results.items():
                 if success:
                     console.print(f"[dim][QMD] ✓ {cname}[/dim]")
