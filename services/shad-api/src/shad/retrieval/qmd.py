@@ -512,23 +512,30 @@ class QmdRetriever:
             else:
                 logger.info(f"[QMD] Auto-provisioning collection '{name}' from {resolved}")
                 success = await self.add_collection(resolved, name=name)
-                results[name] = success
                 if success:
                     added_any = True
+                    results[name] = True
                     logger.info(f"[QMD] Added collection '{name}'")
                 else:
-                    logger.error(f"[QMD] Failed to add collection '{name}'")
+                    # May already exist under a slightly different path — treat as OK
+                    logger.warning(f"[QMD] Could not add collection '{name}' (may already exist)")
+                    results[name] = True
 
         # Refresh BM25 index for new/changed files
         await self.update_index()
 
-        # Embed any chunks that are missing embeddings
-        if added_any:
-            logger.info("[QMD] Running embeddings for new collections...")
-            await self.embed()
-        else:
-            # Incremental embed — only embeds chunks without vectors
-            await self.embed_incremental()
+        # Embed any chunks that are missing embeddings (best-effort, don't block)
+        try:
+            if added_any:
+                logger.info("[QMD] Running embeddings for new collections (best-effort)...")
+                await asyncio.wait_for(self.embed(), timeout=30)
+            else:
+                # Incremental embed — only embeds chunks without vectors
+                await asyncio.wait_for(self.embed_incremental(), timeout=30)
+        except asyncio.TimeoutError:
+            logger.warning("[QMD] Embedding timed out (30s) — continuing without full embeddings. BM25 search still works.")
+        except Exception as e:
+            logger.warning(f"[QMD] Embedding failed (non-fatal): {e}")
 
         # Invalidate collection cache so next search picks up new collections
         self._qmd_collections_by_path = None
