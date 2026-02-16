@@ -109,6 +109,7 @@ def cli() -> None:
 @click.option("--orchestrator-model", "-O", help="Model for planning/synthesis (e.g., opus, sonnet, haiku)")
 @click.option("--worker-model", "-W", help="Model for mid-depth execution (e.g., opus, sonnet, haiku)")
 @click.option("--leaf-model", "-L", help="Model for fast parallel execution (e.g., opus, sonnet, haiku)")
+@click.option("--gemini", is_flag=True, help="Use Gemini CLI instead of Claude Code")
 def run(
     goal: str,
     vault: tuple[str, ...],
@@ -130,6 +131,7 @@ def run(
     orchestrator_model: str | None,
     worker_model: str | None,
     leaf_model: str | None,
+    gemini: bool,
 ) -> None:
     """Execute a reasoning task.
 
@@ -139,6 +141,7 @@ def run(
         shad run "Summarize research" --vault ~/Notes
         shad run "Build REST API" --vault ~/Project --vault ~/Patterns
         shad run "Complex task" -O opus -W sonnet -L haiku
+        shad run "Using Gemini" --gemini -O gemini-1.5-pro
     """
     # Configure logging (verbose by default, --quiet to suppress)
     if not quiet:
@@ -243,6 +246,12 @@ def run(
     console.print(f"[dim][VERIFY] Level: {verify}[/dim]")
     if write_files:
         console.print(f"[dim][OUTPUT] Write files enabled{f' → {output_dir}' if output_dir else ''}[/dim]")
+    
+    # Provider info
+    if gemini:
+        console.print("[dim][PROVIDER] Using Gemini CLI[/dim]")
+    else:
+        console.print("[dim][PROVIDER] Using Claude Code CLI[/dim]")
 
     # Create model config if any model overrides specified
     model_config: ModelConfig | None = None
@@ -263,7 +272,11 @@ def run(
     async def _execute_run() -> Run:
         """Execute run."""
         engine = RLMEngine(
-            llm_provider=LLMProvider(model_config=model_config),
+            llm_provider=LLMProvider(
+                model_config=model_config,
+                use_gemini_cli=gemini,
+                use_claude_code=not gemini,
+            ),
             retriever=retriever_instance,
             vault_path=primary_vault,
             collections=collections,

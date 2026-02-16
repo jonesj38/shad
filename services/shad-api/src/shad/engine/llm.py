@@ -10,7 +10,7 @@ from typing import Any
 
 from shad.models.run import ModelConfig
 from shad.utils.config import get_settings
-from shad.utils.models import get_ollama_env, is_ollama_model, normalize_model_name
+from shad.utils.models import get_ollama_env, is_ollama_model, normalize_model_name, is_gemini_model
 
 logger = logging.getLogger(__name__)
 
@@ -31,10 +31,12 @@ class LLMProvider:
     def __init__(
         self,
         use_claude_code: bool = True,
+        use_gemini_cli: bool = False,
         model_config: ModelConfig | None = None,
     ) -> None:
         self.settings = get_settings()
         self.use_claude_code = use_claude_code
+        self.use_gemini_cli = use_gemini_cli
         self._anthropic_client: Any = None
         self._openai_client: Any = None
 
@@ -59,13 +61,21 @@ class LLMProvider:
         Checks for overrides first, then falls back to settings.
         """
         if tier == ModelTier.ORCHESTRATOR:
-            return self._orchestrator_override or self.settings.orchestrator_model
+            if self._orchestrator_override:
+                return self._orchestrator_override
+            return self.settings.gemini_orchestrator_model if self.use_gemini_cli else self.settings.orchestrator_model
         elif tier == ModelTier.WORKER:
-            return self._worker_override or self.settings.worker_model
+            if self._worker_override:
+                return self._worker_override
+            return self.settings.gemini_worker_model if self.use_gemini_cli else self.settings.worker_model
         elif tier in (ModelTier.LEAF, ModelTier.JUDGE):
-            return self._leaf_override or self.settings.leaf_model
+            if self._leaf_override:
+                return self._leaf_override
+            return self.settings.gemini_leaf_model if self.use_gemini_cli else self.settings.leaf_model
         else:
-            return self._worker_override or self.settings.worker_model
+            if self._worker_override:
+                return self._worker_override
+            return self.settings.gemini_worker_model if self.use_gemini_cli else self.settings.worker_model
 
     async def complete(
         self,
@@ -83,6 +93,14 @@ class LLMProvider:
         """
         model = self.get_model_for_tier(tier)
         logger.debug(f"Using model {model} for tier {tier}")
+
+        # Check for Gemini CLI
+        if self.use_gemini_cli and is_gemini_model(model):
+            return await self._complete_gemini_cli(
+                prompt=prompt,
+                system=system,
+                model=model,
+            )
 
         # Use Claude Code CLI as primary (uses subscription, not API costs)
         if self.use_claude_code:
@@ -137,6 +155,55 @@ class LLMProvider:
         else:
             # Default to sonnet if unknown Claude model
             return "sonnet"
+
+    async def _complete_gemini_cli(
+        self,
+        prompt: str,
+        system: str | None = None,
+        model: str = "gemini-3-pro-preview",
+    ) -> tuple[str, int]:
+        """Complete using Gemini CLI."""
+        import os
+
+        # Combine system prompt and user prompt
+        full_prompt = prompt
+        if system:
+            full_prompt = f"<system>\n{system}\n</system>\n\n<task>\n{prompt}\n</task>"
+
+        logger.info(f"[GEMINI_CLI] Preparing to call Gemini CLI (model: {model})")
+
+        # Prepare environment
+        env = os.environ.copy()
+        # No API key handling - gemini CLI manages its own auth
+
+        try:
+            logger.info(f"[GEMINI_CLI] Executing: gemini --model {model} (prompt via stdin)")
+            process = await asyncio.create_subprocess_exec(
+                "gemini",
+                "--model", model,
+                stdin=asyncio.subprocess.PIPE,
+                stdout=asyncio.subprocess.PIPE,
+                stderr=asyncio.subprocess.PIPE,
+                env=env,
+            )
+
+            stdout, stderr = await process.communicate(input=full_prompt.encode())
+
+            if process.returncode != 0:
+                error_msg = stderr.decode() if stderr else "Unknown error"
+                logger.error(f"[GEMINI_CLI] CLI error: {error_msg}")
+                raise RuntimeError(f"Gemini CLI failed: {error_msg}")
+
+            response = stdout.decode().strip()
+            estimated_tokens = len(response.split()) * 2
+            logger.info(f"[GEMINI_CLI] Success - response length: {len(response)} chars")
+            return response, estimated_tokens
+
+        except FileNotFoundError as e:
+            logger.error(f"[GEMINI_CLI] gemini CLI not found in PATH")
+            raise RuntimeError(
+                "Gemini CLI not found. Install it or set use_gemini_cli=False"
+            ) from e
 
     async def _complete_claude_code(
         self,
