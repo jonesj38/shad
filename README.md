@@ -358,6 +358,7 @@ shad trace node <run_id> <node_id>
 # Resume partial run (with delta verification)
 shad resume <run_id>
 shad resume <run_id> --replay stale
+shad resume <run_id> --profile deep
 
 # Export files from completed run
 shad export <run_id> --output ./out
@@ -390,6 +391,7 @@ shad search "oauth refresh token" --mode vector
 **Environment check:**
 ```bash
 shad doctor
+shad doctor --fix   # Attempt to install qmd
 ```
 
 ### Performance Profiles (by machine)
