@@ -333,6 +333,7 @@ Options:
   --vault, -v       Path to vault (repeatable; falls back to OBSIDIAN_VAULT_PATH)
   --retriever, -r   Retrieval backend: auto|qmd|filesystem (default: auto)
   --strategy        Force strategy (software|research|analysis|planning)
+  --profile         Budget preset: fast|balanced|deep
   --max-depth, -d   Maximum recursion depth (default: 3)
   --max-nodes       Maximum DAG nodes (default: 50)
   --max-time, -t    Maximum wall time in seconds (default: 1200)
@@ -371,12 +372,12 @@ shad run "Summarize my current project" --vault ~/MyVault -O sonnet -W sonnet -L
 
 **Fast + cheap (use for simple queries):**
 ```bash
-shad run "Summarize these notes" --vault ~/MyVault -O haiku -W haiku -L haiku --max-depth 2 --max-nodes 25
+shad run "Summarize these notes" --vault ~/MyVault --profile fast -O haiku -W haiku -L haiku
 ```
 
 **Deep reasoning (larger tasks):**
 ```bash
-shad run "Design an API architecture" --vault ~/MyVault -O opus -W sonnet -L haiku --max-depth 4 --max-nodes 80 --max-time 1800
+shad run "Design an API architecture" --vault ~/MyVault --profile deep -O opus -W sonnet -L haiku
 ```
 
 **Debugging retrieval quality:**
@@ -384,6 +385,11 @@ shad run "Design an API architecture" --vault ~/MyVault -O opus -W sonnet -L hai
 shad search "oauth refresh token" --mode hybrid
 shad search "oauth refresh token" --mode bm25
 shad search "oauth refresh token" --mode vector
+```
+
+**Environment check:**
+```bash
+shad doctor
 ```
 
 ### Performance Profiles (by machine)

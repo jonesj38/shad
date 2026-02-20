@@ -90,6 +90,8 @@ def cli() -> None:
 @click.option("--vault", "-v", multiple=True, help="Vault path(s) for context (can specify multiple)")
 @click.option("--retriever", "-r", type=click.Choice(["auto", "qmd", "filesystem"]), default="auto",
               help="Retrieval backend (auto detects qmd)")
+@click.option("--profile", type=click.Choice(["fast", "balanced", "deep"], case_sensitive=False),
+              help="Preset budget profile: fast, balanced, or deep")
 @click.option("--max-depth", "-d", default=3, help="Maximum recursion depth")
 @click.option("--max-nodes", default=50, help="Maximum DAG nodes")
 @click.option("--max-time", "-t", default=1200, help="Maximum wall time in seconds")
@@ -113,6 +115,7 @@ def run(
     goal: str,
     vault: tuple[str, ...],
     retriever: str,
+    profile: str | None,
     max_depth: int,
     max_nodes: int,
     max_time: int,
@@ -139,6 +142,7 @@ def run(
         shad run "Summarize research" --vault ~/Notes
         shad run "Build REST API" --vault ~/Project --vault ~/Patterns
         shad run "Complex task" -O opus -W sonnet -L haiku
+        shad run "Fast summary" --profile fast
     """
     # Configure logging (verbose by default, --quiet to suppress)
     if not quiet:
@@ -149,6 +153,28 @@ def run(
         )
         # Set shad loggers to INFO
         logging.getLogger("shad").setLevel(logging.INFO)
+
+    # Apply budget profile if provided (can be overridden by explicit flags)
+    if profile:
+        profile_key = profile.lower()
+        presets = {
+            "fast": {"max_depth": 2, "max_nodes": 25, "max_time": 600, "max_tokens": 800000},
+            "balanced": {"max_depth": 3, "max_nodes": 50, "max_time": 1200, "max_tokens": 2000000},
+            "deep": {"max_depth": 4, "max_nodes": 80, "max_time": 1800, "max_tokens": 3000000},
+        }
+        if profile_key in presets:
+            preset = presets[profile_key]
+            if max_depth == 3:
+                max_depth = preset["max_depth"]
+            if max_nodes == 50:
+                max_nodes = preset["max_nodes"]
+            if max_time == 1200:
+                max_time = preset["max_time"]
+            if max_tokens == 100000:
+                max_tokens = preset["max_tokens"]
+            console.print(
+                f"[dim][PROFILE] {profile_key} preset applied (depth={max_depth}, nodes={max_nodes}, time={max_time}s)[/dim]"
+            )
 
     # If API specified, use remote execution
     if api:
@@ -1864,6 +1890,56 @@ def init(path: str, force: bool, yes: bool) -> None:
     console.print(f"\n[green]Created {settings_file}[/green]")
     console.print("\n[dim]You can now run shad commands in this project without permission prompts.[/dim]")
     console.print("[dim]To revoke permissions, delete .claude/settings.json[/dim]")
+
+
+@cli.command("doctor")
+def doctor() -> None:
+    """Run environment checks for common issues.
+
+    
+    Examples:
+        shad doctor
+    """
+    import shutil
+    import subprocess
+
+    console.print(Panel("Shad Doctor", border_style="blue"))
+
+    # Check shad binary (self)
+    console.print(f"[green]✔[/green] Shad CLI available")
+
+    # Check qmd
+    qmd_path = shutil.which("qmd")
+    if qmd_path:
+        console.print(f"[green]✔[/green] qmd detected: {qmd_path}")
+        try:
+            result = subprocess.run(["qmd", "status", "--json"], capture_output=True, timeout=5)
+            if result.returncode == 0:
+                console.print("[green]✔[/green] qmd status OK")
+            else:
+                console.print("[yellow]⚠[/yellow] qmd status returned non-zero")
+        except Exception:
+            console.print("[yellow]⚠[/yellow] qmd status check failed")
+    else:
+        console.print("[yellow]⚠[/yellow] qmd not found (filesystem search only)")
+
+    # Check Redis
+    redis_url = get_settings().redis_url
+    try:
+        hostport = redis_url.split("//", 1)[-1]
+        host, port = hostport.split(":", 1)
+        port = int(port.split("/", 1)[0])
+        import socket
+        with socket.create_connection((host, port), timeout=2):
+            console.print(f"[green]✔[/green] Redis reachable at {host}:{port}")
+    except Exception:
+        console.print(f"[yellow]⚠[/yellow] Redis not reachable at {redis_url}")
+
+    # Check vault env
+    if get_settings().obsidian_vault_path:
+        console.print(f"[green]✔[/green] OBSIDIAN_VAULT_PATH set: {get_settings().obsidian_vault_path}")
+    else:
+        console.print("[yellow]⚠[/yellow] OBSIDIAN_VAULT_PATH not set (pass --vault)")
 
 
 @cli.command("check-permissions")
