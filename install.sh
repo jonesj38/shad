@@ -174,6 +174,7 @@ setup_qmd() {
     # Recommended fork with OpenAI embeddings support
     QMD_REPO_DEFAULT="https://github.com/jonesj38/qmd#feat/openai-embeddings"
     QMD_REPO="${QMD_REPO:-$QMD_REPO_DEFAULT}"
+    log_info "qmd repo: ${QMD_REPO}"
 
     # Check if qmd is already installed
     if command -v qmd &> /dev/null; then
@@ -295,6 +296,9 @@ print_success() {
     echo "  If qmd is installed, register your vault for hybrid search:"
     echo -e "     ${BLUE}qmd collection add ~/MyVault --name myvault${NC}"
     echo -e "     ${BLUE}QMD_OPENAI=1 qmd embed${NC}  # Generate embeddings (OpenAI)"
+    echo ""
+    echo "  Note: install.sh defaults to the OpenAI-embeddings qmd fork."
+    echo "  Override with: QMD_REPO=<repo#branch> ./install.sh"
     echo ""
 }
 

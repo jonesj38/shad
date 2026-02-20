@@ -362,6 +362,58 @@ shad resume <run_id> --replay stale
 shad export <run_id> --output ./out
 ```
 
+### UX Quick Start (Most Common Patterns)
+
+**Cold-start (best default):**
+```bash
+shad run "Summarize my current project" --vault ~/MyVault -O sonnet -W sonnet -L haiku
+```
+
+**Fast + cheap (use for simple queries):**
+```bash
+shad run "Summarize these notes" --vault ~/MyVault -O haiku -W haiku -L haiku --max-depth 2 --max-nodes 25
+```
+
+**Deep reasoning (larger tasks):**
+```bash
+shad run "Design an API architecture" --vault ~/MyVault -O opus -W sonnet -L haiku --max-depth 4 --max-nodes 80 --max-time 1800
+```
+
+**Debugging retrieval quality:**
+```bash
+shad search "oauth refresh token" --mode hybrid
+shad search "oauth refresh token" --mode bm25
+shad search "oauth refresh token" --mode vector
+```
+
+### Performance Profiles (by machine)
+
+Set these as defaults in `~/.shad/.env` if you want consistent behavior.
+
+**Low-end laptop / small VM**
+```bash
+DEFAULT_MAX_DEPTH=2
+DEFAULT_MAX_NODES=30
+DEFAULT_MAX_WALL_TIME=600
+DEFAULT_MAX_TOKENS=800000
+```
+
+**Mid-range dev machine (recommended)**
+```bash
+DEFAULT_MAX_DEPTH=3
+DEFAULT_MAX_NODES=50
+DEFAULT_MAX_WALL_TIME=1200
+DEFAULT_MAX_TOKENS=2000000
+```
+
+**High-end workstation**
+```bash
+DEFAULT_MAX_DEPTH=4
+DEFAULT_MAX_NODES=80
+DEFAULT_MAX_WALL_TIME=1800
+DEFAULT_MAX_TOKENS=3000000
+```
+
 ### Model Selection
 
 All models are accessed through Claude CLI. You can use Claude models (via your subscription) or Ollama models (local, free):
@@ -415,8 +467,10 @@ For hybrid BM25 + vector search with LLM reranking, install [qmd](https://github
 
 ```bash
 # Install qmd (installer does this automatically if bun/npm available)
-# Recommended fork with OpenAI embeddings support:
+# Recommended fork with OpenAI embeddings support (default in install.sh):
 bun install -g https://github.com/jonesj38/qmd#feat/openai-embeddings
+# You can override the repo used by install.sh with:
+#   QMD_REPO=https://github.com/jonesj38/qmd#feat/openai-embeddings ./install.sh
 
 # Register your vault as a collection
 qmd collection add ~/MyVault --name myvault
