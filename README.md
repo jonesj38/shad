@@ -335,6 +335,7 @@ Options:
   --strategy        Force strategy (software|research|analysis|planning)
   --profile         Budget preset: fast|balanced|deep
   --auto-profile    Auto-select profile based on machine specs
+  --dry-run         Show budgets/models and exit
   --max-depth, -d   Maximum recursion depth (default: 3)
   --max-nodes       Maximum DAG nodes (default: 50)
   --max-time, -t    Maximum wall time in seconds (default: 1200)
@@ -360,6 +361,7 @@ shad trace node <run_id> <node_id>
 shad resume <run_id>
 shad resume <run_id> --replay stale
 shad resume <run_id> --profile deep
+shad resume <run_id> --auto-profile
 
 # Export files from completed run
 shad export <run_id> --output ./out
@@ -380,6 +382,11 @@ shad run "Summarize these notes" --vault ~/MyVault --profile fast -O haiku -W ha
 **Auto profile (machine-based):**
 ```bash
 shad run "Summarize these notes" --vault ~/MyVault --auto-profile
+```
+
+**Dry run (see budgets before running):**
+```bash
+shad run "Summarize these notes" --vault ~/MyVault --auto-profile --dry-run
 ```
 
 **Deep reasoning (larger tasks):**

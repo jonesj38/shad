@@ -128,6 +128,7 @@ def cli() -> None:
 @click.option("--profile", type=click.Choice(["fast", "balanced", "deep"], case_sensitive=False),
               help="Preset budget profile: fast, balanced, or deep")
 @click.option("--auto-profile", is_flag=True, help="Auto-select profile based on machine specs")
+@click.option("--dry-run", is_flag=True, help="Show budgets/models and exit")
 @click.option("--max-depth", "-d", default=3, help="Maximum recursion depth")
 @click.option("--max-nodes", default=50, help="Maximum DAG nodes")
 @click.option("--max-time", "-t", default=1200, help="Maximum wall time in seconds")
@@ -153,6 +154,7 @@ def run(
     retriever: str,
     profile: str | None,
     auto_profile: bool,
+    dry_run: bool,
     max_depth: int,
     max_nodes: int,
     max_time: int,
@@ -241,6 +243,12 @@ def run(
             console.print(
                 f"[dim][HINT] For this machine ({cpu_count} CPU / {mem_gb:.1f} GB), try --profile {suggestion}[/dim]"
             )
+
+    if dry_run:
+        console.print(
+            f"[dim][DRY RUN] depth={max_depth}, nodes={max_nodes}, time={max_time}s, tokens={max_tokens}[/dim]"
+        )
+        return
 
     # If API specified, use remote execution
     if api:
@@ -538,6 +546,7 @@ def trace_node(run_id: str, node_id: str) -> None:
 @click.argument("run_id")
 @click.option("--profile", type=click.Choice(["fast", "balanced", "deep"], case_sensitive=False),
               help="Preset budget profile: fast, balanced, or deep")
+@click.option("--auto-profile", is_flag=True, help="Auto-select profile based on machine specs")
 @click.option("--max-depth", "-d", type=int, help="Override max depth")
 @click.option("--max-nodes", type=int, help="Override max nodes")
 @click.option("--max-time", "-t", type=int, help="Override max time")
@@ -549,6 +558,7 @@ def trace_node(run_id: str, node_id: str) -> None:
 def resume(
     run_id: str,
     profile: str | None,
+    auto_profile: bool,
     max_depth: int | None,
     max_nodes: int | None,
     max_time: int | None,
@@ -603,6 +613,20 @@ def resume(
             run_data.config.budget.max_wall_time = preset["max_time"]
             run_data.config.budget.max_tokens = preset["max_tokens"]
             console.print(f"[dim][PROFILE] {profile_key} preset applied[/dim]")
+    elif auto_profile:
+        cpu_count, mem_gb = _get_system_specs()
+        profile_key = _suggest_profile(cpu_count, mem_gb)
+        presets = {
+            "fast": {"max_depth": 2, "max_nodes": 25, "max_time": 600, "max_tokens": 800000},
+            "balanced": {"max_depth": 3, "max_nodes": 50, "max_time": 1200, "max_tokens": 2000000},
+            "deep": {"max_depth": 4, "max_nodes": 80, "max_time": 1800, "max_tokens": 3000000},
+        }
+        preset = presets[profile_key]
+        run_data.config.budget.max_depth = preset["max_depth"]
+        run_data.config.budget.max_nodes = preset["max_nodes"]
+        run_data.config.budget.max_wall_time = preset["max_time"]
+        run_data.config.budget.max_tokens = preset["max_tokens"]
+        console.print(f"[dim][PROFILE] auto-selected {profile_key}[/dim]")
 
     # Override budgets if specified
     if max_depth:
