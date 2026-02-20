@@ -50,6 +50,7 @@ def get_retriever(
     # Try qmd first
     qmd = QmdRetriever(collection_names=collection_names)
     if qmd.available and prefer != "filesystem":
+        qmd.warn_if_missing_openai_support()
         logger.info("Using qmd retriever")
         return qmd
 

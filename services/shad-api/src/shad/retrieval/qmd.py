@@ -98,6 +98,8 @@ class QmdRetriever:
         self._collection_names = collection_names or {}
         # Cache for qmd-registered collection names mapped by path
         self._qmd_collections_by_path: dict[str, str] | None = None
+        self._openai_support: bool | None = None
+        self._warned_openai_support: bool = False
 
     @property
     def available(self) -> bool:
@@ -105,6 +107,48 @@ class QmdRetriever:
         if self._qmd_path is None:
             self._qmd_path = shutil.which("qmd")
         return self._qmd_path is not None
+
+    def _detect_openai_support(self) -> bool:
+        """Best-effort detection for OpenAI embeddings support in qmd."""
+        if self._openai_support is not None:
+            return self._openai_support
+
+        if not self.available:
+            self._openai_support = False
+            return self._openai_support
+
+        def _check_help(args: list[str]) -> bool:
+            try:
+                result = subprocess.run(
+                    args,
+                    capture_output=True,
+                    timeout=5,
+                )
+                text = ((result.stdout or b"") + (result.stderr or b"")).decode().lower()
+                return "openai" in text or "qmd_openai" in text
+            except Exception:
+                return False
+
+        supports = _check_help(["qmd", "--help"]) or _check_help(["qmd", "embed", "--help"])
+        self._openai_support = supports
+        return supports
+
+    def warn_if_missing_openai_support(self) -> None:
+        """Warn once if qmd lacks OpenAI embeddings support."""
+        if self._warned_openai_support:
+            return
+        if os.environ.get("SHAD_QMD_NO_OPENAI_WARNING") == "1":
+            return
+        if not self.available:
+            return
+        if self._detect_openai_support():
+            return
+
+        self._warned_openai_support = True
+        logger.warning(
+            "qmd detected without OpenAI embeddings support. For best results, install the fork: "
+            "https://github.com/jonesj38/qmd#feat/openai-embeddings (or set SHAD_QMD_NO_OPENAI_WARNING=1 to silence)."
+        )
 
     async def _load_qmd_collections(self) -> dict[str, str]:
         """Load qmd-registered collections and map by path.

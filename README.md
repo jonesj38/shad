@@ -52,6 +52,7 @@ This allows Shad to effectively utilize **gigabytes** of context — not by load
 - An Obsidian vault (or any directory of markdown files)
 - (Optional) Docker for Redis (enables cross-run caching)
 - (Optional) [qmd](https://github.com/tobi/qmd) for hybrid semantic search
+  - **Recommended fork (OpenAI embeddings):** https://github.com/jonesj38/qmd/tree/feat/openai-embeddings
 - (Optional) [Ollama](https://ollama.com) for local open-source models
 
 ### Installation
@@ -334,7 +335,7 @@ Options:
   --strategy        Force strategy (software|research|analysis|planning)
   --max-depth, -d   Maximum recursion depth (default: 3)
   --max-nodes       Maximum DAG nodes (default: 50)
-  --max-time, -t    Maximum wall time in seconds (default: 300)
+  --max-time, -t    Maximum wall time in seconds (default: 1200)
   --verify          Verification level (off|basic|build|strict)
   --write-files     Write output files to disk
   --output, -o      Output directory (requires --write-files)
@@ -414,13 +415,14 @@ For hybrid BM25 + vector search with LLM reranking, install [qmd](https://github
 
 ```bash
 # Install qmd (installer does this automatically if bun/npm available)
-bun install -g https://github.com/tobi/qmd
+# Recommended fork with OpenAI embeddings support:
+bun install -g https://github.com/jonesj38/qmd#feat/openai-embeddings
 
 # Register your vault as a collection
 qmd collection add ~/MyVault --name myvault
 
 # Generate embeddings (required for semantic search)
-qmd embed
+QMD_OPENAI=1 qmd embed
 ```
 
 Without qmd, shad falls back to filesystem search (basic keyword matching).
@@ -470,7 +472,7 @@ REDIS_URL=redis://localhost:6379/0
 # Optional: Budget defaults
 DEFAULT_MAX_DEPTH=3
 DEFAULT_MAX_NODES=50
-DEFAULT_MAX_WALL_TIME=300
+DEFAULT_MAX_WALL_TIME=1200
 DEFAULT_MAX_TOKENS=2000000
 
 # Legacy fallback (only if Claude CLI unavailable)

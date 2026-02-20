@@ -49,7 +49,7 @@ class StopReason(str, Enum):
 class Budget(BaseModel):
     """Budget constraints for a run."""
 
-    max_wall_time: int = Field(default=300, description="Maximum wall time in seconds")
+    max_wall_time: int = Field(default=1200, description="Maximum wall time in seconds")
     max_tokens: int = Field(default=100000, description="Maximum total tokens")
     max_nodes: int = Field(default=50, description="Maximum DAG nodes")
     max_depth: int = Field(default=3, description="Maximum recursion depth")

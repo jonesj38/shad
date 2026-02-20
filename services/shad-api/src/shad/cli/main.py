@@ -21,7 +21,7 @@ from shad.engine import LLMProvider, RLMEngine
 from shad.engine.llm import ModelTier
 from shad.history import HistoryManager
 from shad.models import Budget, ModelConfig, RunConfig
-from shad.models.run import NodeStatus, Run, RunStatus
+from shad.models.run import NodeStatus, Run, RunStatus, StopReason
 from shad.retrieval import FilesystemRetriever, QmdRetriever, get_retriever
 from shad.utils.config import get_settings
 
@@ -92,7 +92,7 @@ def cli() -> None:
               help="Retrieval backend (auto detects qmd)")
 @click.option("--max-depth", "-d", default=3, help="Maximum recursion depth")
 @click.option("--max-nodes", default=50, help="Maximum DAG nodes")
-@click.option("--max-time", "-t", default=300, help="Maximum wall time in seconds")
+@click.option("--max-time", "-t", default=1200, help="Maximum wall time in seconds")
 @click.option("--max-tokens", default=100000, help="Maximum tokens")
 @click.option("--voice", help="Voice for output rendering")
 @click.option("--output", "-o", type=click.Path(), help="Output file for results")
@@ -1647,6 +1647,10 @@ def _display_run_result(run: Run) -> None:
 
     if run.stop_reason:
         console.print(f"[dim]Stop reason: {run.stop_reason.value}[/dim]")
+        if run.stop_reason == StopReason.BUDGET_TIME:
+            console.print(
+                "[yellow]Hit max wall time. Consider re-running with --max-time (e.g., 1800) or set DEFAULT_MAX_WALL_TIME in ~/.shad/.env[/yellow]"
+            )
 
     if run.error:
         console.print(f"[red]Error: {run.error}[/red]")
