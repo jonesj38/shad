@@ -244,12 +244,6 @@ def run(
                 f"[dim][HINT] For this machine ({cpu_count} CPU / {mem_gb:.1f} GB), try --profile {suggestion}[/dim]"
             )
 
-    if dry_run:
-        console.print(
-            f"[dim][DRY RUN] depth={max_depth}, nodes={max_nodes}, time={max_time}s, tokens={max_tokens}[/dim]"
-        )
-        return
-
     # If API specified, use remote execution
     if api:
         _run_via_api(goal, vault[0] if vault else None, max_depth, api)
@@ -359,6 +353,24 @@ def run(
             console.print(f"[dim]  Worker: {worker_model}[/dim]")
         if leaf_model:
             console.print(f"[dim]  Leaf: {leaf_model}[/dim]")
+
+    if dry_run:
+        llm = LLMProvider(model_config=model_config)
+        orch = llm.get_model_for_tier(ModelTier.ORCHESTRATOR)
+        work = llm.get_model_for_tier(ModelTier.WORKER)
+        leaf = llm.get_model_for_tier(ModelTier.LEAF)
+        retriever_name = type(retriever_instance).__name__ if retriever_instance else "None"
+
+        table = Table(title="Shad Dry Run", show_header=False)
+        table.add_column("Key", style="cyan")
+        table.add_column("Value")
+        table.add_row("Budget", f"depth={max_depth}, nodes={max_nodes}, time={max_time}s, tokens={max_tokens}")
+        table.add_row("Retriever", retriever_name)
+        table.add_row("Vaults", str(len(vault_paths)) if vault_paths else "none")
+        table.add_row("Models", f"O={orch}, W={work}, L={leaf}")
+        table.add_row("Mode", "qmd-hybrid" if qmd_hybrid else ("code-mode" if use_code_mode else "direct"))
+        console.print(table)
+        return
 
     async def _execute_run() -> Run:
         """Execute run."""
