@@ -334,6 +334,7 @@ Options:
   --retriever, -r   Retrieval backend: auto|qmd|filesystem (default: auto)
   --strategy        Force strategy (software|research|analysis|planning)
   --profile         Budget preset: fast|balanced|deep
+  --auto-profile    Auto-select profile based on machine specs
   --max-depth, -d   Maximum recursion depth (default: 3)
   --max-nodes       Maximum DAG nodes (default: 50)
   --max-time, -t    Maximum wall time in seconds (default: 1200)
@@ -376,6 +377,11 @@ shad run "Summarize my current project" --vault ~/MyVault -O sonnet -W sonnet -L
 shad run "Summarize these notes" --vault ~/MyVault --profile fast -O haiku -W haiku -L haiku
 ```
 
+**Auto profile (machine-based):**
+```bash
+shad run "Summarize these notes" --vault ~/MyVault --auto-profile
+```
+
 **Deep reasoning (larger tasks):**
 ```bash
 shad run "Design an API architecture" --vault ~/MyVault --profile deep -O opus -W sonnet -L haiku
@@ -391,7 +397,7 @@ shad search "oauth refresh token" --mode vector
 **Environment check:**
 ```bash
 shad doctor
-shad doctor --fix   # Attempt to install qmd
+shad doctor --fix   # Install qmd + (if vault set) add collection + embed
 ```
 
 ### Performance Profiles (by machine)

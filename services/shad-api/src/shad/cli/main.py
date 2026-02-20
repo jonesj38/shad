@@ -127,6 +127,7 @@ def cli() -> None:
               help="Retrieval backend (auto detects qmd)")
 @click.option("--profile", type=click.Choice(["fast", "balanced", "deep"], case_sensitive=False),
               help="Preset budget profile: fast, balanced, or deep")
+@click.option("--auto-profile", is_flag=True, help="Auto-select profile based on machine specs")
 @click.option("--max-depth", "-d", default=3, help="Maximum recursion depth")
 @click.option("--max-nodes", default=50, help="Maximum DAG nodes")
 @click.option("--max-time", "-t", default=1200, help="Maximum wall time in seconds")
@@ -151,6 +152,7 @@ def run(
     vault: tuple[str, ...],
     retriever: str,
     profile: str | None,
+    auto_profile: bool,
     max_depth: int,
     max_nodes: int,
     max_time: int,
@@ -178,6 +180,7 @@ def run(
         shad run "Build REST API" --vault ~/Project --vault ~/Patterns
         shad run "Complex task" -O opus -W sonnet -L haiku
         shad run "Fast summary" --profile fast
+        shad run "Auto profile" --auto-profile
     """
     # Configure logging (verbose by default, --quiet to suppress)
     if not quiet:
@@ -210,6 +213,26 @@ def run(
             console.print(
                 f"[dim][PROFILE] {profile_key} preset applied (depth={max_depth}, nodes={max_nodes}, time={max_time}s)[/dim]"
             )
+    elif auto_profile:
+        cpu_count, mem_gb = _get_system_specs()
+        profile_key = _suggest_profile(cpu_count, mem_gb)
+        presets = {
+            "fast": {"max_depth": 2, "max_nodes": 25, "max_time": 600, "max_tokens": 800000},
+            "balanced": {"max_depth": 3, "max_nodes": 50, "max_time": 1200, "max_tokens": 2000000},
+            "deep": {"max_depth": 4, "max_nodes": 80, "max_time": 1800, "max_tokens": 3000000},
+        }
+        preset = presets[profile_key]
+        if max_depth == 3:
+            max_depth = preset["max_depth"]
+        if max_nodes == 50:
+            max_nodes = preset["max_nodes"]
+        if max_time == 1200:
+            max_time = preset["max_time"]
+        if max_tokens == 100000:
+            max_tokens = preset["max_tokens"]
+        console.print(
+            f"[dim][PROFILE] auto-selected {profile_key} (depth={max_depth}, nodes={max_nodes}, time={max_time}s)[/dim]"
+        )
     else:
         # Suggest a profile based on machine specs when defaults are used
         if max_depth == 3 and max_nodes == 50 and max_time == 1200 and max_tokens == 100000:
@@ -2020,10 +2043,21 @@ def doctor(fix: bool) -> None:
         console.print(f"[yellow]⚠[/yellow] Redis not reachable at {redis_url}")
 
     # Check vault env
-    if get_settings().obsidian_vault_path:
-        console.print(f"[green]✔[/green] OBSIDIAN_VAULT_PATH set: {get_settings().obsidian_vault_path}")
+    vault_path = get_settings().obsidian_vault_path
+    if vault_path:
+        console.print(f"[green]✔[/green] OBSIDIAN_VAULT_PATH set: {vault_path}")
     else:
         console.print("[yellow]⚠[/yellow] OBSIDIAN_VAULT_PATH not set (pass --vault)")
+
+    # Offer to register vault + embed if fixing and vault set
+    if fix and vault_path and qmd_path:
+        if click.confirm(f"Register vault {vault_path} with qmd and embed now?"):
+            try:
+                subprocess.run(["qmd", "collection", "add", vault_path, "--name", Path(vault_path).name], check=False)
+                subprocess.run(["qmd", "embed"], check=False, env={**os.environ, "QMD_OPENAI": "1"})
+                console.print("[green]✔[/green] qmd collection add + embed attempted")
+            except Exception:
+                console.print("[red]✖[/red] qmd embed failed")
 
     # Suggest profile based on machine specs
     cpu_count, mem_gb = _get_system_specs()
