@@ -187,7 +187,24 @@ class LLMProvider:
                 env=env,
             )
 
-            stdout, stderr = await process.communicate(input=full_prompt.encode())
+            try:
+                timeout = self.settings.gemini_cli_timeout
+                stdout, stderr = await asyncio.wait_for(
+                    process.communicate(input=full_prompt.encode()),
+                    timeout=timeout
+                )
+            except asyncio.TimeoutError:
+                logger.error(f"[GEMINI_CLI] Timeout after {timeout}s - killing process")
+                try:
+                    process.kill()
+                    await process.wait()
+                except Exception as kill_err:
+                    logger.warning(f"[GEMINI_CLI] Failed to kill process: {kill_err}")
+                
+                raise RuntimeError(
+                    f"Gemini CLI timed out after {timeout}s. "
+                    "Ensure you are authenticated (run 'gemini auth login') or increase gemini_cli_timeout."
+                )
 
             if process.returncode != 0:
                 error_msg = stderr.decode() if stderr else "Unknown error"

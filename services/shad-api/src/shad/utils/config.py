@@ -43,6 +43,7 @@ class Settings(BaseSettings):
 
     # Gemini CLI Settings
     use_gemini_cli: bool = False
+    gemini_cli_timeout: int = 120
     gemini_orchestrator_model: str = "gemini-3-pro-preview"
     gemini_worker_model: str = "gemini-3-pro-preview"
     gemini_leaf_model: str = "gemini-3-flash-preview"
