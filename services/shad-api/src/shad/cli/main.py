@@ -4,6 +4,8 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import os
+import platform
 import sys
 from pathlib import Path
 from typing import Any
@@ -21,11 +23,44 @@ from shad.engine import LLMProvider, RLMEngine
 from shad.engine.llm import ModelTier
 from shad.history import HistoryManager
 from shad.models import Budget, ModelConfig, RunConfig
-from shad.models.run import NodeStatus, Run, RunStatus
+from shad.models.run import NodeStatus, Run, RunStatus, StopReason
 from shad.retrieval import FilesystemRetriever, QmdRetriever, get_retriever
 from shad.utils.config import get_settings
 
 console = Console()
+
+
+def _get_system_specs() -> tuple[int, float]:
+    """Return (cpu_count, memory_gb) best-effort."""
+    cpu_count = os.cpu_count() or 4
+    mem_gb = 8.0
+    try:
+        system = platform.system().lower()
+        if system == "darwin":
+            import subprocess
+            result = subprocess.run(["sysctl", "-n", "hw.memsize"], capture_output=True, timeout=2)
+            if result.returncode == 0:
+                mem_bytes = int(result.stdout.strip() or 0)
+                mem_gb = max(mem_gb, mem_bytes / (1024 ** 3))
+        elif system == "linux":
+            with open("/proc/meminfo", "r", encoding="utf-8") as f:
+                for line in f:
+                    if line.startswith("MemTotal"):
+                        parts = line.split()
+                        mem_kb = int(parts[1])
+                        mem_gb = max(mem_gb, mem_kb / (1024 ** 2))
+                        break
+    except Exception:
+        pass
+    return cpu_count, mem_gb
+
+
+def _suggest_profile(cpu_count: int, mem_gb: float) -> str:
+    if cpu_count >= 12 and mem_gb >= 32:
+        return "deep"
+    if cpu_count <= 4 or mem_gb <= 8:
+        return "fast"
+    return "balanced"
 
 
 def run_async(coro: Any) -> Any:
@@ -90,9 +125,13 @@ def cli() -> None:
 @click.option("--vault", "-v", multiple=True, help="Vault path(s) for context (can specify multiple)")
 @click.option("--retriever", "-r", type=click.Choice(["auto", "qmd", "filesystem"]), default="auto",
               help="Retrieval backend (auto detects qmd)")
+@click.option("--profile", type=click.Choice(["fast", "balanced", "deep"], case_sensitive=False),
+              help="Preset budget profile: fast, balanced, or deep")
+@click.option("--auto-profile", is_flag=True, help="Auto-select profile based on machine specs")
+@click.option("--dry-run", is_flag=True, help="Show budgets/models and exit")
 @click.option("--max-depth", "-d", default=3, help="Maximum recursion depth")
 @click.option("--max-nodes", default=50, help="Maximum DAG nodes")
-@click.option("--max-time", "-t", default=300, help="Maximum wall time in seconds")
+@click.option("--max-time", "-t", default=1200, help="Maximum wall time in seconds")
 @click.option("--max-tokens", default=100000, help="Maximum tokens")
 @click.option("--voice", help="Voice for output rendering")
 @click.option("--output", "-o", type=click.Path(), help="Output file for results")
@@ -114,6 +153,9 @@ def run(
     goal: str,
     vault: tuple[str, ...],
     retriever: str,
+    profile: str | None,
+    auto_profile: bool,
+    dry_run: bool,
     max_depth: int,
     max_nodes: int,
     max_time: int,
@@ -141,6 +183,8 @@ def run(
         shad run "Summarize research" --vault ~/Notes
         shad run "Build REST API" --vault ~/Project --vault ~/Patterns
         shad run "Complex task" -O opus -W sonnet -L haiku
+        shad run "Fast summary" --profile fast
+        shad run "Auto profile" --auto-profile
         shad run "Using Gemini" --gemini -O gemini-1.5-pro
     """
     # Configure logging (verbose by default, --quiet to suppress)
@@ -152,6 +196,56 @@ def run(
         )
         # Set shad loggers to INFO
         logging.getLogger("shad").setLevel(logging.INFO)
+
+    # Apply budget profile if provided (can be overridden by explicit flags)
+    if profile:
+        profile_key = profile.lower()
+        presets = {
+            "fast": {"max_depth": 2, "max_nodes": 25, "max_time": 600, "max_tokens": 800000},
+            "balanced": {"max_depth": 3, "max_nodes": 50, "max_time": 1200, "max_tokens": 2000000},
+            "deep": {"max_depth": 4, "max_nodes": 80, "max_time": 1800, "max_tokens": 3000000},
+        }
+        if profile_key in presets:
+            preset = presets[profile_key]
+            if max_depth == 3:
+                max_depth = preset["max_depth"]
+            if max_nodes == 50:
+                max_nodes = preset["max_nodes"]
+            if max_time == 1200:
+                max_time = preset["max_time"]
+            if max_tokens == 100000:
+                max_tokens = preset["max_tokens"]
+            console.print(
+                f"[dim][PROFILE] {profile_key} preset applied (depth={max_depth}, nodes={max_nodes}, time={max_time}s)[/dim]"
+            )
+    elif auto_profile:
+        cpu_count, mem_gb = _get_system_specs()
+        profile_key = _suggest_profile(cpu_count, mem_gb)
+        presets = {
+            "fast": {"max_depth": 2, "max_nodes": 25, "max_time": 600, "max_tokens": 800000},
+            "balanced": {"max_depth": 3, "max_nodes": 50, "max_time": 1200, "max_tokens": 2000000},
+            "deep": {"max_depth": 4, "max_nodes": 80, "max_time": 1800, "max_tokens": 3000000},
+        }
+        preset = presets[profile_key]
+        if max_depth == 3:
+            max_depth = preset["max_depth"]
+        if max_nodes == 50:
+            max_nodes = preset["max_nodes"]
+        if max_time == 1200:
+            max_time = preset["max_time"]
+        if max_tokens == 100000:
+            max_tokens = preset["max_tokens"]
+        console.print(
+            f"[dim][PROFILE] auto-selected {profile_key} (depth={max_depth}, nodes={max_nodes}, time={max_time}s)[/dim]"
+        )
+    else:
+        # Suggest a profile based on machine specs when defaults are used
+        if max_depth == 3 and max_nodes == 50 and max_time == 1200 and max_tokens == 100000:
+            cpu_count, mem_gb = _get_system_specs()
+            suggestion = _suggest_profile(cpu_count, mem_gb)
+            console.print(
+                f"[dim][HINT] For this machine ({cpu_count} CPU / {mem_gb:.1f} GB), try --profile {suggestion}[/dim]"
+            )
 
     # If API specified, use remote execution
     if api:
@@ -268,6 +362,24 @@ def run(
             console.print(f"[dim]  Worker: {worker_model}[/dim]")
         if leaf_model:
             console.print(f"[dim]  Leaf: {leaf_model}[/dim]")
+
+    if dry_run:
+        llm = LLMProvider(model_config=model_config)
+        orch = llm.get_model_for_tier(ModelTier.ORCHESTRATOR)
+        work = llm.get_model_for_tier(ModelTier.WORKER)
+        leaf = llm.get_model_for_tier(ModelTier.LEAF)
+        retriever_name = type(retriever_instance).__name__ if retriever_instance else "None"
+
+        table = Table(title="Shad Dry Run", show_header=False)
+        table.add_column("Key", style="cyan")
+        table.add_column("Value")
+        table.add_row("Budget", f"depth={max_depth}, nodes={max_nodes}, time={max_time}s, tokens={max_tokens}")
+        table.add_row("Retriever", retriever_name)
+        table.add_row("Vaults", str(len(vault_paths)) if vault_paths else "none")
+        table.add_row("Models", f"O={orch}, W={work}, L={leaf}")
+        table.add_row("Mode", "qmd-hybrid" if qmd_hybrid else ("code-mode" if use_code_mode else "direct"))
+        console.print(table)
+        return
 
     async def _execute_run() -> Run:
         """Execute run."""
@@ -457,18 +569,25 @@ def trace_node(run_id: str, node_id: str) -> None:
 
 @cli.command()
 @click.argument("run_id")
+@click.option("--profile", type=click.Choice(["fast", "balanced", "deep"], case_sensitive=False),
+              help="Preset budget profile: fast, balanced, or deep")
+@click.option("--auto-profile", is_flag=True, help="Auto-select profile based on machine specs")
 @click.option("--max-depth", "-d", type=int, help="Override max depth")
 @click.option("--max-nodes", type=int, help="Override max nodes")
 @click.option("--max-time", "-t", type=int, help="Override max time")
+@click.option("--max-tokens", type=int, help="Override max tokens")
 @click.option("--replay", type=str, help="Replay mode: 'stale', node_id, or 'subtree:node_id'")
 @click.option("--orchestrator-model", "-O", help="Override orchestrator model (e.g., opus, sonnet)")
 @click.option("--worker-model", "-W", help="Override worker model")
 @click.option("--leaf-model", "-L", help="Override leaf model")
 def resume(
     run_id: str,
+    profile: str | None,
+    auto_profile: bool,
     max_depth: int | None,
     max_nodes: int | None,
     max_time: int | None,
+    max_tokens: int | None,
     replay: str | None,
     orchestrator_model: str | None,
     worker_model: str | None,
@@ -482,6 +601,7 @@ def resume(
         shad resume abc12345 --replay stale     # Re-run stale nodes only
         shad resume abc12345 --replay node123   # Re-run specific node
         shad resume abc12345 -O opus -W sonnet  # Override models
+        shad resume abc12345 --profile deep
     """
     # Configure logging
     logging.basicConfig(
@@ -503,6 +623,36 @@ def resume(
         console.print(f"[yellow]Run {run_id} is {run_data.status.value}, cannot resume[/yellow]")
         sys.exit(1)
 
+    # Apply profile preset if provided
+    if profile:
+        profile_key = profile.lower()
+        presets = {
+            "fast": {"max_depth": 2, "max_nodes": 25, "max_time": 600, "max_tokens": 800000},
+            "balanced": {"max_depth": 3, "max_nodes": 50, "max_time": 1200, "max_tokens": 2000000},
+            "deep": {"max_depth": 4, "max_nodes": 80, "max_time": 1800, "max_tokens": 3000000},
+        }
+        if profile_key in presets:
+            preset = presets[profile_key]
+            run_data.config.budget.max_depth = preset["max_depth"]
+            run_data.config.budget.max_nodes = preset["max_nodes"]
+            run_data.config.budget.max_wall_time = preset["max_time"]
+            run_data.config.budget.max_tokens = preset["max_tokens"]
+            console.print(f"[dim][PROFILE] {profile_key} preset applied[/dim]")
+    elif auto_profile:
+        cpu_count, mem_gb = _get_system_specs()
+        profile_key = _suggest_profile(cpu_count, mem_gb)
+        presets = {
+            "fast": {"max_depth": 2, "max_nodes": 25, "max_time": 600, "max_tokens": 800000},
+            "balanced": {"max_depth": 3, "max_nodes": 50, "max_time": 1200, "max_tokens": 2000000},
+            "deep": {"max_depth": 4, "max_nodes": 80, "max_time": 1800, "max_tokens": 3000000},
+        }
+        preset = presets[profile_key]
+        run_data.config.budget.max_depth = preset["max_depth"]
+        run_data.config.budget.max_nodes = preset["max_nodes"]
+        run_data.config.budget.max_wall_time = preset["max_time"]
+        run_data.config.budget.max_tokens = preset["max_tokens"]
+        console.print(f"[dim][PROFILE] auto-selected {profile_key}[/dim]")
+
     # Override budgets if specified
     if max_depth:
         run_data.config.budget.max_depth = max_depth
@@ -510,6 +660,8 @@ def resume(
         run_data.config.budget.max_nodes = max_nodes
     if max_time:
         run_data.config.budget.max_wall_time = max_time
+    if max_tokens:
+        run_data.config.budget.max_tokens = max_tokens
 
     console.print(Panel(f"Resuming run {run_id}", title="Shad Resume", border_style="yellow"))
     if replay:
@@ -1660,6 +1812,10 @@ def _display_run_result(run: Run) -> None:
 
     if run.stop_reason:
         console.print(f"[dim]Stop reason: {run.stop_reason.value}[/dim]")
+        if run.stop_reason == StopReason.BUDGET_TIME:
+            console.print(
+                "[yellow]Hit max wall time. Consider re-running with --max-time (e.g., 1800) or set DEFAULT_MAX_WALL_TIME in ~/.shad/.env[/yellow]"
+            )
 
     if run.error:
         console.print(f"[red]Error: {run.error}[/red]")
@@ -1873,6 +2029,91 @@ def init(path: str, force: bool, yes: bool) -> None:
     console.print(f"\n[green]Created {settings_file}[/green]")
     console.print("\n[dim]You can now run shad commands in this project without permission prompts.[/dim]")
     console.print("[dim]To revoke permissions, delete .claude/settings.json[/dim]")
+
+
+@cli.command("doctor")
+@click.option("--fix", is_flag=True, help="Attempt to fix common issues (qmd install)")
+def doctor(fix: bool) -> None:
+    """Run environment checks for common issues.
+
+    
+    Examples:
+        shad doctor
+    """
+    import shutil
+    import subprocess
+
+    console.print(Panel("Shad Doctor", border_style="blue"))
+
+    # Check shad binary (self)
+    console.print(f"[green]✔[/green] Shad CLI available")
+
+    # Check qmd
+    qmd_path = shutil.which("qmd")
+    if qmd_path:
+        console.print(f"[green]✔[/green] qmd detected: {qmd_path}")
+        try:
+            result = subprocess.run(["qmd", "status", "--json"], capture_output=True, timeout=5)
+            if result.returncode == 0:
+                console.print("[green]✔[/green] qmd status OK")
+            else:
+                console.print("[yellow]⚠[/yellow] qmd status returned non-zero")
+        except Exception:
+            console.print("[yellow]⚠[/yellow] qmd status check failed")
+    else:
+        console.print("[yellow]⚠[/yellow] qmd not found (filesystem search only)")
+        if fix:
+            qmd_repo = os.environ.get("QMD_REPO", "https://github.com/jonesj38/qmd#feat/openai-embeddings")
+            bun = shutil.which("bun")
+            npm = shutil.which("npm")
+            if bun or npm:
+                if click.confirm(f"Install qmd from {qmd_repo} now?"):
+                    try:
+                        if bun:
+                            subprocess.run(["bun", "install", "-g", qmd_repo], check=False)
+                        else:
+                            subprocess.run(["npm", "install", "-g", qmd_repo], check=False)
+                        console.print("[green]✔[/green] qmd install attempted")
+                    except Exception:
+                        console.print("[red]✖[/red] qmd install failed")
+            else:
+                console.print("[yellow]⚠[/yellow] bun/npm not found; cannot install qmd automatically")
+
+    # Check Redis
+    redis_url = get_settings().redis_url
+    try:
+        hostport = redis_url.split("//", 1)[-1]
+        host, port = hostport.split(":", 1)
+        port = int(port.split("/", 1)[0])
+        import socket
+        with socket.create_connection((host, port), timeout=2):
+            console.print(f"[green]✔[/green] Redis reachable at {host}:{port}")
+    except Exception:
+        console.print(f"[yellow]⚠[/yellow] Redis not reachable at {redis_url}")
+
+    # Check vault env
+    vault_path = get_settings().obsidian_vault_path
+    if vault_path:
+        console.print(f"[green]✔[/green] OBSIDIAN_VAULT_PATH set: {vault_path}")
+    else:
+        console.print("[yellow]⚠[/yellow] OBSIDIAN_VAULT_PATH not set (pass --vault)")
+
+    # Offer to register vault + embed if fixing and vault set
+    if fix and vault_path and qmd_path:
+        if click.confirm(f"Register vault {vault_path} with qmd and embed now?"):
+            try:
+                subprocess.run(["qmd", "collection", "add", vault_path, "--name", Path(vault_path).name], check=False)
+                subprocess.run(["qmd", "embed"], check=False, env={**os.environ, "QMD_OPENAI": "1"})
+                console.print("[green]✔[/green] qmd collection add + embed attempted")
+            except Exception:
+                console.print("[red]✖[/red] qmd embed failed")
+
+    # Suggest profile based on machine specs
+    cpu_count, mem_gb = _get_system_specs()
+    suggestion = _suggest_profile(cpu_count, mem_gb)
+    console.print(
+        f"[dim][HINT] Suggested profile for this machine: {suggestion} ({cpu_count} CPU / {mem_gb:.1f} GB)[/dim]"
+    )
 
 
 @cli.command("check-permissions")

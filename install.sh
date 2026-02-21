@@ -172,6 +172,11 @@ setup_python() {
 setup_qmd() {
     log_info "Setting up qmd (semantic search)..."
 
+    # Recommended fork with OpenAI embeddings support
+    QMD_REPO_DEFAULT="https://github.com/jonesj38/qmd#feat/openai-embeddings"
+    QMD_REPO="${QMD_REPO:-$QMD_REPO_DEFAULT}"
+    log_info "qmd repo: ${QMD_REPO}"
+
     # Check if qmd is already installed
     if command -v qmd &> /dev/null; then
         log_success "qmd already installed ($(qmd --version 2>/dev/null || echo 'version unknown'))"
@@ -181,14 +186,14 @@ setup_qmd() {
     # Try to install qmd
     if [[ "${HAS_BUN:-false}" == "true" ]]; then
         log_info "Installing qmd via bun..."
-        if bun install -g https://github.com/tobi/qmd 2>/dev/null; then
+        if bun install -g "$QMD_REPO" 2>/dev/null; then
             log_success "qmd installed via bun"
         else
             log_warn "Failed to install qmd via bun - using filesystem search fallback"
         fi
     elif [[ "${HAS_NPM:-false}" == "true" ]]; then
         log_info "Installing qmd via npm..."
-        if npm install -g https://github.com/tobi/qmd 2>/dev/null; then
+        if npm install -g "$QMD_REPO" 2>/dev/null; then
             log_success "qmd installed via npm"
         else
             log_warn "Failed to install qmd via npm - using filesystem search fallback"
@@ -196,7 +201,7 @@ setup_qmd() {
     else
         log_warn "Skipping qmd installation (no bun/npm) - using filesystem search fallback"
         echo "  To enable semantic search later, install bun and run:"
-        echo "    bun install -g https://github.com/tobi/qmd"
+        echo "    bun install -g $QMD_REPO_DEFAULT"
     fi
 
     echo ""
@@ -291,7 +296,10 @@ print_success() {
     echo "Semantic Search (optional):"
     echo "  If qmd is installed, register your vault for hybrid search:"
     echo -e "     ${BLUE}qmd collection add ~/MyVault --name myvault${NC}"
-    echo -e "     ${BLUE}qmd embed${NC}  # Generate embeddings"
+    echo -e "     ${BLUE}QMD_OPENAI=1 qmd embed${NC}  # Generate embeddings (OpenAI)"
+    echo ""
+    echo "  Note: install.sh defaults to the OpenAI-embeddings qmd fork."
+    echo "  Override with: QMD_REPO=<repo#branch> ./install.sh"
     echo ""
 }
 

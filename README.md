@@ -52,6 +52,7 @@ This allows Shad to effectively utilize **gigabytes** of context — not by load
 - An Obsidian vault (or any directory of markdown files)
 - (Optional) Docker for Redis (enables cross-run caching)
 - (Optional) [qmd](https://github.com/tobi/qmd) for hybrid semantic search
+  - **Recommended fork (OpenAI embeddings):** https://github.com/jonesj38/qmd/tree/feat/openai-embeddings
 - (Optional) [Ollama](https://ollama.com) for local open-source models
 
 ### Installation
@@ -332,9 +333,12 @@ Options:
   --vault, -v       Path to vault (repeatable; falls back to OBSIDIAN_VAULT_PATH)
   --retriever, -r   Retrieval backend: auto|qmd|filesystem (default: auto)
   --strategy        Force strategy (software|research|analysis|planning)
+  --profile         Budget preset: fast|balanced|deep
+  --auto-profile    Auto-select profile based on machine specs
+  --dry-run         Show budgets/models and exit
   --max-depth, -d   Maximum recursion depth (default: 3)
   --max-nodes       Maximum DAG nodes (default: 50)
-  --max-time, -t    Maximum wall time in seconds (default: 300)
+  --max-time, -t    Maximum wall time in seconds (default: 1200)
   --verify          Verification level (off|basic|build|strict)
   --write-files     Write output files to disk
   --output, -o      Output directory (requires --write-files)
@@ -356,9 +360,79 @@ shad trace node <run_id> <node_id>
 # Resume partial run (with delta verification)
 shad resume <run_id>
 shad resume <run_id> --replay stale
+shad resume <run_id> --profile deep
+shad resume <run_id> --auto-profile
 
 # Export files from completed run
 shad export <run_id> --output ./out
+```
+
+### UX Quick Start (Most Common Patterns)
+
+**Cold-start (best default):**
+```bash
+shad run "Summarize my current project" --vault ~/MyVault -O sonnet -W sonnet -L haiku
+```
+
+**Fast + cheap (use for simple queries):**
+```bash
+shad run "Summarize these notes" --vault ~/MyVault --profile fast -O haiku -W haiku -L haiku
+```
+
+**Auto profile (machine-based):**
+```bash
+shad run "Summarize these notes" --vault ~/MyVault --auto-profile
+```
+
+**Dry run (see budgets before running):**
+```bash
+shad run "Summarize these notes" --vault ~/MyVault --auto-profile --dry-run
+```
+
+**Deep reasoning (larger tasks):**
+```bash
+shad run "Design an API architecture" --vault ~/MyVault --profile deep -O opus -W sonnet -L haiku
+```
+
+**Debugging retrieval quality:**
+```bash
+shad search "oauth refresh token" --mode hybrid
+shad search "oauth refresh token" --mode bm25
+shad search "oauth refresh token" --mode vector
+```
+
+**Environment check:**
+```bash
+shad doctor
+shad doctor --fix   # Install qmd + (if vault set) add collection + embed
+```
+
+### Performance Profiles (by machine)
+
+Set these as defaults in `~/.shad/.env` if you want consistent behavior.
+
+**Low-end laptop / small VM**
+```bash
+DEFAULT_MAX_DEPTH=2
+DEFAULT_MAX_NODES=30
+DEFAULT_MAX_WALL_TIME=600
+DEFAULT_MAX_TOKENS=800000
+```
+
+**Mid-range dev machine (recommended)**
+```bash
+DEFAULT_MAX_DEPTH=3
+DEFAULT_MAX_NODES=50
+DEFAULT_MAX_WALL_TIME=1200
+DEFAULT_MAX_TOKENS=2000000
+```
+
+**High-end workstation**
+```bash
+DEFAULT_MAX_DEPTH=4
+DEFAULT_MAX_NODES=80
+DEFAULT_MAX_WALL_TIME=1800
+DEFAULT_MAX_TOKENS=3000000
 ```
 
 ### Model Selection
@@ -431,13 +505,16 @@ For hybrid BM25 + vector search with LLM reranking, install [qmd](https://github
 
 ```bash
 # Install qmd (installer does this automatically if bun/npm available)
-bun install -g https://github.com/tobi/qmd
+# Recommended fork with OpenAI embeddings support (default in install.sh):
+bun install -g https://github.com/jonesj38/qmd#feat/openai-embeddings
+# You can override the repo used by install.sh with:
+#   QMD_REPO=https://github.com/jonesj38/qmd#feat/openai-embeddings ./install.sh
 
 # Register your vault as a collection
 qmd collection add ~/MyVault --name myvault
 
 # Generate embeddings (required for semantic search)
-qmd embed
+QMD_OPENAI=1 qmd embed
 ```
 
 Without qmd, shad falls back to filesystem search (basic keyword matching).
@@ -487,7 +564,7 @@ REDIS_URL=redis://localhost:6379/0
 # Optional: Budget defaults
 DEFAULT_MAX_DEPTH=3
 DEFAULT_MAX_NODES=50
-DEFAULT_MAX_WALL_TIME=300
+DEFAULT_MAX_WALL_TIME=1200
 DEFAULT_MAX_TOKENS=2000000
 
 # Legacy fallback (only if Claude CLI unavailable)

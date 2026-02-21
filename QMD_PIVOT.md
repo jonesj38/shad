@@ -8,7 +8,7 @@
 
 ## Summary
 
-Shad originally used the Obsidian Local REST API for vault operations. This required Obsidian to be running and added complexity for multi-vault support. We pivoted to [qmd](https://github.com/tobi/qmd) as the primary retrieval backend, which provides better search quality with no runtime dependencies.
+Shad originally used the Obsidian Local REST API for vault operations. This required Obsidian to be running and added complexity for multi-vault support. We pivoted to [qmd](https://github.com/tobi/qmd) as the primary retrieval backend, which provides better search quality with no runtime dependencies. For OpenAI embeddings support, use the fork: https://github.com/jonesj38/qmd/tree/feat/openai-embeddings.
 
 ---
 
@@ -146,9 +146,9 @@ shad run "task" --vault ~/Vault
 **After (qmd)**:
 ```bash
 # One-time setup
-bun install -g https://github.com/tobi/qmd
+bun install -g https://github.com/jonesj38/qmd#feat/openai-embeddings
 qmd collection add ~/Vault --name vault
-qmd embed  # Generate embeddings
+QMD_OPENAI=1 qmd embed  # Generate embeddings
 
 # Usage (no daemon required)
 shad run "task" --vault ~/Vault

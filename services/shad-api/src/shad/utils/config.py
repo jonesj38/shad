@@ -61,7 +61,7 @@ class Settings(BaseSettings):
     # Budget Defaults
     default_max_depth: int = 3
     default_max_nodes: int = 50
-    default_max_wall_time: int = 300
+    default_max_wall_time: int = 1200
     default_max_tokens: int = 2000000  # 2M - allows complex tasks spanning many subtasks
 
 
