@@ -185,7 +185,7 @@ def run(
         shad run "Complex task" -O opus -W sonnet -L haiku
         shad run "Fast summary" --profile fast
         shad run "Auto profile" --auto-profile
-        shad run "Using Gemini" --gemini -O gemini-1.5-pro
+        shad run "Using Gemini" --gemini -O gemini-3-pro-preview
     """
     # Configure logging (verbose by default, --quiet to suppress)
     if not quiet:

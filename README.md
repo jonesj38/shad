@@ -451,7 +451,7 @@ To use Gemini CLI (requires [gemini-cli](https://geminicli.com) installed):
 shad run "Task" --gemini
 
 # Use specific Gemini models
-shad run "Task" --gemini -O gemini-1.5-pro -W gemini-1.5-flash
+shad run "Task" --gemini -O gemini-3-pro-preview -W gemini-3-flash-preview
 ```
 
 To use Claude CLI (default):
