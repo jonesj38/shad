@@ -437,7 +437,24 @@ DEFAULT_MAX_TOKENS=3000000
 
 ### Model Selection
 
-All models are accessed through Claude CLI. You can use Claude models (via your subscription) or Ollama models (local, free):
+Shad supports models via **Claude CLI** (default) or **Gemini CLI**.
+
+**Claude CLI** supports:
+- **Claude models** (uses your Claude subscription)
+
+**Gemini CLI** supports:
+- **Gemini models** (uses your Google subscription)
+
+To use Gemini CLI (requires [gemini-cli](https://geminicli.com) installed):
+```bash
+# Use Gemini for everything
+shad run "Task" --gemini
+
+# Use specific Gemini models
+shad run "Task" --gemini -O gemini-3-pro-preview -W gemini-3-flash-preview
+```
+
+To use Claude CLI (default):
 
 ```bash
 # List available models
@@ -459,9 +476,9 @@ shad run "Task" -O qwen3-coder -W llama3 -L llama3
 ```
 
 Model tiers:
-- **Orchestrator (-O)**: Planning and synthesis (default: sonnet)
-- **Worker (-W)**: Mid-depth execution (default: sonnet)
-- **Leaf (-L)**: Fast parallel execution (default: haiku)
+- **Orchestrator (-O)**: Planning and synthesis (default: sonnet / gemini-3-pro-preview)
+- **Worker (-W)**: Mid-depth execution (default: sonnet / gemini-3-pro-preview)
+- **Leaf (-L)**: Fast parallel execution (default: haiku / gemini-3-flash-preview)
 
 **Ollama Integration**: Any model not matching Claude patterns (opus, sonnet, haiku, claude-*) routes to Ollama via Claude CLI. Requires [Ollama](https://ollama.com) installed with models pulled (`ollama pull llama3`).
 
@@ -557,11 +574,13 @@ DEFAULT_MAX_TOKENS=2000000
 
 ### LLM Access
 
-All LLM calls go through Claude CLI, which supports:
-- **Claude models**: opus, sonnet, haiku (uses your Claude subscription)
-- **Ollama models**: llama3, qwen3, etc. (runs locally, free)
+All LLM calls go through either Claude CLI (default) or Gemini CLI.
 
-No API keys needed - Claude CLI handles authentication via your Claude account.
+- **Claude CLI**: Uses your Claude subscription
+- **Gemini CLI**: Uses your Google account/API key managed by `gemini` CLI
+- **Ollama**: Local models via Claude CLI
+
+No API keys need to be configured in shad - the CLIs handle authentication.
 
 ### Data Directories
 

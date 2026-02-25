@@ -267,6 +267,7 @@ def normalize_model_name(name: str) -> str:
 
     Accepts:
     - Full Claude model IDs (claude-*): returned as-is
+    - Gemini model IDs (gemini-*): returned as-is
     - Claude shorthands (opus, sonnet, haiku): resolved to full model ID
     - Ollama model names: returned as-is (pass-through)
 
@@ -281,6 +282,10 @@ def normalize_model_name(name: str) -> str:
     """
     # Check if it's already a full Claude model ID
     if name.startswith("claude-"):
+        return name
+
+    # Check if it's a Gemini model ID
+    if is_gemini_model(name):
         return name
 
     # Check if it's a Claude shorthand
@@ -325,6 +330,23 @@ def get_default_models() -> dict[str, str]:
 
 
 # =============================================================================
+# Gemini Integration
+# =============================================================================
+
+
+def is_gemini_model(name: str) -> bool:
+    """Check if a model name refers to a Gemini model.
+
+    Args:
+        name: Model name to check
+
+    Returns:
+        True if this is a Gemini model
+    """
+    return name.lower().strip().startswith("gemini-")
+
+
+# =============================================================================
 # Ollama Integration
 # =============================================================================
 
@@ -334,6 +356,7 @@ def is_ollama_model(name: str) -> bool:
 
     A model is considered an Ollama model if it:
     - Does NOT start with "claude-"
+    - Does NOT start with "gemini-"
     - Is NOT one of the Claude shorthands (opus, sonnet, haiku)
 
     Args:
@@ -346,6 +369,10 @@ def is_ollama_model(name: str) -> bool:
 
     # Claude models start with "claude-"
     if name_lower.startswith("claude-"):
+        return False
+
+    # Gemini models start with "gemini-"
+    if name_lower.startswith("gemini-"):
         return False
 
     # Claude shorthands

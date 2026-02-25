@@ -105,30 +105,31 @@ setup_repo() {
 
     mkdir -p "$SHAD_HOME"
 
-    if [[ -d "$SHAD_HOME/repo/.git" ]]; then
-        log_info "Updating existing repository..."
+    # Check if we're running from within a local repo first
+    local script_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+    if [[ -f "$script_dir/services/shad-api/pyproject.toml" ]]; then
+        log_info "Using local repository from $script_dir..."
+        
+        # If we have an existing .git repo in SHAD_HOME/repo, but we want to use local
+        # we'll sync the local content to it.
+        mkdir -p "$SHAD_HOME/repo"
+        
+        if command -v rsync &> /dev/null; then
+            rsync -a --delete --exclude='.git' --exclude='__pycache__' --exclude='*.egg-info' --exclude='.venv' --exclude='venv' "$script_dir/" "$SHAD_HOME/repo/"
+        else
+            # Fallback to cp if rsync not available
+            cp -r "$script_dir"/* "$SHAD_HOME/repo/"
+        fi
+        log_success "Synced local repository to $SHAD_HOME/repo"
+    elif [[ -d "$SHAD_HOME/repo/.git" ]]; then
+        log_info "Updating existing repository from origin..."
         cd "$SHAD_HOME/repo"
         git fetch origin
         git reset --hard "origin/$SHAD_BRANCH"
-        git clean -fd  # Remove untracked files that might conflict
+        git clean -fd
     else
-        # Check if we're running from within the repo
-        local script_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-        if [[ -f "$script_dir/services/shad-api/pyproject.toml" ]]; then
-            log_info "Using local repository..."
-            # Remove old repo if exists (for clean upgrade from local)
-            rm -rf "$SHAD_HOME/repo" 2>/dev/null || true
-            mkdir -p "$SHAD_HOME/repo"
-            # Use rsync if available for better handling, else cp
-            if command -v rsync &> /dev/null; then
-                rsync -a --delete --exclude='.git' --exclude='__pycache__' --exclude='*.egg-info' --exclude='.venv' --exclude='venv' "$script_dir/" "$SHAD_HOME/repo/"
-            else
-                cp -r "$script_dir"/* "$SHAD_HOME/repo/"
-            fi
-        else
-            log_info "Cloning repository..."
-            git clone --depth 1 -b "$SHAD_BRANCH" "$SHAD_REPO" "$SHAD_HOME/repo"
-        fi
+        log_info "Cloning repository from $SHAD_REPO..."
+        git clone --depth 1 -b "$SHAD_BRANCH" "$SHAD_REPO" "$SHAD_HOME/repo"
     fi
 
     log_success "Repository ready at $SHAD_HOME/repo"
