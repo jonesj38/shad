@@ -361,7 +361,15 @@ class QmdRetriever:
                 stdout=asyncio.subprocess.PIPE,
                 stderr=asyncio.subprocess.PIPE,
             )
-            stdout, stderr = await process.communicate()
+            try:
+                stdout, stderr = await asyncio.wait_for(
+                    process.communicate(), timeout=30,
+                )
+            except asyncio.TimeoutError:
+                logger.error("[QMD] get timed out after 30s - killing")
+                process.kill()
+                await process.wait()
+                return None
 
             if process.returncode != 0:
                 return None

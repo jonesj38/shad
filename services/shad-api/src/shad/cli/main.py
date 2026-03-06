@@ -394,6 +394,7 @@ def run(
             collections=collections,
             use_code_mode=use_code_mode,
             use_qmd_hybrid=qmd_hybrid,
+            max_concurrent_llm=2,
         )
         return await engine.execute(config)
 
