@@ -33,12 +33,16 @@ class LLMProvider:
         use_claude_code: bool = True,
         use_gemini_cli: bool = False,
         model_config: ModelConfig | None = None,
+        max_concurrent: int = 2,
     ) -> None:
         self.settings = get_settings()
         self.use_claude_code = use_claude_code
         self.use_gemini_cli = use_gemini_cli
         self._anthropic_client: Any = None
         self._openai_client: Any = None
+        # Gate concurrent LLM subprocess calls to prevent resource exhaustion
+        self._semaphore = asyncio.Semaphore(max_concurrent)
+        logger.info(f"[LLM] Max concurrent calls: {max_concurrent}")
 
         # Model overrides (normalized to full model IDs)
         self._orchestrator_override: str | None = None
@@ -91,6 +95,21 @@ class LLMProvider:
         Returns:
             Tuple of (response_text, tokens_used)
         """
+        async with self._semaphore:
+            return await self._complete_inner(
+                prompt=prompt, tier=tier, system=system,
+                max_tokens=max_tokens, temperature=temperature,
+            )
+
+    async def _complete_inner(
+        self,
+        prompt: str,
+        tier: ModelTier = ModelTier.WORKER,
+        system: str | None = None,
+        max_tokens: int = 4096,
+        temperature: float = 0.7,
+    ) -> tuple[str, int]:
+        """Inner completion logic (called under semaphore)."""
         model = self.get_model_for_tier(tier)
         logger.debug(f"Using model {model} for tier {tier}")
 

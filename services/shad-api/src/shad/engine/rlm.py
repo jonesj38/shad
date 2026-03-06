@@ -93,14 +93,10 @@ class RLMEngine:
         collections: list[str] | None = None,
         use_code_mode: bool = True,
         use_qmd_hybrid: bool = False,
-        max_concurrent_llm: int = 2,
     ):
         self.llm = llm_provider or LLMProvider()
         self.cache: RedisCache | None = cache
         self.settings = get_settings()
-        # Concurrency limiter: prevents spawning too many LLM subprocesses at once
-        self._llm_semaphore = asyncio.Semaphore(max_concurrent_llm)
-        logger.info(f"[ENGINE] Max concurrent LLM calls: {max_concurrent_llm}")
 
         # Store vault path
         self.vault_path = Path(vault_path) if vault_path else None
@@ -583,38 +579,37 @@ class RLMEngine:
 
             logger.info(f"[PARALLEL] Executing {len(ready_nodes)} nodes in parallel")
 
-            # Execute ready nodes in parallel (with concurrency limit)
+            # Execute ready nodes in parallel (no semaphore here — semaphore is on LLM calls only)
             async def execute_single_node(nid: str) -> tuple[str, DAGNode | None]:
                 """Execute a single node and return (node_id, node)."""
                 try:
-                    async with self._llm_semaphore:
-                        child = run.get_node(nid)
-                        if not child:
-                            return (nid, None)
+                    child = run.get_node(nid)
+                    if not child:
+                        return (nid, None)
 
-                        task, hard_deps, soft_deps = pending_nodes[nid]
+                    task, hard_deps, soft_deps = pending_nodes[nid]
 
-                        # Inject context from soft dependencies
-                        subtask_context = context
-                        if soft_deps:
-                            soft_dep_context = self.context_manager.inject_soft_dep_context(
-                                soft_deps=soft_deps,
-                                task=task,
-                            )
-                            if soft_dep_context:
-                                subtask_context = f"{soft_dep_context}\n\n{context}"
-                                logger.info(f"[CONTEXT] Injected {len(soft_dep_context)} chars from soft deps: {soft_deps}")
+                    # Inject context from soft dependencies
+                    subtask_context = context
+                    if soft_deps:
+                        soft_dep_context = self.context_manager.inject_soft_dep_context(
+                            soft_deps=soft_deps,
+                            task=task,
+                        )
+                        if soft_dep_context:
+                            subtask_context = f"{soft_dep_context}\n\n{context}"
+                            logger.info(f"[CONTEXT] Injected {len(soft_dep_context)} chars from soft deps: {soft_deps}")
 
-                        # Retrieve subtask-specific context from vault
-                        if self.retriever.available:
-                            fresh_context = await self._retrieve_vault_context(task, limit=5)
-                            if fresh_context:
-                                logger.info(f"[CONTEXT] Retrieved {len(fresh_context)} chars for subtask: {task[:50]}...")
-                                subtask_context = f"{subtask_context}\n\n{fresh_context}"
+                    # Retrieve subtask-specific context from vault
+                    if self.retriever.available:
+                        fresh_context = await self._retrieve_vault_context(task, limit=5)
+                        if fresh_context:
+                            logger.info(f"[CONTEXT] Retrieved {len(fresh_context)} chars for subtask: {task[:50]}...")
+                            subtask_context = f"{subtask_context}\n\n{fresh_context}"
 
-                        # Execute the node
-                        await self._execute_node(run, child, subtask_context)
-                        return (nid, child)
+                    # Execute the node
+                    await self._execute_node(run, child, subtask_context)
+                    return (nid, child)
                 except BudgetExhausted:
                     raise
                 except Exception as e:
@@ -625,7 +620,7 @@ class RLMEngine:
                         child.error = str(e)
                     return (nid, child)
 
-            # Run all ready nodes in parallel (semaphore limits actual concurrency)
+            # Run all ready nodes in parallel
             results = await asyncio.gather(
                 *[execute_single_node(nid) for nid in ready_nodes],
                 return_exceptions=False,
