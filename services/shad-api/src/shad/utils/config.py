@@ -33,8 +33,8 @@ class Settings(BaseSettings):
     # Redis Settings
     redis_url: str = "redis://localhost:6379/0"
 
-    # Vault Settings
-    obsidian_vault_path: str = ""  # Default vault path (for env var fallback)
+    # Collection Settings (OBSIDIAN_VAULT_PATH kept for backward compat)
+    obsidian_vault_path: str = ""  # Default collection path (env var fallback)
 
     # LLM Provider Settings (legacy fallback - Claude CLI is primary)
     # API keys only needed if Claude CLI is unavailable

@@ -4,11 +4,11 @@
 
 **Shad enables AI to utilize virtually unlimited context.**
 
-The goal: Load an Obsidian vault with curated, up-to-date knowledge (documentation, code examples, architecture patterns, best practices), then ask Shad to accomplish complex tasks that would be impossible with a single context window.
+The goal: Load an Obsidian collection with curated, up-to-date knowledge (documentation, code examples, architecture patterns, best practices), then ask Shad to accomplish complex tasks that would be impossible with a single context window.
 
 **Example**: Build a production-quality mobile app in one shot by:
-1. Loading a vault with React Native docs, great app examples, UI/UX patterns, API design guides
-2. Running: `shad run "Build a task management app with auth, offline sync, and push notifications" --vault ~/MobileDevVault --strategy software --write-files`
+1. Loading a collection with React Native docs, great app examples, UI/UX patterns, API design guides
+2. Running: `shad run "Build a task management app with auth, offline sync, and push notifications" --collection ~/MobileDevVault --strategy software --write-files`
 3. Shad recursively decomposes, retrieves targeted context for each subtask, generates code with contracts-first consistency, verifies outputs, and assembles a complete codebase
 
 This is not prompt engineering. This is **inference-time scaling** — treating context as an explorable environment, not a fixed input.
@@ -46,7 +46,7 @@ Original implementation:
 - [x] RetrievalLayer protocol abstraction
 - [x] QmdRetriever for hybrid BM25 + vector + LLM reranking search
 - [x] FilesystemRetriever fallback when qmd not installed
-- [x] Multi-vault support (`--vault` repeatable)
+- [x] Multi-collection support (`--collection` repeatable)
 - [x] Search modes: hybrid (default), bm25, vector
 - [x] `--retriever` flag for backend selection
 - [x] Removed Obsidian REST API dependency
@@ -59,7 +59,7 @@ Original implementation:
 - [x] **Strategy Skeletons**
   - Define required stages, optional stages, constraints per strategy
   - `software`: contracts-first, imports-must-resolve, schema-first when DB involved
-  - `research`: must-cite-vault, max-claims-per-source
+  - `research`: must-cite-collection, max-claims-per-source
   - `analysis`: criteria-coverage, explicit-tradeoffs
   - `planning`: milestones, dependencies
 
@@ -162,7 +162,7 @@ Original implementation:
 
 - [x] **Delta Verification on Resume**
   - Store per completed node: `used_notes[]`, `used_note_hashes{}`, `subset_fingerprint`
-  - On resume: check vault manifest against stored hashes
+  - On resume: check collection manifest against stored hashes
   - Node is stale if any `used_note_hash` differs
   - Stale nodes undergo re-verification (or re-execution for contracts nodes)
   - Unchanged nodes are trusted
@@ -176,7 +176,7 @@ Original implementation:
   - Max 5 checkpoints per run, then degrade to batch review at end
   - Checkpoint presents: node summary, decision to approve, confidence signals, options
 
-### Phase 8 — Vault Curation Tools (COMPLETE)
+### Phase 8 — Collection Curation Tools (COMPLETE)
 
 **Decision**: Combined scoring for gap detection, configurable ingestion presets (see SPEC.md D14)
 
@@ -187,19 +187,19 @@ Original implementation:
   - Required frontmatter: `source_url`, `source_type`, `ingested_at`, `source_revision`, `content_hash`
   - Post-hoc enrichment: `shad enrich <snapshot_id> --deep`
 
-- [x] **Shadow Index** (outside vault, in `~/.shad/index.sqlite`)
+- [x] **Shadow Index** (outside collection, in `~/.shad/index.sqlite`)
   - Maps `source_url → latest_snapshot`
   - Schema: `sources`, `snapshots`, `latest` tables
   - Update policies: `manual`, `notify`, `auto`
   - Export: `shad sources export --format yaml --out <path>`
   - Pin snapshots: `shad sources pin <url> --snapshot <id>`
 
-- [x] **Vault Analysis & Gap Detection**
-  - `shad vault analyze [--llm-audit]`
+- [x] **Collection Analysis & Gap Detection**
+  - `shad collection analyze [--llm-audit]`
   - Combined scoring: `0.55 * history_pain + 0.25 * coverage_miss + 0.20 * llm_score`
   - History pain: query frequency, median retrieval_score, fallback rate, downstream failures
   - Coverage miss: missing anchor notes for common topics, missing templates
-  - LLM audit (optional): send vault summary, ask for top 10 gaps
+  - LLM audit (optional): send collection summary, ask for top 10 gaps
   - Output: ranked gaps with evidence, suggested additions, priority
 
 - [x] **Note Standardization**
@@ -224,7 +224,7 @@ Original implementation:
   - Force sync option to override schedule
 
 - [x] **CLI Commands**
-  - `shad sources add <type> <url> --vault <path> --schedule <freq>`
+  - `shad sources add <type> <url> --collection <path> --schedule <freq>`
   - `shad sources list` — List all configured sources
   - `shad sources status` — View detailed sync status
   - `shad sources sync [--force]` — Sync due sources
@@ -242,12 +242,12 @@ Original implementation:
 ### Complete
 - Phase 1: Foundation (RLM Engine, budget enforcement, history artifacts, Redis caching)
 - Phase 2: Obsidian Integration (MCP client — superseded by Phase 3)
-- Phase 3: qmd Migration (RetrievalLayer, hybrid search, multi-vault, no Obsidian dependency)
+- Phase 3: qmd Migration (RetrievalLayer, hybrid search, multi-collection, no Obsidian dependency)
 - Phase 4: Task-Aware Decomposition (Strategy skeletons, heuristic selection, soft dependencies)
 - Phase 5: Code Generation Output (File manifests, two-pass import resolution, contracts-first)
 - Phase 6: Verification Layer (Syntax/import/type checks, error classification, repair actions)
 - Phase 7: Iterative Refinement (Run states, delta verification, HITL checkpoints)
-- Phase 8: Vault Curation Tools (Ingestion pipeline, shadow index, gap detection)
+- Phase 8: Collection Curation Tools (Ingestion pipeline, shadow index, gap detection)
 - Phase 9: Sources Scheduler (Automated sync from GitHub, URLs, feeds, folders)
 
 ### Test Coverage
@@ -268,11 +268,11 @@ All modules now integrated into RLMEngine:
 9. **Parallel Execution**: Dependency-aware parallel node execution using asyncio.gather
 10. **Sources Scheduler**: `shad sources add|list|status|sync|remove` for automated ingestion
 11. **Project Setup**: `shad init` and `shad check-permissions` for Claude Code integration
-12. **Default Vault**: Falls back to `OBSIDIAN_VAULT_PATH` env var when `--vault` not specified
+12. **Default Collection**: Falls back to `OBSIDIAN_COLLECTION_PATH` env var when `--collection` not specified
 13. **Model Selection**: `-O/-W/-L` flags for per-tier model override, `shad models` to list available
 14. **Ollama Integration**: Mix Claude and Ollama models per-tier, auto-detects Ollama models and routes via local server
 15. **Retrieval Layer**: qmd for hybrid search, filesystem fallback, `--retriever` flag, search modes (hybrid/bm25/vector)
-16. **Multi-vault Support**: Specify multiple `--vault` flags for layered context
+16. **Multi-collection Support**: Specify multiple `--collection` flags for layered context
 
 ### Architecture
 All modules implemented per SPEC.md:
@@ -288,9 +288,9 @@ All modules implemented per SPEC.md:
 - `output/import_resolution.py`: Two-pass import validation
 - `verification/layer.py`: Progressive verification with error classification
 - `refinement/manager.py`: Run states, delta verification, HITL checkpoints
-- `vault/ingestion.py`: Repository ingestion with presets
-- `vault/shadow_index.py`: SQLite-backed source/snapshot tracking
-- `vault/gap_detection.py`: Combined scoring for vault gaps
+- `collection/ingestion.py`: Repository ingestion with presets
+- `collection/shadow_index.py`: SQLite-backed source/snapshot tracking
+- `collection/gap_detection.py`: Combined scoring for collection gaps
 - `sources/manager.py`: Source synchronization manager
 - `sources/scheduler.py`: Automated sync scheduling
 - `cli/main.py`: Full CLI with all commands and options
@@ -299,7 +299,7 @@ All modules implemented per SPEC.md:
 
 ## Success Metrics
 
-1. **Context Utilization**: A 100MB vault should contribute meaningfully to output
+1. **Context Utilization**: A 100MB collection should contribute meaningfully to output
 2. **Task Complexity**: Successfully complete tasks requiring 10+ subtasks
 3. **Code Quality**: Generated code passes linting, type-checking, basic tests
 4. **One-Shot Success**: Complex tasks complete without human intervention
@@ -312,10 +312,10 @@ All modules implemented per SPEC.md:
 ## Example: Building a Mobile App
 
 ```bash
-# 1. Prepare vault with mobile dev knowledge
-shad ingest github https://github.com/facebook/react-native --preset docs --vault ~/MobileVault
-shad ingest github https://github.com/excellent-app/example --preset deep --vault ~/MobileVault
-shad ingest ~/notes/mobile-patterns.md --vault ~/MobileVault
+# 1. Prepare collection with mobile dev knowledge
+shad ingest github https://github.com/facebook/react-native --preset docs --collection ~/MobileVault
+shad ingest github https://github.com/excellent-app/example --preset deep --collection ~/MobileVault
+shad ingest ~/notes/mobile-patterns.md --collection ~/MobileVault
 
 # 2. Run the build task
 shad run "Build a task management mobile app with:
@@ -324,7 +324,7 @@ shad run "Build a task management mobile app with:
   - Offline-first with background sync
   - Push notifications for reminders
   - Clean, modern UI following Material Design" \
-  --vault ~/MobileVault \
+  --collection ~/MobileVault \
   --strategy software \
   --verify strict \
   --write-files --output ./TaskApp \
@@ -336,7 +336,7 @@ shad run "Build a task management mobile app with:
 #    - Passes type checking and tests
 ```
 
-The vault contains the "how" (patterns, examples, docs). Shad provides the "engine" (decomposition, retrieval, generation, verification, assembly). Together: complex tasks in one shot.
+The collection contains the "how" (patterns, examples, docs). Shad provides the "engine" (decomposition, retrieval, generation, verification, assembly). Together: complex tasks in one shot.
 
 ---
 
@@ -350,13 +350,13 @@ See [SPEC.md](SPEC.md) Section 4 (Decision Log) for full rationale on each decis
 | D2 | Cross-subtask deps | Soft deps + context packets |
 | D3 | Type consistency | Contracts-first + convention merge |
 | D4 | Sandbox security | Configurable profiles (strict default) |
-| D5 | Vault versioning | Immutable snapshots + shadow index |
+| D5 | Collection versioning | Immutable snapshots + shadow index |
 | D6 | Token budget | Hierarchical reserves (25% parent) |
 | D7 | Verification | Progressive strictness levels |
 | D8 | Resume | Delta verification |
 | D9 | Concurrency | Tiered adaptive (separate LLM/local) |
 | D10 | Decomposition | Template skeletons + LLM refinement |
 | D11 | Test generation | Spec-first stubs + post-impl pass |
-| D12 | Multi-vault | Layered with priority + namespacing |
+| D12 | Multi-collection | Layered with priority + namespacing |
 | D13 | Conflict resolution | Preserve both + reconcile + checkpoint |
 | D14 | Gap detection | Combined scoring (history + patterns) |

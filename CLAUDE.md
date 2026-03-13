@@ -4,7 +4,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Project Overview
 
-Shad (Shannon's Daemon) enables AI to utilize virtually unlimited context by treating an Obsidian vault as an explorable environment. It recursively decomposes complex tasks, retrieves targeted context for each subtask via **Code Mode** (LLM-generated Python scripts), and assembles coherent outputs.
+Shad (Shannon's Daemon) enables AI to utilize virtually unlimited context by treating an Obsidian collection as an explorable environment. It recursively decomposes complex tasks, retrieves targeted context for each subtask via **Code Mode** (LLM-generated Python scripts), and assembles coherent outputs.
 
 Core premise: **Long-context reasoning is an inference problem, not a prompting problem.**
 
@@ -39,7 +39,7 @@ ruff format src/shad/ --check
 ## Architecture
 
 ```
-shad run "Build app" --vault ~/MyVault
+shad run "Build app" --collection ~/MyVault
          │
          ▼
     RLM Engine
@@ -47,7 +47,7 @@ shad run "Build app" --vault ~/MyVault
          ├── Strategy Selection → Decomposition (DAG of subtasks)
          │
          ├── For each node:
-         │     Code Mode → CodeExecutor → ObsidianTools → Vault
+         │     Code Mode → CodeExecutor → ObsidianTools → Collection
          │                  (sandboxed)
          │
          ├── Verification Layer (syntax, types, imports)
@@ -73,7 +73,7 @@ shad run "Build app" --vault ~/MyVault
 | `output/manifest.py` | File manifest generation and writing |
 | `output/import_resolution.py` | Two-pass import validation |
 | `refinement/manager.py` | Run states, delta verification, HITL checkpoints |
-| `vault/ingestion.py` | Repository ingestion with presets (mirror/docs/deep) |
+| `collection/ingestion.py` | Repository ingestion with presets (mirror/docs/deep) |
 | `sources/manager.py` | Automated source ingestion scheduling |
 | `sources/scheduler.py` | Source sync scheduling (hourly/daily/weekly/monthly) |
 | `utils/models.py` | Model registry, shorthand aliases (opus/sonnet/haiku), API cache |
@@ -88,7 +88,7 @@ pattern = obsidian.read_note("Patterns/Auth.md")
 __result__ = {"context": ..., "citations": [...], "confidence": 0.72}
 ```
 
-Scripts run in a sandbox with restricted builtins and vault access via `ObsidianTools`.
+Scripts run in a sandbox with restricted builtins and collection access via `ObsidianTools`.
 Search modes: `hybrid` (default, BM25 + vectors), `bm25` (fast keyword), `vector` (semantic).
 
 ### Strategy Skeletons
@@ -104,15 +104,15 @@ Strategies define required stages and constraints. Example (software):
 shad init
 shad check-permissions
 
-# Basic run (uses OBSIDIAN_VAULT_PATH env if --vault not specified)
-shad run "Your task" --vault /path/to/vault
-shad run "Your task"  # Uses default vault from env
+# Basic run (uses OBSIDIAN_COLLECTION_PATH env if --collection not specified)
+shad run "Your task" --collection /path/to/collection
+shad run "Your task"  # Uses default collection from env
 
 # Software generation with file output
-shad run "Build REST API" --vault ~/v --strategy software --verify strict --write-files -o ./out
+shad run "Build REST API" --collection ~/v --strategy software --verify strict --write-files -o ./out
 
-# Multi-vault (priority order)
-shad run "Build app" --vault ~/Project --vault ~/Patterns
+# Multi-collection (priority order)
+shad run "Build app" --collection ~/Project --collection ~/Patterns
 
 # Retriever selection (auto-detects qmd by default)
 shad run "Task" --retriever qmd          # Force qmd
@@ -137,22 +137,22 @@ shad resume <run_id>
 shad export <run_id> --output ./out
 shad debug <run_id>
 
-# Vault operations
-shad vault                           # Check retriever status
+# Collection operations
+shad collection                           # Check retriever status
 shad search "query"                  # Hybrid search (default)
 shad search "query" --mode bm25      # Fast keyword search
 shad search "query" --mode vector    # Semantic search
 
 # Ingest content
-shad ingest github <url> --vault ~/v --preset docs
+shad ingest github <url> --collection ~/v --preset docs
 
 # Server management
 shad server start|stop|status|logs
 
 # Source scheduling (automated sync)
-shad sources add github <url> --vault ~/v --schedule weekly
-shad sources add url <url> --vault ~/v --schedule daily
-shad sources add feed <url> --vault ~/v --schedule hourly
+shad sources add github <url> --collection ~/v --schedule weekly
+shad sources add url <url> --collection ~/v --schedule daily
+shad sources add feed <url> --collection ~/v --schedule hourly
 shad sources list
 shad sources status
 shad sources sync [--force]
@@ -165,7 +165,7 @@ shad sources remove <source_id>
 - **Soft deps + context packets**: Parallel execution with context sharing between siblings
 - **Two-pass import resolution**: Build export index first, then generate implementations
 - **Verification levels**: `off` → `basic` (default) → `build` → `strict`
-- **Sandbox profiles**: `strict` (vault-only), `local` (+allowlisted paths), `extended` (+network)
+- **Sandbox profiles**: `strict` (collection-only), `local` (+allowlisted paths), `extended` (+network)
 - **Budget system**: Hierarchical token allocation; parent reserves 25% for synthesis
 
 ## Hard Invariants
@@ -179,7 +179,7 @@ shad sources remove <source_id>
 **Required**: [Claude CLI](https://claude.ai/code) installed and authenticated (handles all LLM calls)
 
 Environment variables (or `.env` file):
-- `OBSIDIAN_VAULT_PATH`: Default vault path (optional, CLI `--vault` overrides)
+- `OBSIDIAN_COLLECTION_PATH`: Default collection path (optional, CLI `--collection` overrides)
 - `REDIS_URL`: Redis connection for caching (default: `redis://localhost:6379/0`)
 
 No API keys needed - Claude CLI handles authentication and supports both Claude and Ollama models.

@@ -8,7 +8,7 @@
 
 ## Summary
 
-Shad originally used the Obsidian Local REST API for vault operations. This required Obsidian to be running and added complexity for multi-vault support. We pivoted to [qmd](https://github.com/tobi/qmd) as the primary retrieval backend, which provides better search quality with no runtime dependencies. For OpenAI embeddings support, use the fork: https://github.com/jonesj38/qmd/tree/feat/openai-embeddings.
+Shad originally used the Obsidian Local REST API for collection operations. This required Obsidian to be running and added complexity for multi-collection support. We pivoted to [qmd](https://github.com/tobi/qmd) as the primary retrieval backend, which provides better search quality with no runtime dependencies. For OpenAI embeddings support, use the fork: https://github.com/jonesj38/qmd/tree/feat/openai-embeddings.
 
 ---
 
@@ -16,24 +16,24 @@ Shad originally used the Obsidian Local REST API for vault operations. This requ
 
 ### Obsidian REST API Limitations
 
-1. **Runtime Dependency**: Obsidian must be running for shad to access vaults
-2. **Single Vault**: API bound to one vault at a time
-3. **Multi-Vault Complexity**: Would require multiple Obsidian instances or complex routing
+1. **Runtime Dependency**: Obsidian must be running for shad to access collections
+2. **Single Collection**: API bound to one collection at a time
+3. **Multi-Collection Complexity**: Would require multiple Obsidian instances or complex routing
 4. **Search Quality**: Basic keyword search only, no semantic understanding
 5. **Deployment**: Doesn't work on headless servers or CI/CD
 
-### Multi-Vault Requirements
+### Multi-Collection Requirements
 
 Users needed to search across multiple knowledge bases:
 ```bash
 shad run "Build auth system" \
-  --vault ~/Project \
-  --vault ~/Patterns \
-  --vault ~/Docs
+  --collection ~/Project \
+  --collection ~/Patterns \
+  --collection ~/Docs
 ```
 
 With Obsidian API, this would require:
-- Running multiple Obsidian instances (one per vault)
+- Running multiple Obsidian instances (one per collection)
 - Complex routing logic to dispatch queries
 - Result merging with priority weighting
 - Significant infrastructure overhead
@@ -48,7 +48,7 @@ With Obsidian API, this would require:
 |---------|--------------|-----|
 | Search type | Keyword only | Hybrid (BM25 + vectors + LLM reranking) |
 | Runtime dependency | Obsidian running | None (standalone CLI) |
-| Multi-vault | Complex routing | Native collections |
+| Multi-collection | Complex routing | Native collections |
 | Semantic search | No | Yes (local embeddings) |
 | Headless/CI | No | Yes |
 | Setup | Plugin install + API key | `bun install -g` + `qmd collection add` |
@@ -56,7 +56,7 @@ With Obsidian API, this would require:
 ### qmd Architecture
 
 ```
-shad run "task" --vault ~/V1 --vault ~/V2
+shad run "task" --collection ~/V1 --collection ~/V2
          │
          ▼
     RetrievalLayer
@@ -140,24 +140,24 @@ def get_retriever(paths, collection_names, prefer="auto"):
 # Required Obsidian running with REST API plugin
 export OBSIDIAN_API_KEY=your_key
 export OBSIDIAN_BASE_URL=https://127.0.0.1:27124
-shad run "task" --vault ~/Vault
+shad run "task" --collection ~/Collection
 ```
 
 **After (qmd)**:
 ```bash
 # One-time setup
 bun install -g https://github.com/jonesj38/qmd#feat/openai-embeddings
-qmd collection add ~/Vault --name vault
+qmd collection add ~/Collection --name collection
 QMD_OPENAI=1 qmd embed  # Generate embeddings
 
 # Usage (no daemon required)
-shad run "task" --vault ~/Vault
+shad run "task" --collection ~/Collection
 ```
 
 **Fallback (no qmd)**:
 ```bash
 # Works without any setup, uses filesystem search
-shad run "task" --vault ~/Vault
+shad run "task" --collection ~/Collection
 ```
 
 ### Breaking Changes
@@ -184,7 +184,7 @@ shad run "task" --vault ~/Vault
 
 1. **No Runtime Dependency**: Shad works without Obsidian running
 2. **Better Search**: Hybrid BM25 + vector search with LLM reranking
-3. **Native Multi-Vault**: `--vault` flag accepts multiple paths
+3. **Native Multi-Collection**: `--collection` flag accepts multiple paths
 4. **Simpler Config**: No API keys or URLs to configure
 5. **CI/CD Ready**: Works on headless servers
 6. **Graceful Fallback**: Filesystem search when qmd not installed

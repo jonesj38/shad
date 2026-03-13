@@ -7,7 +7,7 @@ Load any directory of markdown, code, or docs — then accomplish complex tasks 
 ```bash
 # Build a full app using your team's patterns and docs
 shad run "Build a task management app with auth, offline sync, and push notifications" \
-  --vault ~/TeamDocs \
+  --collection ~/TeamDocs \
   --strategy software \
   --write-files --output ./TaskApp
 ```
@@ -23,16 +23,16 @@ AI systems break down when:
 - Generated code needs consistent types across files
 - You need reproducible, verifiable results
 
-Current solutions (RAG, long-context models) help but don't scale. You can't fit a 100MB documentation vault into any context window.
+Current solutions (RAG, long-context models) help but don't scale. You can't fit a 100MB documentation collection into any context window.
 
 ## The Solution
 
 > **Long-context reasoning is an inference problem, not a prompting problem.**
 
-Shad treats your vault as an **explorable environment**, not a fixed input:
+Shad treats your collection as an **explorable environment**, not a fixed input:
 
 1. **Decompose** — Break complex tasks into subtasks using domain-specific strategy skeletons
-2. **Retrieve** — For each subtask, generate custom retrieval code that searches your vault(s)
+2. **Retrieve** — For each subtask, generate custom retrieval code that searches your collection(s)
 3. **Generate** — Produce output with contracts-first type consistency
 4. **Verify** — Check syntax, types, and tests with configurable strictness
 5. **Assemble** — Synthesize subtask results into coherent output (file manifests for code)
@@ -50,7 +50,7 @@ This allows Shad to effectively utilize **gigabytes** of context — not by load
   - [Claude CLI](https://claude.ai/code) — uses your Claude subscription (default)
   - [Gemini CLI](https://geminicli.com) — uses your Google subscription
   - [Ollama](https://ollama.com) — free, local open-source models
-- A vault (any directory of markdown files, code, or docs)
+- A collection (any directory of markdown files, code, or docs)
 - (Optional) Docker for Redis (enables cross-run caching)
 - (Optional) [qmd](https://github.com/jonesj38/qmd) for hybrid semantic search
 
@@ -89,28 +89,28 @@ shad server logs -f   # Follow logs
 ### Basic Usage
 
 ```bash
-# Run a task with vault context
-shad run "Summarize the key concepts in my notes" --vault ~/MyVault
+# Run a task with collection context
+shad run "Summarize the key concepts in my notes" --collection ~/MyVault
 
-# Use multiple vaults (searched in priority order)
-shad run "Build auth system" --vault ~/Project --vault ~/Patterns --vault ~/Docs
+# Use multiple collections (searched in priority order)
+shad run "Build auth system" --collection ~/Project --collection ~/Patterns --collection ~/Docs
 
 # Generate code with verification
 shad run "Build a REST API for user management" \
-  --vault ~/TeamDocs \
+  --collection ~/TeamDocs \
   --strategy software \
   --verify strict \
   --write-files --output ./api
 
 # Quick context retrieval (no DAG, faster than run)
-shad context "BSV authentication decisions" -v ~/Notes
+shad context "BSV authentication decisions" -c ~/Notes
 
-# Search your vault directly
+# Search your collection directly
 shad search "oauth refresh token" --mode hybrid
 
 # Check environment health
 shad doctor
-shad doctor --fix   # Install qmd + register vault + embed
+shad doctor --fix   # Install qmd + register collection + embed
 ```
 
 ### Stop the Server
@@ -245,7 +245,7 @@ For best retrieval quality, install [qmd](https://github.com/tobi/qmd) for hybri
 # Install (recommended fork with OpenAI embeddings)
 bun install -g https://github.com/jonesj38/qmd#feat/openai-embeddings
 
-# Register your vault as a collection
+# Register your collection as a collection
 qmd collection add ~/MyVault --name myvault
 
 # Generate embeddings
@@ -258,7 +258,7 @@ QMD_OPENAI=1 qmd embed
 | `bm25` | `qmd search` | Fast keyword matching |
 | `vector` | `qmd vsearch` | Pure semantic similarity |
 
-Without qmd, Shad falls back to filesystem search (basic keyword matching). Use `shad doctor --fix` to install qmd and set up your vault automatically.
+Without qmd, Shad falls back to filesystem search (basic keyword matching). Use `shad doctor --fix` to install qmd and set up your collection automatically.
 
 ---
 
@@ -267,13 +267,13 @@ Without qmd, Shad falls back to filesystem search (basic keyword matching). Use 
 ### Core Commands
 
 ```bash
-# Execute a task with vault context
+# Execute a task with collection context
 shad run "Your task" [options]
 
 # Quick context retrieval (faster than run, richer than search)
-shad context "query" -v ~/vault
+shad context "query" -c ~/collection
 
-# Search your vault
+# Search your collection
 shad search "query" [--mode hybrid|bm25|vector]
 
 # Check run status
@@ -298,7 +298,7 @@ shad models [--refresh] [--ollama]
 ### Run Options
 
 ```
---vault, -v            Vault path(s) for context (repeatable)
+--collection, -c            Collection path(s) for context (repeatable)
 --retriever, -r        Backend: auto|qmd|filesystem (default: auto)
 --strategy, -s         Force strategy: software|research|analysis|planning
 --profile              Budget preset: fast|balanced|deep
@@ -331,10 +331,10 @@ shad server logs [-f]  # View/follow logs
 ### Environment & Setup
 
 ```bash
-shad doctor            # Check environment health (Python, qmd, Redis, vault)
-shad doctor --fix      # Auto-fix: install qmd, register vault, generate embeddings
+shad doctor            # Check environment health (Python, qmd, Redis, collection)
+shad doctor --fix      # Auto-fix: install qmd, register collection, generate embeddings
 shad init              # Initialize project permissions for Claude Code
-shad vault             # Check retriever status
+shad collection             # Check retriever status
 ```
 
 ### Sources Scheduler
@@ -343,10 +343,10 @@ Automatically sync content from external sources on a schedule.
 
 ```bash
 # Add sources
-shad sources add github https://github.com/org/repo --schedule weekly --vault ~/Vault
-shad sources add url https://docs.example.com/api --schedule daily --vault ~/Vault
-shad sources add feed https://blog.example.com/rss --schedule hourly --vault ~/Vault
-shad sources add folder ~/LocalDocs --schedule daily --vault ~/Vault
+shad sources add github https://github.com/org/repo --schedule weekly --collection ~/Collection
+shad sources add url https://docs.example.com/api --schedule daily --collection ~/Collection
+shad sources add feed https://blog.example.com/rss --schedule hourly --collection ~/Collection
+shad sources add folder ~/LocalDocs --schedule daily --collection ~/Collection
 
 # Manage
 shad sources list              # List all sources
@@ -358,11 +358,11 @@ shad sources remove <id>       # Remove a source
 
 Schedules: `manual`, `hourly`, `daily`, `weekly`, `monthly`
 
-### Vault Ingestion
+### Collection Ingestion
 
 ```bash
-# Ingest a GitHub repo into your vault
-shad ingest github <url> --vault ~/Vault --preset docs
+# Ingest a GitHub repo into your collection
+shad ingest github <url> --collection ~/Collection --preset docs
 
 # Presets: mirror (all files), docs (documentation only), deep (with code)
 ```
@@ -375,19 +375,19 @@ shad ingest github <url> --vault ~/Vault --preset docs
 
 ```bash
 # Cold-start (good default)
-shad run "task" --vault ~/V -O sonnet -W sonnet -L haiku
+shad run "task" --collection ~/V -O sonnet -W sonnet -L haiku
 
 # Fast + cheap
-shad run "task" --vault ~/V --profile fast -O haiku -W haiku -L haiku
+shad run "task" --collection ~/V --profile fast -O haiku -W haiku -L haiku
 
 # Auto profile (adapts to your machine)
-shad run "task" --vault ~/V --auto-profile
+shad run "task" --collection ~/V --auto-profile
 
 # Deep reasoning (large tasks)
-shad run "task" --vault ~/V --profile deep -O opus -W sonnet -L haiku
+shad run "task" --collection ~/V --profile deep -O opus -W sonnet -L haiku
 
 # Preview before running
-shad run "task" --vault ~/V --auto-profile --dry-run
+shad run "task" --collection ~/V --auto-profile --dry-run
 ```
 
 ### Budget Defaults by Machine
@@ -435,7 +435,7 @@ Shad CLI / API
    │       ├── Code Mode (LLM generates retrieval scripts)
    │       │       │
    │       │       ▼
-   │       ├── CodeExecutor ──> RetrievalLayer ──> Your Vault(s)
+   │       ├── CodeExecutor ──> RetrievalLayer ──> Your Collection(s)
    │       │                         │
    │       │                    ┌────┴────┐
    │       │                    │         │
@@ -458,7 +458,7 @@ Shad CLI / API
 | **Strategy Skeletons** | Domain-specific decomposition templates (`software`, `research`, `analysis`, `planning`) |
 | **Code Mode** | LLM-generated retrieval scripts |
 | **CodeExecutor** | Sandboxed Python execution (configurable profiles) |
-| **RetrievalLayer** | Vault search abstraction (qmd or filesystem fallback) |
+| **RetrievalLayer** | Collection search abstraction (qmd or filesystem fallback) |
 | **qmd** | Hybrid BM25 + vector search with LLM reranking |
 | **Verification Layer** | Syntax, type, import, test checking (progressive strictness) |
 | **Redis Cache** | Cache subtask results with hash validation |
@@ -471,8 +471,8 @@ Shad CLI / API
 Shad works with minimal configuration. Set optional environment variables in `~/.shad/.env` or your shell profile.
 
 ```bash
-# Default vault (so you don't need --vault every time)
-OBSIDIAN_VAULT_PATH=/path/to/your/vault
+# Default collection (so you don't need --collection every time)
+OBSIDIAN_COLLECTION_PATH=/path/to/your/collection
 
 # Redis for cross-run caching (defaults to localhost:6379)
 REDIS_URL=redis://localhost:6379/0
@@ -496,25 +496,25 @@ DEFAULT_MAX_TOKENS=2000000
 
 ---
 
-## Vault Strategy
+## Collection Strategy
 
-### One vs Many Vaults
+### One vs Many Collections
 
-| | One Vault | Many Vaults |
+| | One Collection | Many Collections |
 |---|---|---|
 | **Pros** | Single source of truth, cross-topic connections, simpler management | Faster indexing, focused retrieval, easier sharing/permissions |
-| **Cons** | Slower as it grows, noise in retrieval, harder to share subsets | Context fragmentation, can't find cross-vault connections, more overhead |
+| **Cons** | Slower as it grows, noise in retrieval, harder to share subsets | Context fragmentation, can't find cross-collection connections, more overhead |
 
-**Use one vault** for personal/work knowledge — memory, tasks, notes, projects all interconnected.
+**Use one collection** for personal/work knowledge — memory, tasks, notes, projects all interconnected.
 
-**Use separate vaults** for codebases, client deliverables needing isolation, or read-only reference material.
+**Use separate collections** for codebases, client deliverables needing isolation, or read-only reference material.
 
-Multi-vault queries search in priority order:
+Multi-collection queries search in priority order:
 ```bash
-shad run "Build auth system" --vault ~/Project --vault ~/Patterns --vault ~/Docs
+shad run "Build auth system" --collection ~/Project --collection ~/Patterns --collection ~/Docs
 ```
 
-### Vault Preparation Tips
+### Collection Preparation Tips
 
 - Use consistent frontmatter for better filtering
 - Include code examples with context, not just snippets
@@ -529,12 +529,12 @@ shad run "Build auth system" --vault ~/Project --vault ~/Patterns --vault ~/Docs
 All core phases complete:
 
 - [x] Foundation — CLI, API, RLM engine, Redis caching
-- [x] qmd migration — hybrid search, multi-vault, no Obsidian dependency
+- [x] qmd migration — hybrid search, multi-collection, no Obsidian dependency
 - [x] Task-aware decomposition — strategy skeletons, soft dependencies
 - [x] File output mode — two-pass imports, contracts-first
 - [x] Verification layer — progressive strictness, repair loops
 - [x] Iterative refinement — HITL checkpoints, delta resume
-- [x] Vault curation — ingestion, gap detection
+- [x] Collection curation — ingestion, gap detection
 - [x] Sources scheduler — automated sync from GitHub, URLs, feeds, folders
 - [x] Multi-provider — Claude CLI, Gemini CLI, Ollama support
 - [x] Context command — fast retrieval + synthesis without DAG overhead
@@ -549,7 +549,7 @@ See [SPEC.md](SPEC.md) for the technical specification, [QMD_PIVOT.md](QMD_PIVOT
 
 > Solve a problem once. Encode it as knowledge. Never solve it again.
 
-Shad compounds your knowledge. Every document you add makes it more capable. The vault is the *how* — patterns, examples, documentation. Shad is the *engine* — decomposition, retrieval, generation, verification, assembly.
+Shad compounds your knowledge. Every document you add makes it more capable. The collection is the *how* — patterns, examples, documentation. Shad is the *engine* — decomposition, retrieval, generation, verification, assembly.
 
 Together: complex tasks that learn from your accumulated knowledge.
 

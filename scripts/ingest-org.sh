@@ -59,7 +59,7 @@ for repo in $REPOS; do
   REPO_NAME=$(basename "$repo" .git)
   echo "[$CURRENT/$COUNT] Ingesting $REPO_NAME..."
 
-  if "$SHAD_CMD" ingest github "$repo" --preset "$PRESET" --vault "$VAULT"; then
+  if "$SHAD_CMD" ingest github "$repo" --preset "$PRESET" --collection "$VAULT"; then
     echo "  ✓ Done"
   else
     echo "  ✗ Failed (continuing...)"

@@ -55,20 +55,20 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
 
     # Initialize retriever
     from pathlib import Path
-    vault_path = Path(settings.obsidian_vault_path) if settings.obsidian_vault_path else None
+    collection_path = Path(settings.obsidian_vault_path) if settings.obsidian_vault_path else None
     retriever = get_retriever(
-        paths=[vault_path] if vault_path else None,
-        collection_names={vault_path.name: vault_path} if vault_path else None,
+        paths=[collection_path] if collection_path else None,
+        collection_names={collection_path.name: collection_path} if collection_path else None,
     )
     logger.info(f"Initialized retriever: {type(retriever).__name__}")
 
     # Initialize engine with cache and retriever
-    collections = [vault_path.name] if vault_path else None
+    collections = [collection_path.name] if collection_path else None
     engine = RLMEngine(
         llm_provider=llm_provider,
         cache=cache,
         retriever=retriever,
-        vault_path=vault_path,
+        vault_path=collection_path,
         collections=collections,
     )
     history = HistoryManager()

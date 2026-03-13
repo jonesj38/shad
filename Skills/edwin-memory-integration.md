@@ -6,11 +6,11 @@
 
 Edwin is an AI assistant running on a VPS. It handles multiple conversations via WhatsApp, Matrix, etc. The core problem: **sub-agent sessions are ephemeral** — when a cron-triggered conversation ends, everything learned vanishes.
 
-Shad solves this by providing a searchable vault that persists across all sessions.
+Shad solves this by providing a searchable collection that persists across all sessions.
 
 ## Components
 
-### 1. Vault Structure (`~/clawd/memory/`)
+### 1. Collection Structure (`~/clawd/memory/`)
 
 ```
 memory/
@@ -32,7 +32,7 @@ memory/
 
 ### 2. Search Index (QMD)
 
-BM25 text search over the vault. Fast, no API keys needed.
+BM25 text search over the collection. Fast, no API keys needed.
 
 ```bash
 # Index after writing new memories
@@ -48,13 +48,13 @@ For meaning-based search when keywords aren't enough:
 
 ```bash
 # Fast recall (6-12s)
-shad run "what did Jess say about trust?" --vault ~/clawd --no-code-mode -O sonnet
+shad run "what did Jess say about trust?" --collection ~/clawd --no-code-mode -O sonnet
 
 # Quick search (raw results, no synthesis)
-shad search "trust conversation" --vault ~/clawd
+shad search "trust conversation" --collection ~/clawd
 
 # Full research (minutes, complex tasks)
-shad run "summarize all conversations with Jess this week" --vault ~/clawd -O opus
+shad run "summarize all conversations with Jess this week" --collection ~/clawd -O opus
 ```
 
 ### 4. Indexing Script (`scripts/index-memories.sh`)
@@ -84,13 +84,13 @@ Every sub-agent (cron-triggered conversation) follows this protocol:
 ## Why This Works
 
 - **Write-through**: Every conversation gets persisted to disk before the session ends
-- **Read-on-start**: Every new session loads current state from the vault
+- **Read-on-start**: Every new session loads current state from the collection
 - **Searchable**: Both keyword (QMD) and semantic (Shad) search available
-- **Incremental**: Only new content needs indexing, not the whole vault
+- **Incremental**: Only new content needs indexing, not the whole collection
 - **Resilient**: If Shad times out, BM25 search still works. If that fails, direct file reads work.
 
 ## Key Insight
 
-> "If it's not in the vault, it didn't happen."
+> "If it's not in the collection, it didn't happen."
 
-The vault is the single source of truth. Session memory is temporary. Vault memory is permanent. Every session's job is to contribute back to the vault before it dies.
+The collection is the single source of truth. Session memory is temporary. Collection memory is permanent. Every session's job is to contribute back to the collection before it dies.

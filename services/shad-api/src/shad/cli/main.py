@@ -93,10 +93,10 @@ def cli() -> None:
         check-permissions [path] Verify project permissions are configured
 
     \b
-    Vault Commands:
-        vault                Check Obsidian vault connection
-        search <query>       Search the Obsidian vault
-        ingest ...           Ingest sources into vault (see: shad ingest --help)
+    Collection Commands:
+        collections          Check collection and retriever status
+        search <query>       Search collection(s)
+        ingest ...           Ingest sources into a collection (see: shad ingest --help)
 
     \b
     Server Management:
@@ -114,7 +114,7 @@ def cli() -> None:
     \b
     Quick Start:
         shad init                                    # Set up project permissions
-        shad run "Build a REST API" --vault ~/Notes  # Run with vault context
+        shad run "Build a REST API" --collection ~/Notes  # Run with collection context
         shad status <run_id>                         # Check progress
     """
     pass
@@ -122,7 +122,8 @@ def cli() -> None:
 
 @cli.command("run")
 @click.argument("goal")
-@click.option("--vault", "-v", multiple=True, help="Vault path(s) for context (can specify multiple)")
+@click.option("--collection", "-c", multiple=True, help="Collection path(s) for context (can specify multiple)")
+@click.option("--vault", "-v", multiple=True, hidden=True, help="[deprecated: use --collection] Collection path(s)")
 @click.option("--retriever", "-r", type=click.Choice(["auto", "qmd", "filesystem"]), default="auto",
               help="Retrieval backend (auto detects qmd)")
 @click.option("--profile", type=click.Choice(["fast", "balanced", "deep"], case_sensitive=False),
@@ -151,6 +152,7 @@ def cli() -> None:
 @click.option("--gemini", is_flag=True, help="Use Gemini CLI instead of Claude Code")
 def run(
     goal: str,
+    collection: tuple[str, ...],
     vault: tuple[str, ...],
     retriever: str,
     profile: str | None,
@@ -180,8 +182,8 @@ def run(
     \b
     Examples:
         shad run "Explain quantum computing"
-        shad run "Summarize research" --vault ~/Notes
-        shad run "Build REST API" --vault ~/Project --vault ~/Patterns
+        shad run "Summarize research" --collection ~/Notes
+        shad run "Build REST API" --collection ~/Project --collection ~/Patterns
         shad run "Complex task" -O opus -W sonnet -L haiku
         shad run "Fast summary" --profile fast
         shad run "Auto profile" --auto-profile
@@ -252,29 +254,30 @@ def run(
         _run_via_api(goal, vault[0] if vault else None, max_depth, api)
         return
 
-    # Build vault paths from CLI args or env fallback
-    vault_paths: list[Path] = []
+    # Merge --collection and --vault (backward compat)
+    _all_paths = collection or vault
+    collection_paths: list[Path] = []
     collection_names: dict[str, Path] = {}
 
-    if vault:
-        for v in vault:
+    if _all_paths:
+        for v in _all_paths:
             vp = Path(v).expanduser()
             if not vp.is_absolute():
                 vp = Path.cwd() / vp
-            vault_paths.append(vp)
+            collection_paths.append(vp)
             collection_names[vp.name] = vp
     elif get_settings().obsidian_vault_path:
         # Fall back to env var
         vp = Path(get_settings().obsidian_vault_path).expanduser()
-        vault_paths.append(vp)
+        collection_paths.append(vp)
         collection_names[vp.name] = vp
 
-    # Primary vault path (first one) for backward compatibility
-    primary_vault = vault_paths[0] if vault_paths else None
+    # Primary collection path (first one) for backward compatibility
+    primary_collection = collection_paths[0] if collection_paths else None
 
     config = RunConfig(
         goal=goal,
-        vault_path=str(primary_vault) if primary_vault else None,
+        vault_path=str(primary_collection) if primary_collection else None,
         budget=Budget(
             max_depth=max_depth,
             max_nodes=max_nodes,
@@ -294,19 +297,19 @@ def run(
     retriever_instance = None
     collections: list[str] = []
 
-    if vault_paths:
-        source = "CLI" if vault else "env"
-        if len(vault_paths) == 1:
-            console.print(f"[dim][CONTEXT] Using vault ({source}): {vault_paths[0]}[/dim]")
+    if collection_paths:
+        source = "CLI" if (_all_paths) else "env"
+        if len(collection_paths) == 1:
+            console.print(f"[dim][CONTEXT] Using collection ({source}): {collection_paths[0]}[/dim]")
         else:
-            console.print(f"[dim][CONTEXT] Using {len(vault_paths)} vaults ({source}):[/dim]")
-            for vp in vault_paths:
-                console.print(f"[dim]  - {vp.name}: {vp}[/dim]")
+            console.print(f"[dim][CONTEXT] Using {len(collection_paths)} collections ({source}):[/dim]")
+            for cp in collection_paths:
+                console.print(f"[dim]  - {cp.name}: {cp}[/dim]")
         collections = list(collection_names.keys())
 
         # Get retriever based on preference
         retriever_instance = get_retriever(
-            paths=vault_paths,
+            paths=collection_paths,
             collection_names=collection_names,
             prefer=retriever,
         )
@@ -331,7 +334,7 @@ def run(
         else:
             console.print("[dim][CODE_MODE] Disabled - using direct search[/dim]")
     else:
-        console.print("[dim][CONTEXT] No vault specified (use --vault or set OBSIDIAN_VAULT_PATH)[/dim]")
+        console.print("[dim][CONTEXT] No collection specified (use --collection or set OBSIDIAN_VAULT_PATH)[/dim]")
         use_code_mode = False
 
     # Display strategy and verification options
@@ -375,7 +378,7 @@ def run(
         table.add_column("Value")
         table.add_row("Budget", f"depth={max_depth}, nodes={max_nodes}, time={max_time}s, tokens={max_tokens}")
         table.add_row("Retriever", retriever_name)
-        table.add_row("Vaults", str(len(vault_paths)) if vault_paths else "none")
+        table.add_row("Collections", str(len(collection_paths)) if collection_paths else "none")
         table.add_row("Models", f"O={orch}, W={work}, L={leaf}")
         table.add_row("Mode", "qmd-hybrid" if qmd_hybrid else ("code-mode" if use_code_mode else "direct"))
         console.print(table)
@@ -390,7 +393,7 @@ def run(
                 use_claude_code=not gemini,
             ),
             retriever=retriever_instance,
-            vault_path=primary_vault,
+            vault_path=primary_collection,
             collections=collections,
             use_code_mode=use_code_mode,
             use_qmd_hybrid=qmd_hybrid,
@@ -842,13 +845,13 @@ def list_models(refresh: bool, ollama: bool) -> None:
 # Vault Commands
 # =============================================================================
 
-@cli.command("vault")
-def vault_status() -> None:
-    """Check vault and retriever status.
+@cli.command("collections")
+def collections_status() -> None:
+    """Check collection and retriever status.
 
     \b
     Example:
-        shad vault
+        shad collections
     """
     # Check retriever availability
     qmd_retriever = QmdRetriever()
@@ -870,52 +873,54 @@ def vault_status() -> None:
         console.print("[yellow]⚠ qmd not installed (falling back to filesystem search)[/yellow]")
         console.print("[dim]Install with: bun install -g https://github.com/tobi/qmd[/dim]")
 
-    # Show default vault from env
-    default_vault = get_settings().obsidian_vault_path
-    if default_vault:
-        console.print(f"\n[dim]Default vault (env): {default_vault}[/dim]")
+    # Show default collection from env
+    default_collection = get_settings().obsidian_vault_path
+    if default_collection:
+        console.print(f"\n[dim]Default collection (env): {default_collection}[/dim]")
     else:
-        console.print("\n[dim]No default vault configured[/dim]")
-        console.print("[dim]Set OBSIDIAN_VAULT_PATH or use --vault with commands[/dim]")
+        console.print("\n[dim]No default collection configured[/dim]")
+        console.print("[dim]Set OBSIDIAN_VAULT_PATH or use --collection with commands[/dim]")
 
 
 @cli.command("search")
 @click.argument("query")
-@click.option("--vault", "-v", multiple=True, help="Vault path(s) to search")
+@click.option("--collection", "-c", multiple=True, help="Collection path(s) to search")
+@click.option("--vault", "-v", multiple=True, hidden=True, help="[deprecated: use --collection]")
 @click.option("--limit", "-l", default=10, help="Maximum results")
 @click.option("--mode", "-m", type=click.Choice(["hybrid", "bm25", "vector"]), default="hybrid",
               help="Search mode (default: hybrid)")
 @click.option("--json", "as_json", is_flag=True, default=False, help="Output results as JSON")
-def search(query: str, vault: tuple[str, ...], limit: int, mode: str, as_json: bool) -> None:
-    """Search vault(s) for matching documents.
+def search(query: str, collection: tuple[str, ...], vault: tuple[str, ...], limit: int, mode: str, as_json: bool) -> None:
+    """Search collection(s) for matching documents.
 
     \b
     Examples:
         shad search "machine learning"
-        shad search "authentication" --vault ~/Notes
+        shad search "authentication" --collection ~/Notes
         shad search "API design" --mode bm25 --limit 20
     """
-    # Build vault paths
-    vault_paths: list[Path] = []
+    # Build collection paths (merge --collection and deprecated --vault)
+    _all_paths = collection or vault
+    collection_paths: list[Path] = []
     collection_names: dict[str, Path] = {}
 
-    if vault:
-        for v in vault:
+    if _all_paths:
+        for v in _all_paths:
             vp = Path(v).expanduser()
             if not vp.is_absolute():
                 vp = Path.cwd() / vp
-            vault_paths.append(vp)
+            collection_paths.append(vp)
             collection_names[vp.name] = vp
     elif get_settings().obsidian_vault_path:
         vp = Path(get_settings().obsidian_vault_path).expanduser()
-        vault_paths.append(vp)
+        collection_paths.append(vp)
         collection_names[vp.name] = vp
     else:
-        console.print("[yellow]No vault specified. Use --vault or set OBSIDIAN_VAULT_PATH[/yellow]")
+        console.print("[yellow]No collection specified. Use --collection or set OBSIDIAN_VAULT_PATH[/yellow]")
         sys.exit(1)
 
     # Get retriever
-    retriever = get_retriever(paths=vault_paths, collection_names=collection_names)
+    retriever = get_retriever(paths=collection_paths, collection_names=collection_names)
 
     async def do_search() -> list:
         return await retriever.search(
@@ -938,7 +943,7 @@ def search(query: str, vault: tuple[str, ...], limit: int, mode: str, as_json: b
         console.print(f"[dim]No results found for '{query}'[/dim]")
         return
 
-    console.print(Panel(f"Search: {query}", title="Vault Search", border_style="blue"))
+    console.print(Panel(f"Search: {query}", title="Collection Search", border_style="blue"))
     console.print(f"[dim]Mode: {mode} | Backend: {type(retriever).__name__}[/dim]\n")
 
     for i, result in enumerate(results, 1):
@@ -947,8 +952,8 @@ def search(query: str, vault: tuple[str, ...], limit: int, mode: str, as_json: b
         content = result.content[:200] if result.content else ""
         score = result.score
 
-        # Show collection if multiple vaults
-        if len(vault_paths) > 1 and collection:
+        # Show collection if multiple collections
+        if len(collection_paths) > 1 and result.collection:
             console.print(f"[bold cyan]{i}. [{collection}] {path}[/bold cyan] [dim](score: {score:.2f})[/dim]")
         else:
             console.print(f"[bold cyan]{i}. {path}[/bold cyan] [dim](score: {score:.2f})[/dim]")
@@ -964,7 +969,7 @@ def search(query: str, vault: tuple[str, ...], limit: int, mode: str, as_json: b
 # =============================================================================
 
 
-CONTEXT_SYNTHESIS_PROMPT = """You are a context synthesizer. Given the following documents retrieved from a knowledge vault, \
+CONTEXT_SYNTHESIS_PROMPT = """You are a context synthesizer. Given the following documents retrieved from a knowledge collection, \
 produce a concise, information-dense brief relevant to the query. Include key facts, decisions, \
 and context. Do NOT include filler or meta-commentary. Target {max_chars} characters.
 
@@ -976,7 +981,8 @@ Retrieved documents:
 
 @cli.command("context")
 @click.argument("query")
-@click.option("--vault", "-v", multiple=True, help="Vault path(s) to search")
+@click.option("--collection", "-c", multiple=True, help="Collection path(s) to search")
+@click.option("--vault", "-v", multiple=True, hidden=True, help="[deprecated: use --collection]")
 @click.option("--limit", "-l", default=10, help="Max retrieval results")
 @click.option("--max-chars", default=4000, help="Max output chars for brief")
 @click.option("--mode", "-m", type=click.Choice(["hybrid", "bm25", "vector"]), default="hybrid",
@@ -985,6 +991,7 @@ Retrieved documents:
 @click.option("--leaf-model", "-L", default=None, help="Model for synthesis (default: leaf tier)")
 def context(
     query: str,
+    collection: tuple[str, ...],
     vault: tuple[str, ...],
     limit: int,
     max_chars: int,
@@ -992,40 +999,41 @@ def context(
     as_json: bool,
     leaf_model: str | None,
 ) -> None:
-    """Retrieve and synthesize vault context into a compact brief.
+    """Retrieve and synthesize collection context into a compact brief.
 
     Faster than `shad run` (no DAG/decomposition), richer than `shad search`
-    (includes LLM synthesis). Returns a concise context brief from vault documents.
+    (includes LLM synthesis). Returns a concise context brief from collection documents.
 
     \b
     Examples:
-        shad context "BSV authentication decisions" -v ~/Notes
-        shad context "API design patterns" -v ~/vault --max-chars 2000
-        shad context "project architecture" -v ~/vault --json
+        shad context "BSV authentication decisions" -c ~/Notes
+        shad context "API design patterns" --collection ~/docs --max-chars 2000
+        shad context "project architecture" --collection ~/docs --json
     """
     import json as json_mod
 
-    # Build vault paths
-    vault_paths: list[Path] = []
+    # Build collection paths (merge --collection and deprecated --vault)
+    _all_paths = collection or vault
+    collection_paths: list[Path] = []
     collection_names: dict[str, Path] = {}
 
-    if vault:
-        for v in vault:
+    if _all_paths:
+        for v in _all_paths:
             vp = Path(v).expanduser()
             if not vp.is_absolute():
                 vp = Path.cwd() / vp
-            vault_paths.append(vp)
+            collection_paths.append(vp)
             collection_names[vp.name] = vp
     elif get_settings().obsidian_vault_path:
         vp = Path(get_settings().obsidian_vault_path).expanduser()
-        vault_paths.append(vp)
+        collection_paths.append(vp)
         collection_names[vp.name] = vp
     else:
-        console.print("[yellow]No vault specified. Use --vault or set OBSIDIAN_VAULT_PATH[/yellow]")
+        console.print("[yellow]No collection specified. Use --collection or set OBSIDIAN_VAULT_PATH[/yellow]")
         sys.exit(1)
 
     # Retrieve
-    retriever = get_retriever(paths=vault_paths, collection_names=collection_names)
+    retriever = get_retriever(paths=collection_paths, collection_names=collection_names)
 
     async def do_search() -> list:
         return await retriever.search(
@@ -1162,7 +1170,7 @@ def export(run_id: str, output: str, overwrite: bool) -> None:
 
 @cli.group("ingest")
 def ingest() -> None:
-    """Ingest external sources into your Obsidian vault.
+    """Ingest external sources into a collection.
 
     \b
     Commands:
@@ -1174,43 +1182,48 @@ def ingest() -> None:
 
     \b
     Options:
-        -v, --vault     Target vault path (required)
-        --preset        Ingestion preset: mirror, docs, deep (default: docs)
+        -c, --collection     Target collection path (required)
+        --preset             Ingestion preset: mirror, docs, deep (default: docs)
 
     \b
     Examples:
-        shad ingest github https://github.com/user/repo --vault ~/MyVault
-        shad ingest github https://github.com/user/repo -v ~/MyVault --preset deep
+        shad ingest github https://github.com/user/repo --collection ~/MyCollection
+        shad ingest github https://github.com/user/repo -c ~/MyCollection --preset deep
     """
     pass
 
 
 @ingest.command("github")
 @click.argument("url")
-@click.option("--vault", "-v", required=True, type=click.Path(), help="Target vault path")
+@click.option("--collection", "-c", required=True, type=click.Path(), help="Target collection path")
+@click.option("--vault", "-v", type=click.Path(), hidden=True, help="[deprecated: use --collection]")
 @click.option("--preset", type=click.Choice(["mirror", "docs", "deep"]), default="docs",
               help="Ingestion preset (default: docs)")
-def ingest_github(url: str, vault: str, preset: str) -> None:
-    """Ingest a GitHub repository into vault.
+def ingest_github(url: str, collection: str | None, vault: str | None, preset: str) -> None:
+    """Ingest a GitHub repository into a collection.
 
     \b
     Examples:
-        shad ingest github https://github.com/user/repo --vault ~/MyVault
-        shad ingest github https://github.com/user/repo --vault ~/MyVault --preset deep
+        shad ingest github https://github.com/user/repo --collection ~/MyCollection
+        shad ingest github https://github.com/user/repo -c ~/MyCollection --preset deep
     """
     from shad.vault.ingestion import IngestPreset, VaultIngester
 
-    vault_path = Path(vault).expanduser()
-    if not vault_path.exists():
-        console.print(f"[red]Vault path does not exist: {vault_path}[/red]")
+    target = collection or vault
+    if not target:
+        console.print("[red]Target collection path required (use --collection)[/red]")
+        sys.exit(1)
+    target_path = Path(target).expanduser()
+    if not target_path.exists():
+        console.print(f"[red]Collection path does not exist: {target_path}[/red]")
         sys.exit(1)
 
-    console.print(Panel(f"Ingesting {url}", title="Vault Ingestion", border_style="blue"))
+    console.print(Panel(f"Ingesting {url}", title="Collection Ingestion", border_style="blue"))
     console.print(f"[dim]Preset: {preset}[/dim]")
-    console.print(f"[dim]Target: {vault_path}[/dim]")
+    console.print(f"[dim]Target: {target_path}[/dim]")
 
     async def _ingest() -> Any:
-        ingester = VaultIngester(vault_path=vault_path)
+        ingester = VaultIngester(vault_path=target_path)
         return await ingester.ingest_github(url, preset=IngestPreset(preset))
 
     with Progress(
@@ -1549,7 +1562,7 @@ def sources() -> None:
 
     \b
     Add Options:
-        -v, --vault PATH         Target vault path (required)
+        -c, --collection PATH    Target collection path (required)
         -s, --schedule SCHED     Sync schedule: manual, hourly, daily, weekly, monthly
         -p, --preset PRESET      Ingestion preset (for github): mirror, docs, deep
 
@@ -1561,9 +1574,9 @@ def sources() -> None:
 
     \b
     Examples:
-        shad sources add github https://github.com/org/repo --vault ~/MyVault
-        shad sources add url https://docs.example.com -v ~/MyVault -s weekly
-        shad sources add feed https://blog.example.com/rss -v ~/MyVault -s hourly
+        shad sources add github https://github.com/org/repo --collection ~/MyCollection
+        shad sources add url https://docs.example.com -c ~/MyCollection -s weekly
+        shad sources add feed https://blog.example.com/rss -c ~/MyCollection -s hourly
         shad sources list
         shad sources sync --all
         shad sources sync --daemon --interval 300
@@ -1575,14 +1588,16 @@ def sources() -> None:
 @sources.command("add")
 @click.argument("source_type", type=click.Choice(["github", "url", "feed", "folder"]))
 @click.argument("location")
-@click.option("--vault", "-v", required=True, help="Target vault path")
+@click.option("--collection", "-c", required=True, help="Target collection path")
+@click.option("--vault", "-v", hidden=True, help="[deprecated: use --collection]")
 @click.option("--schedule", "-s", type=click.Choice(["manual", "hourly", "daily", "weekly", "monthly"]),
               default="daily", help="Sync schedule")
 @click.option("--preset", "-p", default="docs", help="Ingestion preset (for github)")
 def sources_add(
     source_type: str,
     location: str,
-    vault: str,
+    collection: str | None,
+    vault: str | None,
     schedule: str,
     preset: str,
 ) -> None:
@@ -1590,10 +1605,10 @@ def sources_add(
 
     \b
     Examples:
-        shad sources add github https://github.com/org/repo --vault ~/MyVault
-        shad sources add url https://docs.example.com --vault ~/MyVault --schedule weekly
-        shad sources add feed https://blog.example.com/rss --vault ~/MyVault --schedule hourly
-        shad sources add folder ~/Projects/docs --vault ~/MyVault
+        shad sources add github https://github.com/org/repo --collection ~/MyCollection
+        shad sources add url https://docs.example.com --collection ~/MyCollection --schedule weekly
+        shad sources add feed https://blog.example.com/rss --collection ~/MyCollection --schedule hourly
+        shad sources add folder ~/Projects/docs --collection ~/MyCollection
     """
     from shad.sources import SourceManager, SourceSchedule, SourceType
 
@@ -1613,12 +1628,17 @@ def sources_add(
         "monthly": SourceSchedule.MONTHLY,
     }
 
+    target = collection or vault
+    if not target:
+        console.print("[red]Target collection path required (use --collection)[/red]")
+        sys.exit(1)
+
     is_folder = source_type == "folder"
     source = manager.add_source(
         source_type=type_map[source_type],
         url=None if is_folder else location,
         path=location if is_folder else None,
-        vault_path=vault,
+        vault_path=target,
         schedule=schedule_map[schedule],
         preset=preset,
     )
@@ -1637,7 +1657,7 @@ def sources_list() -> None:
 
     if not source_list:
         console.print("[dim]No sources configured.[/dim]")
-        console.print("[dim]Add one with: shad sources add github <url> --vault <path>[/dim]")
+        console.print("[dim]Add one with: shad sources add github <url> --collection <path>[/dim]")
         return
 
     table = Table(title="Configured Sources")
@@ -2091,12 +2111,12 @@ def doctor(fix: bool) -> None:
     except Exception:
         console.print(f"[yellow]⚠[/yellow] Redis not reachable at {redis_url}")
 
-    # Check vault env
+    # Check collection env
     vault_path = get_settings().obsidian_vault_path
     if vault_path:
         console.print(f"[green]✔[/green] OBSIDIAN_VAULT_PATH set: {vault_path}")
     else:
-        console.print("[yellow]⚠[/yellow] OBSIDIAN_VAULT_PATH not set (pass --vault)")
+        console.print("[yellow]⚠[/yellow] OBSIDIAN_VAULT_PATH not set (pass --collection)")
 
     # Offer to register vault + embed if fixing and vault set
     if fix and vault_path and qmd_path:

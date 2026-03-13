@@ -10,7 +10,7 @@
 
 ### What is Shad?
 
-**Shad (Shannon's Daemon) enables AI to utilize virtually unlimited context.** It treats an Obsidian vault as an explorable environment rather than a fixed input, recursively decomposing complex tasks, retrieving targeted context for each subtask, generating outputs informed by vault knowledge, and assembling coherent results.
+**Shad (Shannon's Daemon) enables AI to utilize virtually unlimited context.** It treats an Obsidian collection as an explorable environment rather than a fixed input, recursively decomposing complex tasks, retrieving targeted context for each subtask, generating outputs informed by collection knowledge, and assembling coherent results.
 
 ### Core Premise
 
@@ -39,7 +39,7 @@ Shad CLI / API
    ├── RLM Engine (recursive decomposition + execution)
    │       │
    │       ├── Strategy Selection → Decomposition
-   │       ├── Code Mode → CodeExecutor → RetrievalLayer → Vault(s)
+   │       ├── Code Mode → CodeExecutor → RetrievalLayer → Collection(s)
    │       │                                    │
    │       │                              ┌─────┴─────┐
    │       │                              │           │
@@ -50,7 +50,7 @@ Shad CLI / API
    │
    ├── Redis (cache + budget ledger)
    ├── History/ (run artifacts)
-   └── Shadow Index (vault metadata)
+   └── Shadow Index (collection metadata)
 ```
 
 ### Implementation Status
@@ -59,12 +59,12 @@ Shad CLI / API
 |-------|--------|-------------|
 | 1. Foundation | Complete | CLI, API, RLM Engine, budgets |
 | 2. Obsidian Integration | Superseded | MCP client (replaced by Phase 3) |
-| 3. qmd Migration | Complete | RetrievalLayer, hybrid search, multi-vault |
+| 3. qmd Migration | Complete | RetrievalLayer, hybrid search, multi-collection |
 | 4. Task-Aware Decomposition | Complete | Strategy skeletons, domain-specific |
 | 5. File Output Mode | Complete | Multi-file codebases, manifests |
 | 6. Verification Layer | Complete | Syntax, types, tests, repair |
 | 7. Iterative Refinement | Complete | Error feedback, HITL checkpoints |
-| 8. Vault Curation Tools | Complete | Ingestion, analysis, gap detection |
+| 8. Collection Curation Tools | Complete | Ingestion, analysis, gap detection |
 | 9. Sources Scheduler | Complete | Automated sync from GitHub, URLs, feeds, folders |
 
 ---
@@ -73,25 +73,25 @@ Shad CLI / API
 
 This section describes the mental model and flow of a Shad run from start to finish.
 
-### 1.1 Vault Setup
+### 1.1 Collection Setup
 
-Shad operates against one or more Obsidian vaults containing curated knowledge. A **vault** is a directory of markdown files with optional frontmatter, organized for retrieval.
+Shad operates against one or more Obsidian collections containing curated knowledge. A **collection** is a directory of markdown files with optional frontmatter, organized for retrieval.
 
-**Vault Layering**: Runs can declare multiple vaults with priority order:
+**Collection Layering**: Runs can declare multiple collections with priority order:
 ```bash
 shad run "Build auth system" \
-  --vault ~/Project \
-  --vault ~/Patterns \
-  --vault ~/Docs
+  --collection ~/Project \
+  --collection ~/Patterns \
+  --collection ~/Docs
 ```
 
-Earlier vaults have higher priority in search result ranking. Each citation includes vault provenance.
+Earlier collections have higher priority in search result ranking. Each citation includes collection provenance.
 
 ### 1.2 Initiating a Run
 
 ```bash
 shad run "Build a task management app with auth and offline sync" \
-  --vault ~/MobileDevVault \
+  --collection ~/MobileDevVault \
   --max-depth 4 \
   --output ./TaskApp
 ```
@@ -117,7 +117,7 @@ Each strategy defines a **skeleton** with required stages, optional stages, and 
 
 ### 1.4 Retrieval (Code Mode)
 
-For each subtask, Shad retrieves targeted context via **Code Mode**: the LLM generates a Python script that queries the vault.
+For each subtask, Shad retrieves targeted context via **Code Mode**: the LLM generates a Python script that queries the collection.
 
 ```python
 # LLM-generated retrieval for "Implement OAuth"
@@ -224,7 +224,7 @@ Partial runs can be resumed:
 shad resume <run_id>
 ```
 
-**Delta verification**: Only re-verify nodes whose vault context changed (subset fingerprint mismatch). Users can force replay of specific nodes:
+**Delta verification**: Only re-verify nodes whose collection context changed (subset fingerprint mismatch). Users can force replay of specific nodes:
 ```bash
 shad resume <run_id> --replay node_id
 shad resume <run_id> --replay stale
@@ -369,30 +369,30 @@ It returns a DAG that:
 
 4. **Mid-run switch**: LLM can emit `strategy_switch_request` with evidence
 
-### 2.3 Vaults
+### 2.3 Collections
 
-#### 2.3.1 Single vs Layered Vaults
+#### 2.3.1 Single vs Layered Collections
 
-**Single vault** (default):
+**Single collection** (default):
 ```bash
-shad run "..." --vault ~/MyVault
+shad run "..." --collection ~/MyVault
 ```
 
-**Layered vaults** (priority order):
+**Layered collections** (priority order):
 ```bash
-shad run "..." --vault ~/Project --vault ~/Patterns --vault ~/Docs
+shad run "..." --collection ~/Project --collection ~/Patterns --collection ~/Docs
 ```
 
 **Retrieval behavior**:
-- Search executes against all vaults in parallel
+- Search executes against all collections in parallel
 - Results merged with weighted scoring: `relevance + priority_bonus(vault_index)`
-- Per-vault caps (e.g., max 10 results each), then global top N
+- Per-collection caps (e.g., max 10 results each), then global top N
 - Citations include `vault_id:path`
 
 **Optional namespacing** for Code Mode:
 ```python
-obsidian.search("jwt", vault="patterns")
-obsidian.search("config", vaults=["project", "docs"])
+obsidian.search("jwt", collection="patterns")
+obsidian.search("config", collections=["project", "docs"])
 ```
 
 #### 2.3.2 Ingestion & Snapshots
@@ -439,7 +439,7 @@ shad enrich <snapshot_id> --deep  # Post-hoc semantic indexing
 
 #### 2.3.3 Shadow Index
 
-The shadow index maps `source_url → latest_snapshot`. It lives **outside the vault** in `~/.shad/index.sqlite`.
+The shadow index maps `source_url → latest_snapshot`. It lives **outside the collection** in `~/.shad/index.sqlite`.
 
 **Schema**:
 ```sql
@@ -455,7 +455,7 @@ latest(source_id PK, latest_snapshot_id FK)
 
 **Export** (optional):
 ```bash
-shad sources export --format yaml --out <vault>/.shad/sources.yaml
+shad sources export --format yaml --out <collection>/.shad/sources.yaml
 shad sources ls
 shad sources pin <url> --snapshot <id>
 ```
@@ -468,7 +468,7 @@ shad sources pin <url> --snapshot <id>
 
 | Profile | File Access | Network | Use Case |
 |---------|-------------|---------|----------|
-| `strict` (default) | Vault only via ObsidianTools | None | Safe, deterministic |
+| `strict` (default) | Collection only via ObsidianTools | None | Safe, deterministic |
 | `local` | + Read-only to allowlisted roots | None | Reference local repos |
 | `extended` | + Read-only allowlist | HTTP GET to allowlisted domains | Fetch live docs |
 
@@ -492,7 +492,7 @@ Retrieval scripts must return structured results:
 ```python
 __result__ = {
     "context": "<distilled context text>",
-    "citations": [{"vault": "...", "path": "...", "snip_start": 0, "snip_end": 2000}],
+    "citations": [{"collection": "...", "path": "...", "snip_start": 0, "snip_end": 2000}],
     "queries": ["oauth refresh token", "jwt validation"],
     "signals": {"num_notes": 7, "total_chars": 12450, "keyword_hits": 18},
     "confidence": 0.72,
@@ -668,10 +668,10 @@ For software tasks spanning DB/API/Auth, Shad enforces **schema-first**: data mo
 
 ```bash
 # Produce manifest only
-shad run "..." --vault ~/v
+shad run "..." --collection ~/v
 
 # Produce manifest + write files
-shad run "..." --vault ~/v --write-files --output ./out
+shad run "..." --collection ~/v --write-files --output ./out
 
 # Export after inspection
 shad export <run_id> --output ./out
@@ -706,7 +706,7 @@ For each completed node, store:
 - `subset_fingerprint`: Hash over used note hashes
 
 **On resume**:
-1. Check current vault manifest against stored hashes
+1. Check current collection manifest against stored hashes
 2. Node is **stale** if any `used_note_hash` differs
 3. Stale nodes undergo re-verification (or re-execution for contracts nodes)
 4. Unchanged nodes are trusted
@@ -753,7 +753,7 @@ On max-iteration exhaustion:
 **Hard safety** (non-negotiable, cannot disable):
 - File write outside sandboxed output root
 - Network access beyond allowlist
-- Vault ingestion (if auto-ingest configured)
+- Collection ingestion (if auto-ingest configured)
 - Any potential data leak
 
 #### 2.9.2 Checkpoint Interface
@@ -792,10 +792,10 @@ shad:cache:main:<goal_type>:<intent>:<entities>:<context_hash>[:<extra_slots>]
 - Staging cache: 24 hours
 - Volatile folders (`Inbox/`, `Daily/`): 24 hours
 
-**TTL per vault** (with layered vaults):
-- `patterns` vault: 30 days
-- `docs` vault: 7 days
-- `project` vault: 24 hours
+**TTL per collection** (with layered collections):
+- `patterns` collection: 30 days
+- `docs` collection: 7 days
+- `project` collection: 24 hours
 
 #### 2.10.3 Manual Controls
 
@@ -829,7 +829,7 @@ shad cache clear --scope run|source|all
 --tests off|stubs|post|tdd|co
 ```
 
-### 2.12 Vault Analysis
+### 2.12 Collection Analysis
 
 #### 2.12.1 Gap Detection (Combined Scoring)
 
@@ -848,7 +848,7 @@ gap_score = 0.55 * history_pain + 0.25 * coverage_miss + 0.20 * llm_score
 - Missing templates (spec, ADR, test plan)
 
 **LLM audit** (optional, `--llm-audit`):
-- Send vault summary + sample notes
+- Send collection summary + sample notes
 - Ask for top 10 gaps with suggested note titles
 
 #### 2.12.2 Gap Report Output
@@ -899,7 +899,7 @@ This section documents what is already implemented (Phases 1-3).
 - Mix Claude and Ollama models across tiers (e.g., `-O opus -W llama3 -L qwen3`)
 - Requires [Ollama](https://ollama.com) installed locally with models pulled
 
-### 3.2 Retrieval Layer (Vault Operations)
+### 3.2 Retrieval Layer (Collection Operations)
 
 **RetrievalLayer Protocol**:
 - `search(query, mode, collections, limit, min_score)` → Hybrid/BM25/vector search
@@ -932,7 +932,7 @@ This section documents what is already implemented (Phases 1-3).
 **Restricted environment**:
 - Dangerous builtins disabled
 - Import whitelist enforced
-- File access restricted to vault path
+- File access restricted to collection path
 - 60s timeout, 512MB memory limit
 
 **ObsidianTools API** available in scripts:
@@ -974,7 +974,7 @@ History/Runs/<run_id>/
 - **Promotion**: Staging → Main via `promote()` after HITL review
 
 **Hash validation**:
-- Cache keys include `context_hash` from vault content
+- Cache keys include `context_hash` from collection content
 - Before lookup, verify hash still matches
 - Mismatch → invalidate and recompute
 
@@ -1039,10 +1039,10 @@ This appendix documents key design decisions with rationale.
 
 ### D4: Sandbox Security
 
-**Decision**: Configurable profiles with strict (vault-only) as default
+**Decision**: Configurable profiles with strict (collection-only) as default
 
 **Options considered**:
-1. Vault-only strict
+1. Collection-only strict
 2. Read-only filesystem
 3. Allowlisted network
 4. Configurable profiles
@@ -1053,9 +1053,9 @@ This appendix documents key design decisions with rationale.
 
 ---
 
-### D5: Vault Ingestion Versioning
+### D5: Collection Ingestion Versioning
 
-**Decision**: Immutable snapshots + shadow index (outside vault)
+**Decision**: Immutable snapshots + shadow index (outside collection)
 
 **Options considered**:
 1. Immutable snapshots only
@@ -1063,9 +1063,9 @@ This appendix documents key design decisions with rationale.
 3. Git-backed versioning
 4. Shadow index + snapshots
 
-**Why this won**: Immutable snapshots preserve provenance. Shadow index provides "latest" convenience without vault churn. External DB avoids sync conflicts.
+**Why this won**: Immutable snapshots preserve provenance. Shadow index provides "latest" convenience without collection churn. External DB avoids sync conflicts.
 
-**Revisit if**: Multi-user collaboration requires vault-internal index for portability.
+**Revisit if**: Multi-user collaboration requires collection-internal index for portability.
 
 ---
 
@@ -1111,9 +1111,9 @@ This appendix documents key design decisions with rationale.
 3. Selective replay (user-specified)
 4. Delta verification
 
-**Why this won**: Delta verification balances correctness with speed. Trusting blindly misses vault changes; re-verifying all wastes compute. Selective replay available as override.
+**Why this won**: Delta verification balances correctness with speed. Trusting blindly misses collection changes; re-verifying all wastes compute. Selective replay available as override.
 
-**Revisit if**: Vault content rarely changes (then trust-all becomes safe default).
+**Revisit if**: Collection content rarely changes (then trust-all becomes safe default).
 
 ---
 
@@ -1140,12 +1140,12 @@ This appendix documents key design decisions with rationale.
 **Options considered**:
 1. Hardcoded templates
 2. LLM + strategy hints
-3. Vault-learned patterns
+3. Collection-learned patterns
 4. Hybrid templates + LLM
 
-**Why this won**: Skeletons enforce invariants (contracts-first, verification placement). LLM fills task-specific details. Vault-learned is future enhancement, not MVP requirement.
+**Why this won**: Skeletons enforce invariants (contracts-first, verification placement). LLM fills task-specific details. Collection-learned is future enhancement, not MVP requirement.
 
-**Revisit if**: Sufficient vault examples accumulate to enable pattern learning.
+**Revisit if**: Sufficient collection examples accumulate to enable pattern learning.
 
 ---
 
@@ -1165,19 +1165,19 @@ This appendix documents key design decisions with rationale.
 
 ---
 
-### D12: Multi-Vault Support
+### D12: Multi-Collection Support
 
-**Decision**: Layered vaults with priority + optional namespacing
+**Decision**: Layered collections with priority + optional namespacing
 
 **Options considered**:
-1. Single vault only
-2. Vault layering (priority order)
-3. Vault namespacing
+1. Single collection only
+2. Collection layering (priority order)
+3. Collection namespacing
 4. Defer to later
 
-**Why this won**: Layering unlocks reusable pattern vaults without complexity. Namespacing adds precision for Code Mode. Single-vault remains the simple default.
+**Why this won**: Layering unlocks reusable pattern collections without complexity. Namespacing adds precision for Code Mode. Single-collection remains the simple default.
 
-**Revisit if**: Vault collision issues become common (then stronger namespacing needed).
+**Revisit if**: Collection collision issues become common (then stronger namespacing needed).
 
 ---
 
@@ -1230,7 +1230,7 @@ shad init [path]                    # Initialize project permissions for Claude 
 shad check-permissions [path]       # Verify project permissions are configured
 
 # Run options
---vault <path>              # Vault path (repeatable for layering; falls back to OBSIDIAN_VAULT_PATH env)
+--collection <path>              # Collection path (repeatable for layering; falls back to OBSIDIAN_COLLECTION_PATH env)
 --retriever <name>          # Retrieval backend (auto|qmd|filesystem, default: auto)
 --strategy <name>           # Force strategy (software|research|analysis|planning)
 --max-depth <n>             # Max recursion depth (default: 3)
@@ -1251,21 +1251,21 @@ shad check-permissions [path]       # Verify project permissions are configured
 -W, --worker-model          # Model for mid-depth execution
 -L, --leaf-model            # Model for fast parallel execution
 
-# Vault commands
-shad vault                          # Check retriever status
-shad search <query>                 # Search vault (default: hybrid mode)
+# Collection commands
+shad collection                          # Check retriever status
+shad search <query>                 # Search collection (default: hybrid mode)
 shad search <query> --mode bm25     # Keyword search only
 shad search <query> --mode vector   # Semantic search only
-shad ingest github <url> [--preset docs|mirror|deep] --vault <path>
+shad ingest github <url> [--preset docs|mirror|deep] --collection <path>
 shad ingest <path> [--type file|folder]
 shad enrich <snapshot_id> --deep
-shad vault analyze [--llm-audit]
+shad collection analyze [--llm-audit]
 
 # Sources scheduler
-shad sources add github <url> --vault <path> --schedule <freq>
-shad sources add url <url> --vault <path> --schedule <freq>
-shad sources add feed <url> --vault <path> --schedule <freq>
-shad sources add folder <path> --vault <path> --schedule <freq>
+shad sources add github <url> --collection <path> --schedule <freq>
+shad sources add url <url> --collection <path> --schedule <freq>
+shad sources add feed <url> --collection <path> --schedule <freq>
+shad sources add folder <path> --collection <path> --schedule <freq>
 shad sources list                   # List all sources
 shad sources status                 # View detailed status (schedule, last sync, next sync)
 shad sources sync [--force]         # Sync due sources (--force syncs all)
@@ -1297,8 +1297,8 @@ shad cache clear [--scope run|source|all]
 | `GET` | `/v1/run/:id` | Get run status/results |
 | `POST` | `/v1/run/:id/resume` | Resume partial run |
 | `GET` | `/v1/runs` | List recent runs |
-| `GET` | `/v1/vault/status` | Check vault connection |
-| `GET` | `/v1/vault/search` | Search vault |
+| `GET` | `/v1/collection/status` | Check collection connection |
+| `GET` | `/v1/collection/search` | Search collection |
 | `GET` | `/v1/health` | Health check |
 
 ### POST /v1/run
@@ -1306,9 +1306,9 @@ shad cache clear [--scope run|source|all]
 ```json
 {
   "goal": "Build a REST API for user management",
-  "vaults": [
-    {"id": "project", "root": "/vaults/proj", "priority": 0},
-    {"id": "patterns", "root": "/vaults/patterns", "priority": 1}
+  "collections": [
+    {"id": "project", "root": "/collections/proj", "priority": 0},
+    {"id": "patterns", "root": "/collections/patterns", "priority": 1}
   ],
   "strategy": "software",
   "config": {
@@ -1346,7 +1346,7 @@ shad cache clear [--scope run|source|all]
 
 | Term | Definition |
 |------|------------|
-| **Code Mode** | LLM generates Python scripts to query vault instead of keyword search |
+| **Code Mode** | LLM generates Python scripts to query collection instead of keyword search |
 | **Context packet** | Compact artifact from completed node (summary, artifacts, keywords) |
 | **Contracts-first** | Types & contracts node runs before implementation |
 | **DAG** | Directed Acyclic Graph of execution nodes |
@@ -1356,10 +1356,10 @@ shad cache clear [--scope run|source|all]
 | **HITL** | Human-in-the-loop checkpoint |
 | **Manifest** | Structured file output (paths, content, metadata) |
 | **qmd** | Hybrid search tool (BM25 + vectors + LLM reranking) - primary retrieval backend |
-| **RetrievalLayer** | Protocol abstracting vault search (qmd or filesystem) |
+| **RetrievalLayer** | Protocol abstracting collection search (qmd or filesystem) |
 | **RLM** | Recursive Language Model engine |
 | **Shadow index** | External DB mapping source URLs to latest snapshots |
 | **Skeleton** | Strategy template with required/optional stages |
 | **Soft deps** | Dependencies that are useful but not blocking |
 | **Subset fingerprint** | Hash of notes actually used by a node |
-| **Vault layering** | Multiple vaults with priority order for retrieval |
+| **Collection layering** | Multiple collections with priority order for retrieval |
