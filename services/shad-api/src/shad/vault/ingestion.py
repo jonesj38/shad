@@ -1,4 +1,4 @@
-"""Vault ingestion pipeline.
+"""Collection ingestion pipeline.
 
 Per SPEC.md Section 2.3 and 2.12:
 - Ingestion pipeline: Clone, process repos with presets
@@ -40,7 +40,7 @@ class IngestPreset(str, Enum):
 class SnapshotMetadata:
     """Metadata for an ingested snapshot.
 
-    Tracks provenance information for vault content.
+    Tracks provenance information for collection content.
     """
 
     source_url: str
@@ -84,7 +84,7 @@ class IngestResult:
 
 
 class VaultIngester:
-    """Ingests external sources into the vault.
+    """Ingests external sources into the collection.
 
     Per SPEC.md Section 2.12:
     - Clones repositories
@@ -145,9 +145,9 @@ class VaultIngester:
         ".txt": "text",
     }
 
-    def __init__(self, vault_path: Path) -> None:
-        self.vault_path = vault_path
-        self._sources_dir = vault_path / "Sources"
+    def __init__(self, collection_path: Path) -> None:
+        self.collection_path = collection_path
+        self._sources_dir = collection_path / "Sources"
         self._sources_dir.mkdir(exist_ok=True)
 
     def generate_snapshot_path(
@@ -283,7 +283,7 @@ class VaultIngester:
         rel_path: str,
         metadata: SnapshotMetadata,
     ) -> Path:
-        """Convert a source file to a vault note.
+        """Convert a source file to a collection note.
 
         For markdown files: preserves content, adds/merges frontmatter.
         For code files: wraps content in code block with language hint.
@@ -369,7 +369,7 @@ class VaultIngester:
         files: list[str],
         metadata: SnapshotMetadata,
     ) -> list[str]:
-        """Convert all matched files to vault notes.
+        """Convert all matched files to collection notes.
 
         Args:
             source_path: Path to cloned source
@@ -421,8 +421,8 @@ class VaultIngester:
         snapshot_path.mkdir(parents=True, exist_ok=True)
         entry_path = snapshot_path / "_entry.md"
 
-        # Get snapshot path relative to vault for full wikilinks
-        snapshot_rel = snapshot_path.relative_to(self.vault_path)
+        # Get snapshot path relative to collection for full wikilinks
+        snapshot_rel = snapshot_path.relative_to(self.collection_path)
 
         content = [
             metadata.to_yaml(),
@@ -438,7 +438,7 @@ class VaultIngester:
         ]
 
         for note_path in sorted(note_paths)[:50]:  # Show more files
-            # Create full path wikilink (remove .md for Obsidian)
+            # Create full path wikilink (remove .md for Collection)
             wikilink_path = str(snapshot_rel / note_path)
             if wikilink_path.endswith(".md"):
                 wikilink_path = wikilink_path[:-3]
@@ -458,7 +458,7 @@ class VaultIngester:
     ) -> IngestResult:
         """Ingest a GitHub repository.
 
-        Clones the repository, converts matched files to vault notes with
+        Clones the repository, converts matched files to collection notes with
         proper frontmatter, and creates an entry note linking to all content.
 
         Args:
@@ -512,8 +512,8 @@ class VaultIngester:
                 extra={"preset": preset.value},
             )
 
-            # Convert files to vault notes
-            logger.info(f"Converting {len(files)} files to vault notes...")
+            # Convert files to collection notes
+            logger.info(f"Converting {len(files)} files to collection notes...")
             note_paths = self._convert_files_to_notes(
                 source_path=clone_path,
                 target_path=snapshot_path,

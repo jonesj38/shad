@@ -573,17 +573,17 @@ Provide a direct, informative answer. If the retrieved context is relevant, use 
     async def generate_retrieval_script(
         self,
         task: str,
-        vault_info: str = "",
+        collection_info: str = "",
     ) -> tuple[str, int]:
         """
-        Generate a Python script to retrieve relevant context from the vault.
+        Generate a Python script to retrieve relevant context from the collection.
 
-        Per OBSIDIAN_PIVOT.md Section 3.1: The LLM writes Python scripts
-        that import MCP tools to dynamically query the vault.
+        Per COLLECTION_PIVOT.md Section 3.1: The LLM writes Python scripts
+        that import MCP tools to dynamically query the collection.
 
         Args:
             task: The task requiring context retrieval
-            vault_info: Optional info about vault structure
+            collection_info: Optional info about collection structure
 
         Returns:
             Tuple of (script, tokens_used)
@@ -591,7 +591,7 @@ Provide a direct, informative answer. If the retrieved context is relevant, use 
         logger.info(f"[CODE_MODE] Generating retrieval script for: {task[:100]}...")
 
         system = """You are a code generation expert specializing in knowledge retrieval.
-Generate Python scripts that query an Obsidian vault to gather context for a task.
+Generate Python scripts that query an Collection collection to gather context for a task.
 
 AVAILABLE (already imported - do NOT use import statements):
 - obsidian: Object with search/read methods (see below)
@@ -651,7 +651,7 @@ Generate ONLY the Python code, no explanations."""
 
 Task: {task}
 
-{f"Vault structure hint: {vault_info}" if vault_info else ""}
+{f"Collection structure hint: {collection_info}" if collection_info else ""}
 
 The script should:
 1. Search for relevant notes using keywords from the task

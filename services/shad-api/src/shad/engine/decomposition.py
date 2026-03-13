@@ -78,7 +78,7 @@ class StrategyDecomposer:
         Args:
             task: The task to decompose
             strategy: The strategy to use
-            context: Optional vault context
+            context: Optional collection context
             max_nodes: Maximum number of nodes to generate
 
         Returns:

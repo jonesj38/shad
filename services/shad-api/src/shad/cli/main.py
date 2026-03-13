@@ -94,7 +94,6 @@ def cli() -> None:
 
     \b
     Collection Commands:
-        collections          Check collection and retriever status
         search <query>       Search collection(s)
         ingest ...           Ingest sources into a collection (see: shad ingest --help)
 
@@ -123,7 +122,7 @@ def cli() -> None:
 @cli.command("run")
 @click.argument("goal")
 @click.option("--collection", "-c", multiple=True, help="Collection path(s) for context (can specify multiple)")
-@click.option("--vault", "-v", multiple=True, hidden=True, help="[deprecated: use --collection] Collection path(s)")
+@click.option("--collection", "-v", multiple=True, hidden=True, help="[deprecated: use --collection] Collection path(s)")
 @click.option("--retriever", "-r", type=click.Choice(["auto", "qmd", "filesystem"]), default="auto",
               help="Retrieval backend (auto detects qmd)")
 @click.option("--profile", type=click.Choice(["fast", "balanced", "deep"], case_sensitive=False),
@@ -153,7 +152,7 @@ def cli() -> None:
 def run(
     goal: str,
     collection: tuple[str, ...],
-    vault: tuple[str, ...],
+    collection: tuple[str, ...],
     retriever: str,
     profile: str | None,
     auto_profile: bool,
@@ -251,11 +250,11 @@ def run(
 
     # If API specified, use remote execution
     if api:
-        _run_via_api(goal, vault[0] if vault else None, max_depth, api)
+        _run_via_api(goal, collection[0] if collection else None, max_depth, api)
         return
 
-    # Merge --collection and --vault (backward compat)
-    _all_paths = collection or vault
+    # Merge --collection and --collection (backward compat)
+    _all_paths = collection or collection
     collection_paths: list[Path] = []
     collection_names: dict[str, Path] = {}
 
@@ -266,9 +265,9 @@ def run(
                 vp = Path.cwd() / vp
             collection_paths.append(vp)
             collection_names[vp.name] = vp
-    elif get_settings().obsidian_vault_path:
+    elif get_settings().default_collection_path:
         # Fall back to env var
-        vp = Path(get_settings().obsidian_vault_path).expanduser()
+        vp = Path(get_settings().default_collection_path).expanduser()
         collection_paths.append(vp)
         collection_names[vp.name] = vp
 
@@ -277,7 +276,7 @@ def run(
 
     config = RunConfig(
         goal=goal,
-        vault_path=str(primary_collection) if primary_collection else None,
+        collection_path=str(primary_collection) if primary_collection else None,
         budget=Budget(
             max_depth=max_depth,
             max_nodes=max_nodes,
@@ -315,7 +314,7 @@ def run(
         )
         console.print(f"[dim][RETRIEVER] Using {type(retriever_instance).__name__}[/dim]")
 
-        # Auto-provision qmd collections for vault paths
+        # Auto-provision qmd collections for collection paths
         if isinstance(retriever_instance, QmdRetriever) and collection_names:
             console.print("[dim][QMD] Ensuring collections are provisioned and indexed...[/dim]")
             provision_results = run_async(retriever_instance.ensure_collections(collection_names))
@@ -334,7 +333,7 @@ def run(
         else:
             console.print("[dim][CODE_MODE] Disabled - using direct search[/dim]")
     else:
-        console.print("[dim][CONTEXT] No collection specified (use --collection or set OBSIDIAN_VAULT_PATH)[/dim]")
+        console.print("[dim][CONTEXT] No collection specified (use --collection or set SHAD_COLLECTION_PATH)[/dim]")
         use_code_mode = False
 
     # Display strategy and verification options
@@ -393,7 +392,7 @@ def run(
                 use_claude_code=not gemini,
             ),
             retriever=retriever_instance,
-            vault_path=primary_collection,
+            collection_path=primary_collection,
             collections=collections,
             use_code_mode=use_code_mode,
             use_qmd_hybrid=qmd_hybrid,
@@ -455,13 +454,13 @@ def run(
         sys.exit(2)
 
 
-def _run_via_api(goal: str, vault: str | None, max_depth: int, api: str) -> None:
+def _run_via_api(goal: str, collection: str | None, max_depth: int, api: str) -> None:
     """Run a goal via the API."""
     try:
         with httpx.Client(timeout=120.0) as client:
             payload: dict[str, Any] = {"goal": goal, "budget": {"max_depth": max_depth}}
-            if vault:
-                payload["vault_path"] = vault
+            if collection:
+                payload["collection_path"] = collection
 
             response = client.post(f"{api}/v1/run", json=payload)
             response.raise_for_status()
@@ -842,55 +841,18 @@ def list_models(refresh: bool, ollama: bool) -> None:
 
 
 # =============================================================================
-# Vault Commands
+# Collection Commands
 # =============================================================================
-
-@cli.command("collections")
-def collections_status() -> None:
-    """Check collection and retriever status.
-
-    \b
-    Example:
-        shad collections
-    """
-    # Check retriever availability
-    qmd_retriever = QmdRetriever()
-    if qmd_retriever.available:
-        console.print("[green]✓ qmd retriever available[/green]")
-
-        # Get qmd status
-        async def get_status() -> dict:
-            return await qmd_retriever.status()
-
-        status = run_async(get_status())
-        if status.get("collections"):
-            console.print("[dim]Collections:[/dim]")
-            for coll in status.get("collections", []):
-                name = coll.get("name", "unknown")
-                path = coll.get("path", "")
-                console.print(f"  - {name}: {path}")
-    else:
-        console.print("[yellow]⚠ qmd not installed (falling back to filesystem search)[/yellow]")
-        console.print("[dim]Install with: bun install -g https://github.com/tobi/qmd[/dim]")
-
-    # Show default collection from env
-    default_collection = get_settings().obsidian_vault_path
-    if default_collection:
-        console.print(f"\n[dim]Default collection (env): {default_collection}[/dim]")
-    else:
-        console.print("\n[dim]No default collection configured[/dim]")
-        console.print("[dim]Set OBSIDIAN_VAULT_PATH or use --collection with commands[/dim]")
-
 
 @cli.command("search")
 @click.argument("query")
 @click.option("--collection", "-c", multiple=True, help="Collection path(s) to search")
-@click.option("--vault", "-v", multiple=True, hidden=True, help="[deprecated: use --collection]")
+@click.option("--collection", "-v", multiple=True, hidden=True, help="[deprecated: use --collection]")
 @click.option("--limit", "-l", default=10, help="Maximum results")
 @click.option("--mode", "-m", type=click.Choice(["hybrid", "bm25", "vector"]), default="hybrid",
               help="Search mode (default: hybrid)")
 @click.option("--json", "as_json", is_flag=True, default=False, help="Output results as JSON")
-def search(query: str, collection: tuple[str, ...], vault: tuple[str, ...], limit: int, mode: str, as_json: bool) -> None:
+def search(query: str, collection: tuple[str, ...], collection: tuple[str, ...], limit: int, mode: str, as_json: bool) -> None:
     """Search collection(s) for matching documents.
 
     \b
@@ -899,8 +861,8 @@ def search(query: str, collection: tuple[str, ...], vault: tuple[str, ...], limi
         shad search "authentication" --collection ~/Notes
         shad search "API design" --mode bm25 --limit 20
     """
-    # Build collection paths (merge --collection and deprecated --vault)
-    _all_paths = collection or vault
+    # Build collection paths (merge --collection and deprecated --collection)
+    _all_paths = collection or collection
     collection_paths: list[Path] = []
     collection_names: dict[str, Path] = {}
 
@@ -911,12 +873,12 @@ def search(query: str, collection: tuple[str, ...], vault: tuple[str, ...], limi
                 vp = Path.cwd() / vp
             collection_paths.append(vp)
             collection_names[vp.name] = vp
-    elif get_settings().obsidian_vault_path:
-        vp = Path(get_settings().obsidian_vault_path).expanduser()
+    elif get_settings().default_collection_path:
+        vp = Path(get_settings().default_collection_path).expanduser()
         collection_paths.append(vp)
         collection_names[vp.name] = vp
     else:
-        console.print("[yellow]No collection specified. Use --collection or set OBSIDIAN_VAULT_PATH[/yellow]")
+        console.print("[yellow]No collection specified. Use --collection or set SHAD_COLLECTION_PATH[/yellow]")
         sys.exit(1)
 
     # Get retriever
@@ -982,7 +944,7 @@ Retrieved documents:
 @cli.command("context")
 @click.argument("query")
 @click.option("--collection", "-c", multiple=True, help="Collection path(s) to search")
-@click.option("--vault", "-v", multiple=True, hidden=True, help="[deprecated: use --collection]")
+@click.option("--collection", "-v", multiple=True, hidden=True, help="[deprecated: use --collection]")
 @click.option("--limit", "-l", default=10, help="Max retrieval results")
 @click.option("--max-chars", default=4000, help="Max output chars for brief")
 @click.option("--mode", "-m", type=click.Choice(["hybrid", "bm25", "vector"]), default="hybrid",
@@ -992,7 +954,7 @@ Retrieved documents:
 def context(
     query: str,
     collection: tuple[str, ...],
-    vault: tuple[str, ...],
+    collection: tuple[str, ...],
     limit: int,
     max_chars: int,
     mode: str,
@@ -1012,8 +974,8 @@ def context(
     """
     import json as json_mod
 
-    # Build collection paths (merge --collection and deprecated --vault)
-    _all_paths = collection or vault
+    # Build collection paths (merge --collection and deprecated --collection)
+    _all_paths = collection or collection
     collection_paths: list[Path] = []
     collection_names: dict[str, Path] = {}
 
@@ -1024,12 +986,12 @@ def context(
                 vp = Path.cwd() / vp
             collection_paths.append(vp)
             collection_names[vp.name] = vp
-    elif get_settings().obsidian_vault_path:
-        vp = Path(get_settings().obsidian_vault_path).expanduser()
+    elif get_settings().default_collection_path:
+        vp = Path(get_settings().default_collection_path).expanduser()
         collection_paths.append(vp)
         collection_names[vp.name] = vp
     else:
-        console.print("[yellow]No collection specified. Use --collection or set OBSIDIAN_VAULT_PATH[/yellow]")
+        console.print("[yellow]No collection specified. Use --collection or set SHAD_COLLECTION_PATH[/yellow]")
         sys.exit(1)
 
     # Retrieve
@@ -1165,7 +1127,7 @@ def export(run_id: str, output: str, overwrite: bool) -> None:
 
 
 # =============================================================================
-# Vault Ingestion Command
+# Collection Ingestion Command
 # =============================================================================
 
 @cli.group("ingest")
@@ -1196,10 +1158,10 @@ def ingest() -> None:
 @ingest.command("github")
 @click.argument("url")
 @click.option("--collection", "-c", required=True, type=click.Path(), help="Target collection path")
-@click.option("--vault", "-v", type=click.Path(), hidden=True, help="[deprecated: use --collection]")
+@click.option("--collection", "-v", type=click.Path(), hidden=True, help="[deprecated: use --collection]")
 @click.option("--preset", type=click.Choice(["mirror", "docs", "deep"]), default="docs",
               help="Ingestion preset (default: docs)")
-def ingest_github(url: str, collection: str | None, vault: str | None, preset: str) -> None:
+def ingest_github(url: str, collection: str | None, collection: str | None, preset: str) -> None:
     """Ingest a GitHub repository into a collection.
 
     \b
@@ -1207,9 +1169,9 @@ def ingest_github(url: str, collection: str | None, vault: str | None, preset: s
         shad ingest github https://github.com/user/repo --collection ~/MyCollection
         shad ingest github https://github.com/user/repo -c ~/MyCollection --preset deep
     """
-    from shad.vault.ingestion import IngestPreset, VaultIngester
+    from shad.collection.ingestion import IngestPreset, VaultIngester
 
-    target = collection or vault
+    target = collection or collection
     if not target:
         console.print("[red]Target collection path required (use --collection)[/red]")
         sys.exit(1)
@@ -1223,7 +1185,7 @@ def ingest_github(url: str, collection: str | None, vault: str | None, preset: s
     console.print(f"[dim]Target: {target_path}[/dim]")
 
     async def _ingest() -> Any:
-        ingester = VaultIngester(vault_path=target_path)
+        ingester = VaultIngester(collection_path=target_path)
         return await ingester.ingest_github(url, preset=IngestPreset(preset))
 
     with Progress(
@@ -1589,7 +1551,7 @@ def sources() -> None:
 @click.argument("source_type", type=click.Choice(["github", "url", "feed", "folder"]))
 @click.argument("location")
 @click.option("--collection", "-c", required=True, help="Target collection path")
-@click.option("--vault", "-v", hidden=True, help="[deprecated: use --collection]")
+@click.option("--collection", "-v", hidden=True, help="[deprecated: use --collection]")
 @click.option("--schedule", "-s", type=click.Choice(["manual", "hourly", "daily", "weekly", "monthly"]),
               default="daily", help="Sync schedule")
 @click.option("--preset", "-p", default="docs", help="Ingestion preset (for github)")
@@ -1597,7 +1559,7 @@ def sources_add(
     source_type: str,
     location: str,
     collection: str | None,
-    vault: str | None,
+    collection: str | None,
     schedule: str,
     preset: str,
 ) -> None:
@@ -1628,7 +1590,7 @@ def sources_add(
         "monthly": SourceSchedule.MONTHLY,
     }
 
-    target = collection or vault
+    target = collection or collection
     if not target:
         console.print("[red]Target collection path required (use --collection)[/red]")
         sys.exit(1)
@@ -1638,7 +1600,7 @@ def sources_add(
         source_type=type_map[source_type],
         url=None if is_folder else location,
         path=location if is_folder else None,
-        vault_path=target,
+        collection_path=target,
         schedule=schedule_map[schedule],
         preset=preset,
     )
@@ -2112,17 +2074,17 @@ def doctor(fix: bool) -> None:
         console.print(f"[yellow]⚠[/yellow] Redis not reachable at {redis_url}")
 
     # Check collection env
-    vault_path = get_settings().obsidian_vault_path
-    if vault_path:
-        console.print(f"[green]✔[/green] OBSIDIAN_VAULT_PATH set: {vault_path}")
+    collection_path = get_settings().default_collection_path
+    if collection_path:
+        console.print(f"[green]✔[/green] SHAD_COLLECTION_PATH set: {collection_path}")
     else:
-        console.print("[yellow]⚠[/yellow] OBSIDIAN_VAULT_PATH not set (pass --collection)")
+        console.print("[yellow]⚠[/yellow] SHAD_COLLECTION_PATH not set (pass --collection)")
 
-    # Offer to register vault + embed if fixing and vault set
-    if fix and vault_path and qmd_path:
-        if click.confirm(f"Register vault {vault_path} with qmd and embed now?"):
+    # Offer to register collection + embed if fixing and collection set
+    if fix and collection_path and qmd_path:
+        if click.confirm(f"Register collection {collection_path} with qmd and embed now?"):
             try:
-                subprocess.run(["qmd", "collection", "add", vault_path, "--name", Path(vault_path).name], check=False)
+                subprocess.run(["qmd", "collection", "add", collection_path, "--name", Path(collection_path).name], check=False)
                 subprocess.run(["qmd", "embed"], check=False, env={**os.environ, "QMD_OPENAI": "1"})
                 console.print("[green]✔[/green] qmd collection add + embed attempted")
             except Exception:

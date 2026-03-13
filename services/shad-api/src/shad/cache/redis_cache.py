@@ -5,7 +5,7 @@ Implements hierarchical key scheme per SPEC.md:
 - Fallback: exact string hash
 - Main cache + staging cache for provisional results
 
-Per OBSIDIAN_PIVOT.md Section 6: Caching Strategy
+Per COLLECTION_PIVOT.md Section 6: Caching Strategy
 - Hash validation: Cache keys include context_hash derived from file content/mtime
 - Before cache lookup: query MCP server for current file hash
 - If hash mismatch: cache miss, re-compute reasoning
@@ -355,7 +355,7 @@ class RedisCache:
     ) -> str | None:
         """Get cached result with hash validation.
 
-        Per OBSIDIAN_PIVOT.md Section 6.2: Hash Validation
+        Per COLLECTION_PIVOT.md Section 6.2: Hash Validation
         - Before cache lookup: query for current file hash
         - If hash mismatch: cache miss, re-compute
 
@@ -403,7 +403,7 @@ class RedisCache:
     ) -> bool:
         """Set cached result with context hash for validation.
 
-        Per OBSIDIAN_PIVOT.md Section 6.2:
+        Per COLLECTION_PIVOT.md Section 6.2:
         Cache keys include context_hash derived from file content/mtime.
 
         Args:
@@ -427,14 +427,14 @@ class RedisCache:
         )
 
     # ==================== Budget Ledger Operations ====================
-    # Per OBSIDIAN_PIVOT.md Section 7.2: Central Ledger (Redis)
+    # Per COLLECTION_PIVOT.md Section 7.2: Central Ledger (Redis)
 
     BUDGET_PREFIX = "shad:budget:"
 
     async def init_budget(self, run_id: str, token_budget: int) -> bool:
         """Initialize budget counter for a run.
 
-        Per OBSIDIAN_PIVOT.md Section 7.2:
+        Per COLLECTION_PIVOT.md Section 7.2:
         Sub-agents decrement shared Redis counter atomically.
         """
         if not self._connected or not self._client:
@@ -452,7 +452,7 @@ class RedisCache:
     async def deduct_budget(self, run_id: str, tokens: int) -> int | None:
         """Atomically deduct from budget and return remaining.
 
-        Per OBSIDIAN_PIVOT.md Section 7.2:
+        Per COLLECTION_PIVOT.md Section 7.2:
         Atomic check-and-deduct before each LLM call.
 
         Returns:

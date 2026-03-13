@@ -10,7 +10,7 @@
 
 ### What is Shad?
 
-**Shad (Shannon's Daemon) enables AI to utilize virtually unlimited context.** It treats an Obsidian collection as an explorable environment rather than a fixed input, recursively decomposing complex tasks, retrieving targeted context for each subtask, generating outputs informed by collection knowledge, and assembling coherent results.
+**Shad (Shannon's Daemon) enables AI to utilize virtually unlimited context.** It treats an Collection collection as an explorable environment rather than a fixed input, recursively decomposing complex tasks, retrieving targeted context for each subtask, generating outputs informed by collection knowledge, and assembling coherent results.
 
 ### Core Premise
 
@@ -58,7 +58,7 @@ Shad CLI / API
 | Phase | Status | Description |
 |-------|--------|-------------|
 | 1. Foundation | Complete | CLI, API, RLM Engine, budgets |
-| 2. Obsidian Integration | Superseded | MCP client (replaced by Phase 3) |
+| 2. Collection Integration | Superseded | MCP client (replaced by Phase 3) |
 | 3. qmd Migration | Complete | RetrievalLayer, hybrid search, multi-collection |
 | 4. Task-Aware Decomposition | Complete | Strategy skeletons, domain-specific |
 | 5. File Output Mode | Complete | Multi-file codebases, manifests |
@@ -75,7 +75,7 @@ This section describes the mental model and flow of a Shad run from start to fin
 
 ### 1.1 Collection Setup
 
-Shad operates against one or more Obsidian collections containing curated knowledge. A **collection** is a directory of markdown files with optional frontmatter, organized for retrieval.
+Shad operates against one or more Collection collections containing curated knowledge. A **collection** is a directory of markdown files with optional frontmatter, organized for retrieval.
 
 **Collection Layering**: Runs can declare multiple collections with priority order:
 ```bash
@@ -468,7 +468,7 @@ shad sources pin <url> --snapshot <id>
 
 | Profile | File Access | Network | Use Case |
 |---------|-------------|---------|----------|
-| `strict` (default) | Collection only via ObsidianTools | None | Safe, deterministic |
+| `strict` (default) | Collection only via CollectionTools | None | Safe, deterministic |
 | `local` | + Read-only to allowlisted roots | None | Reference local repos |
 | `extended` | + Read-only allowlist | HTTP GET to allowlisted domains | Fetch live docs |
 
@@ -919,7 +919,7 @@ This section documents what is already implemented (Phases 1-3).
 - `qmd vsearch` → Vector similarity search
 - `qmd query` → Hybrid with LLM reranking (default)
 
-**ObsidianTools API** (for Code Mode scripts):
+**CollectionTools API** (for Code Mode scripts):
 - `obsidian.search(query, limit, mode)` → Search with mode: hybrid|bm25|vector
 - `obsidian.read_note(path)` → Read note content
 - `obsidian.list_notes(directory, recursive)` → Directory enumeration
@@ -935,7 +935,7 @@ This section documents what is already implemented (Phases 1-3).
 - File access restricted to collection path
 - 60s timeout, 512MB memory limit
 
-**ObsidianTools API** available in scripts:
+**CollectionTools API** available in scripts:
 - `obsidian.search(query, limit, path_filter)`
 - `obsidian.read_note(path)`
 - `obsidian.write_note(path, content, note_type, frontmatter)`

@@ -514,9 +514,9 @@ class QmdRetriever:
         self,
         collection_names: dict[str, Any] | None = None,
     ) -> dict[str, bool]:
-        """Ensure vault paths are registered as qmd collections with up-to-date indexes.
+        """Ensure collection paths are registered as qmd collections with up-to-date indexes.
 
-        For each vault path:
+        For each collection path:
         1. Check if it's already a qmd collection
         2. If not, add it via `qmd collection add`
         3. Run `qmd update` to refresh the BM25 index for any new/changed files

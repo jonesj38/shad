@@ -9,7 +9,7 @@ from pathlib import Path
 
 from shad.sources.config import Source, SourceConfig, SourceSchedule, SourceType
 from shad.sources.ingest import FeedIngester, FolderIngester, IngestResult, URLIngester
-from shad.vault.ingestion import IngestPreset, VaultIngester
+from shad.collection.ingestion import IngestPreset, VaultIngester
 
 logger = logging.getLogger(__name__)
 
@@ -53,21 +53,21 @@ class SourceManager:
         source_type: SourceType,
         url: str | None = None,
         path: str | None = None,
-        vault_path: str | None = None,
+        collection_path: str | None = None,
         schedule: SourceSchedule = SourceSchedule.DAILY,
         preset: str = "docs",
     ) -> Source:
         """Add a new source."""
-        if vault_path is None:
-            vault_path = self.config.default_vault
-            if vault_path is None:
-                raise ValueError("No vault path specified and no default vault configured")
+        if collection_path is None:
+            collection_path = self.config.default_collection
+            if collection_path is None:
+                raise ValueError("No collection path specified and no default collection configured")
 
         source = Source(
             type=source_type,
             url=url,
             path=path,
-            vault_path=vault_path,
+            collection_path=collection_path,
             schedule=schedule,
             preset=preset,
         )
@@ -93,17 +93,17 @@ class SourceManager:
 
     async def sync_source(self, source: Source) -> IngestResult:
         """Sync a single source."""
-        vault_path = Path(source.vault_path).expanduser()
+        collection_path = Path(source.collection_path).expanduser()
 
         try:
             if source.type == SourceType.GITHUB:
-                result = await self._sync_github(source, vault_path)
+                result = await self._sync_github(source, collection_path)
             elif source.type == SourceType.URL:
-                result = await self._sync_url(source, vault_path)
+                result = await self._sync_url(source, collection_path)
             elif source.type == SourceType.FEED:
-                result = await self._sync_feed(source, vault_path)
+                result = await self._sync_feed(source, collection_path)
             elif source.type == SourceType.FOLDER:
-                result = await self._sync_folder(source, vault_path)
+                result = await self._sync_folder(source, collection_path)
             else:
                 result = IngestResult(success=False, errors=[f"Unknown source type: {source.type}"])
 
@@ -149,12 +149,12 @@ class SourceManager:
 
         return result
 
-    async def _sync_github(self, source: Source, vault_path: Path) -> IngestResult:
+    async def _sync_github(self, source: Source, collection_path: Path) -> IngestResult:
         """Sync a GitHub source."""
         if not source.url:
             return IngestResult(success=False, errors=["No URL specified for GitHub source"])
 
-        ingester = VaultIngester(vault_path=vault_path)
+        ingester = VaultIngester(collection_path=collection_path)
         preset = IngestPreset(source.preset) if source.preset else IngestPreset.DOCS
 
         result = await ingester.ingest_github(source.url, preset=preset)
@@ -167,32 +167,32 @@ class SourceManager:
             metadata={"snapshot_id": result.snapshot_id} if result.snapshot_id else {},
         )
 
-    async def _sync_url(self, source: Source, vault_path: Path) -> IngestResult:
+    async def _sync_url(self, source: Source, collection_path: Path) -> IngestResult:
         """Sync a URL source."""
         if not source.url:
             return IngestResult(success=False, errors=["No URL specified"])
 
-        ingester = URLIngester(vault_path=vault_path)
+        ingester = URLIngester(collection_path=collection_path)
         return await ingester.ingest(source.url)
 
-    async def _sync_feed(self, source: Source, vault_path: Path) -> IngestResult:
+    async def _sync_feed(self, source: Source, collection_path: Path) -> IngestResult:
         """Sync a feed source."""
         if not source.url:
             return IngestResult(success=False, errors=["No URL specified for feed"])
 
-        ingester = FeedIngester(vault_path=vault_path)
+        ingester = FeedIngester(collection_path=collection_path)
         max_items = source.metadata.get("max_items", 10)
         return await ingester.ingest(source.url, max_items=max_items)
 
-    async def _sync_folder(self, source: Source, vault_path: Path) -> IngestResult:
+    async def _sync_folder(self, source: Source, collection_path: Path) -> IngestResult:
         """Sync a folder source."""
         if not source.path:
             return IngestResult(success=False, errors=["No path specified for folder"])
 
-        ingester = FolderIngester(vault_path=vault_path)
+        ingester = FolderIngester(collection_path=collection_path)
         return await ingester.ingest(source.path)
 
-    def set_default_vault(self, vault_path: str) -> None:
-        """Set the default vault path."""
-        self.config.default_vault = vault_path
+    def set_default_collection(self, collection_path: str) -> None:
+        """Set the default collection path."""
+        self.config.default_collection = collection_path
         self.save_config()

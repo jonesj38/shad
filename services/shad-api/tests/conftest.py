@@ -21,15 +21,15 @@ def event_loop() -> Generator[asyncio.AbstractEventLoop, None, None]:
 
 @pytest.fixture
 def temp_vault() -> Generator[Path, None, None]:
-    """Create a temporary vault directory for testing."""
+    """Create a temporary collection directory for testing."""
     with tempfile.TemporaryDirectory() as tmpdir:
-        vault_path = Path(tmpdir) / "TestVault"
-        vault_path.mkdir()
+        collection_path = Path(tmpdir) / "TestVault"
+        collection_path.mkdir()
         # Create Shad directories
-        (vault_path / "Shad" / "History").mkdir(parents=True)
-        (vault_path / "Shad" / "Skills").mkdir(parents=True)
-        (vault_path / "Shad" / "Staging").mkdir(parents=True)
-        yield vault_path
+        (collection_path / "Shad" / "History").mkdir(parents=True)
+        (collection_path / "Shad" / "Skills").mkdir(parents=True)
+        (collection_path / "Shad" / "Staging").mkdir(parents=True)
+        yield collection_path
 
 
 @pytest.fixture

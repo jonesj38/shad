@@ -2,7 +2,7 @@
 #
 # Ingest all repos from a GitHub organization
 #
-# Usage: ./ingest-org.sh <org-name> <vault-path> [preset]
+# Usage: ./ingest-org.sh <org-name> <collection-path> [preset]
 # Example: ./ingest-org.sh bsv-blockchain ~/MyVault docs
 #
 
@@ -30,7 +30,7 @@ if ! command -v "$SHAD_CMD" &> /dev/null && [ ! -x "$SHAD_CMD" ]; then
 fi
 
 if [ $# -lt 2 ]; then
-  echo "Usage: $0 <org-name> <vault-path> [preset]"
+  echo "Usage: $0 <org-name> <collection-path> [preset]"
   echo "Example: $0 bsv-blockchain ~/MyVault docs"
   exit 1
 fi

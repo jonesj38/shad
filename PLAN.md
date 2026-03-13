@@ -4,7 +4,7 @@
 
 **Shad enables AI to utilize virtually unlimited context.**
 
-The goal: Load an Obsidian collection with curated, up-to-date knowledge (documentation, code examples, architecture patterns, best practices), then ask Shad to accomplish complex tasks that would be impossible with a single context window.
+The goal: Load an Collection collection with curated, up-to-date knowledge (documentation, code examples, architecture patterns, best practices), then ask Shad to accomplish complex tasks that would be impossible with a single context window.
 
 **Example**: Build a production-quality mobile app in one shot by:
 1. Loading a collection with React Native docs, great app examples, UI/UX patterns, API design guides
@@ -27,12 +27,12 @@ This is not prompt engineering. This is **inference-time scaling** — treating 
 - [x] History artifacts (DAG, metrics, reports)
 - [x] Redis caching with hierarchical keys
 
-### Phase 2 — Obsidian Integration (SUPERSEDED)
+### Phase 2 — Collection Integration (SUPERSEDED)
 
 > **Note**: This phase was superseded by Phase 3 (qmd Migration). See [QMD_PIVOT.md](QMD_PIVOT.md) for details.
 
 Original implementation:
-- [x] MCP client for Obsidian REST API
+- [x] MCP client for Collection REST API
 - [x] Per-subtask context retrieval
 - [x] Code Mode: LLM generates Python scripts for custom retrieval
 - [x] Sandbox execution with `obsidian.search()`, `obsidian.read_note()`, etc.
@@ -49,7 +49,7 @@ Original implementation:
 - [x] Multi-collection support (`--collection` repeatable)
 - [x] Search modes: hybrid (default), bm25, vector
 - [x] `--retriever` flag for backend selection
-- [x] Removed Obsidian REST API dependency
+- [x] Removed Collection REST API dependency
 - [x] Updated install.sh to install qmd via bun/npm
 
 ### Phase 4 — Task-Aware Decomposition (COMPLETE)
@@ -241,8 +241,8 @@ Original implementation:
 
 ### Complete
 - Phase 1: Foundation (RLM Engine, budget enforcement, history artifacts, Redis caching)
-- Phase 2: Obsidian Integration (MCP client — superseded by Phase 3)
-- Phase 3: qmd Migration (RetrievalLayer, hybrid search, multi-collection, no Obsidian dependency)
+- Phase 2: Collection Integration (MCP client — superseded by Phase 3)
+- Phase 3: qmd Migration (RetrievalLayer, hybrid search, multi-collection, no Collection dependency)
 - Phase 4: Task-Aware Decomposition (Strategy skeletons, heuristic selection, soft dependencies)
 - Phase 5: Code Generation Output (File manifests, two-pass import resolution, contracts-first)
 - Phase 6: Verification Layer (Syntax/import/type checks, error classification, repair actions)

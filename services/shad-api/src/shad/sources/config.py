@@ -50,7 +50,7 @@ class Source(BaseModel):
     path: str | None = Field(default=None, description="Path for folder sources")
     schedule: SourceSchedule = Field(default=SourceSchedule.DAILY)
     preset: str = Field(default="docs", description="Ingestion preset for github")
-    vault_path: str = Field(..., description="Target vault path")
+    collection_path: str = Field(..., description="Target collection path")
     enabled: bool = Field(default=True)
     last_sync: datetime | None = Field(default=None)
     last_error: str | None = Field(default=None)
@@ -107,7 +107,7 @@ class SourceConfig(BaseModel):
     """Configuration for all sources."""
 
     sources: list[Source] = Field(default_factory=list)
-    default_vault: str | None = Field(default=None)
+    default_collection: str | None = Field(default=None)
 
     @classmethod
     def load(cls, path: Path | None = None) -> SourceConfig:
@@ -128,7 +128,7 @@ class SourceConfig(BaseModel):
 
         return cls(
             sources=sources,
-            default_vault=data.get("default_vault"),
+            default_collection=data.get("default_collection"),
         )
 
     def save(self, path: Path | None = None) -> None:
@@ -153,8 +153,8 @@ class SourceConfig(BaseModel):
             sources_data.append(source_dict)
 
         data = {"sources": sources_data}
-        if self.default_vault:
-            data["default_vault"] = self.default_vault
+        if self.default_collection:
+            data["default_collection"] = self.default_collection
 
         with open(path, "w") as f:
             yaml.dump(data, f, default_flow_style=False, sort_keys=False)

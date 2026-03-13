@@ -1,4 +1,4 @@
-"""Tests for the RLM Engine with Obsidian Code Mode support."""
+"""Tests for the RLM Engine with Collection Code Mode support."""
 
 from __future__ import annotations
 
@@ -152,7 +152,7 @@ class TestRLMEngineWithRetriever:
     """Tests for RLM Engine with retriever integration."""
 
     @pytest.fixture
-    def mock_retriever(self, temp_vault: Path) -> MagicMock:
+    def mock_retriever(self, temp_collection: Path) -> MagicMock:
         """Create mock retriever."""
         from shad.retrieval import RetrievalResult
 
@@ -167,7 +167,7 @@ class TestRLMEngineWithRetriever:
 
     @pytest.fixture
     def engine_with_retriever(
-        self, mock_retriever: MagicMock, temp_vault: Path
+        self, mock_retriever: MagicMock, temp_collection: Path
     ) -> RLMEngine:
         """Create engine with retriever support."""
         mock_llm = MagicMock()
@@ -175,21 +175,21 @@ class TestRLMEngineWithRetriever:
         mock_llm.decompose_task = AsyncMock(return_value=["Sub1"])
         mock_llm.synthesize_results = AsyncMock(return_value="Synthesis")
 
-        engine = RLMEngine(llm_provider=mock_llm, retriever=mock_retriever, vault_path=temp_vault)
+        engine = RLMEngine(llm_provider=mock_llm, retriever=mock_retriever, collection_path=temp_collection)
         return engine
 
     @pytest.mark.asyncio
-    async def test_context_retrieval_from_vault(
-        self, engine_with_retriever: RLMEngine, temp_vault: Path
+    async def test_context_retrieval_from_collection(
+        self, engine_with_retriever: RLMEngine, temp_collection: Path
     ) -> None:
-        """Test retrieving context from vault via retriever."""
-        # Create test notes in vault
-        note_path = temp_vault / "context_note.md"
+        """Test retrieving context from collection via retriever."""
+        # Create test notes in collection
+        note_path = temp_collection / "context_note.md"
         note_path.write_text("---\ntype: note\n---\n# Relevant Info\nThis is context.")
 
         config = RunConfig(
             goal="What do we know about the topic?",
-            notebook_id="test-vault",
+            notebook_id="test-collection",
             budget=Budget(max_depth=2),
         )
 
@@ -214,7 +214,7 @@ class TestCodeModeExecution:
     @pytest.mark.asyncio
     async def test_code_mode_script_generation(self) -> None:
         """Test that Code Mode generates executable scripts."""
-        # Per OBSIDIAN_PIVOT.md Section 3.1
+        # Per COLLECTION_PIVOT.md Section 3.1
         # RLM should generate Python scripts that use obsidian tools
 
         expected_script_pattern = """
@@ -232,7 +232,7 @@ __result__ = {"findings": filtered}
 
         # The script should:
         # 1. Import obsidian tools
-        # 2. Use vault operations (search, read, etc.)
+        # 2. Use collection operations (search, read, etc.)
         # 3. Process data locally
         # 4. Return distilled result via __result__
 

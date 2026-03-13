@@ -108,7 +108,7 @@ class DeltaVerifier:
 
     Per SPEC.md Section 2.8.2:
     - Tracks used_notes[] and used_note_hashes{} for each node
-    - On resume, checks current vault against stored hashes
+    - On resume, checks current collection against stored hashes
     - Stale nodes undergo re-verification or re-execution
     """
 

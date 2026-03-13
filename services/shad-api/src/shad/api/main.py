@@ -55,7 +55,7 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
 
     # Initialize retriever
     from pathlib import Path
-    collection_path = Path(settings.obsidian_vault_path) if settings.obsidian_vault_path else None
+    collection_path = Path(settings.default_collection_path) if settings.default_collection_path else None
     retriever = get_retriever(
         paths=[collection_path] if collection_path else None,
         collection_names={collection_path.name: collection_path} if collection_path else None,
@@ -68,7 +68,7 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
         llm_provider=llm_provider,
         cache=cache,
         retriever=retriever,
-        vault_path=collection_path,
+        collection_path=collection_path,
         collections=collections,
     )
     history = HistoryManager()
@@ -113,7 +113,7 @@ class RunRequest(BaseModel):
     """Request model for creating a run."""
 
     goal: str = Field(..., description="The goal/task to accomplish")
-    vault_path: str | None = Field(default=None, description="Obsidian vault path for context")
+    collection_path: str | None = Field(default=None, description="Collection path for context")
     budget: dict[str, int] | None = Field(default=None, description="Budget overrides")
     voice: str | None = Field(default=None, description="Voice for output rendering")
     strategy: str | None = Field(default=None, description="Strategy override: software, research, analysis, planning")
@@ -199,7 +199,7 @@ async def create_run(request: RunRequest, background_tasks: BackgroundTasks) -> 
 
     config = RunConfig(
         goal=request.goal,
-        vault_path=request.vault_path,
+        collection_path=request.collection_path,
         budget=Budget(**budget_dict),
         voice=request.voice,
         strategy_override=request.strategy,
@@ -286,7 +286,7 @@ async def list_runs(limit: int = 50) -> dict[str, Any]:
 # Additional routers
 skills_router = APIRouter(prefix="/v1/skills", tags=["Skills"])
 admin_router = APIRouter(prefix="/v1/admin", tags=["Admin"])
-vault_router = APIRouter(prefix="/v1/vault", tags=["Vault"])
+collection_router = APIRouter(prefix="/v1/collection", tags=["Collection"])
 
 
 @skills_router.get("")
@@ -374,9 +374,9 @@ async def list_voices() -> dict[str, Any]:
     return {"voices": voice_renderer.list_voices()}
 
 
-# Vault router - vault operations
-@vault_router.get("/status")
-async def vault_status() -> dict[str, Any]:
+# Collection router - collection operations
+@collection_router.get("/status")
+async def collection_status() -> dict[str, Any]:
     """Get retriever status."""
     if retriever is None:
         return {"available": False}
@@ -385,13 +385,13 @@ async def vault_status() -> dict[str, Any]:
     return status
 
 
-@vault_router.get("/search")
-async def search_vault(
+@collection_router.get("/search")
+async def search_collection(
     query: str,
     limit: int = 10,
     mode: str = "hybrid",
 ) -> dict[str, Any]:
-    """Search the vault."""
+    """Search the collection."""
     if retriever is None or not retriever.available:
         raise HTTPException(status_code=503, detail="Retriever not available")
 
@@ -403,9 +403,9 @@ async def search_vault(
     }
 
 
-@vault_router.get("/note/{path:path}")
+@collection_router.get("/note/{path:path}")
 async def read_note(path: str, collection: str | None = None) -> dict[str, Any]:
-    """Read a note from the vault."""
+    """Read a note from the collection."""
     if retriever is None or not retriever.available:
         raise HTTPException(status_code=503, detail="Retriever not available")
 
@@ -420,9 +420,9 @@ async def read_note(path: str, collection: str | None = None) -> dict[str, Any]:
     }
 
 
-@vault_router.get("/notes")
-async def list_vault_notes(directory: str = "", recursive: bool = False) -> dict[str, Any]:
-    """List notes in the vault.
+@collection_router.get("/notes")
+async def list_collection_notes(directory: str = "", recursive: bool = False) -> dict[str, Any]:
+    """List notes in the collection.
 
     Note: This endpoint has limited functionality with the new retriever architecture.
     Use search for finding notes instead.
@@ -443,7 +443,7 @@ def create_app() -> FastAPI:
     """Create and configure the FastAPI application."""
     application = FastAPI(
         title="Shad API",
-        description="Shannon's Daemon - Personal AI Infrastructure for long-context reasoning with Obsidian",
+        description="Shannon's Daemon - Personal AI Infrastructure for long-context reasoning with Collection",
         version=__version__,
         lifespan=lifespan,
     )
@@ -453,7 +453,7 @@ def create_app() -> FastAPI:
     application.include_router(run_router)
     application.include_router(skills_router)
     application.include_router(admin_router)
-    application.include_router(vault_router)
+    application.include_router(collection_router)
 
     return application
 

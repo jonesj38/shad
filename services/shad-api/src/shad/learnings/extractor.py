@@ -10,7 +10,7 @@ Learning Types:
 - Prompt patches: Amendments to skill prompts
 - Routing hints: "Goals containing X → skill Y"
 - Negative examples: Failure cases to avoid
-- Notes: Obsidian vault entries
+- Notes: Collection collection entries
 """
 
 from __future__ import annotations

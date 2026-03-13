@@ -1,7 +1,7 @@
-"""Vault Tools for sandboxed code execution.
+"""Collection Tools for sandboxed code execution.
 
 These tools are importable by RLM-generated scripts for
-interacting with the vault(s).
+interacting with the collection(s).
 
 Supports:
 - Direct filesystem operations (read, write, list)
@@ -25,8 +25,8 @@ import yaml
 logger = logging.getLogger(__name__)
 
 
-class ObsidianTools:
-    """Synchronous tools for vault operations in sandboxed scripts.
+class CollectionTools:
+    """Synchronous tools for collection operations in sandboxed scripts.
 
     Provides:
     - read_note: Read a note's content
@@ -61,17 +61,17 @@ class ObsidianTools:
 
     def __init__(
         self,
-        vault_path: Path | str,
+        collection_path: Path | str,
         collection_name: str | None = None,
     ):
-        """Initialize with vault path.
+        """Initialize with collection path.
 
         Args:
-            vault_path: Path to the vault
-            collection_name: Optional qmd collection name for this vault
+            collection_path: Path to the collection
+            collection_name: Optional qmd collection name for this collection
         """
-        self.vault_path = Path(vault_path)
-        self.collection_name = collection_name or self.vault_path.name
+        self.collection_path = Path(collection_path)
+        self.collection_name = collection_name or self.collection_path.name
         self._qmd_available: bool | None = None
 
     def _extract_keywords(self, query: str, max_keywords: int = 15) -> str:
@@ -99,7 +99,7 @@ class ObsidianTools:
         Returns:
             Note content or None if not found
         """
-        full_path = self.vault_path / path
+        full_path = self.collection_path / path
 
         if not full_path.exists():
             return None
@@ -132,7 +132,7 @@ class ObsidianTools:
         Returns:
             True if successful
         """
-        full_path = self.vault_path / path
+        full_path = self.collection_path / path
 
         try:
             # Ensure parent directory exists
@@ -202,7 +202,7 @@ class ObsidianTools:
                 args,
                 capture_output=True,
                 text=True,
-                timeout=60,  # Increased timeout for large vaults
+                timeout=60,  # Increased timeout for large collections
             )
 
             if result.returncode != 0:
@@ -260,7 +260,7 @@ class ObsidianTools:
     ) -> list[dict[str, Any]]:
         """Search locally via filesystem traversal.
 
-        Fallback when Obsidian API is unavailable.
+        Fallback when Collection API is unavailable.
 
         Args:
             query: Search query string
@@ -274,14 +274,14 @@ class ObsidianTools:
         query_lower = query.lower()
 
         try:
-            for md_file in self.vault_path.rglob("*.md"):
+            for md_file in self.collection_path.rglob("*.md"):
                 # Skip hidden and artifact directories
                 if any(part.startswith(".") for part in md_file.parts):
                     continue
                 if "artifacts" in md_file.parts:
                     continue
 
-                relative_path = str(md_file.relative_to(self.vault_path))
+                relative_path = str(md_file.relative_to(self.collection_path))
 
                 # Apply path filter
                 if path_filter and not relative_path.startswith(path_filter):
@@ -380,13 +380,13 @@ class ObsidianTools:
         """List notes in a directory.
 
         Args:
-            directory: Directory relative to vault root
+            directory: Directory relative to collection root
             recursive: Whether to recurse into subdirectories
 
         Returns:
             List of relative paths
         """
-        dir_path = self.vault_path / directory
+        dir_path = self.collection_path / directory
 
         if not dir_path.exists():
             return []
@@ -396,7 +396,7 @@ class ObsidianTools:
 
         for md_file in dir_path.glob(pattern):
             if md_file.is_file():
-                results.append(str(md_file.relative_to(self.vault_path)))
+                results.append(str(md_file.relative_to(self.collection_path)))
 
         return results
 
@@ -439,7 +439,7 @@ class ObsidianTools:
         Returns:
             True if successful
         """
-        full_path = self.vault_path / path
+        full_path = self.collection_path / path
 
         if not full_path.exists():
             return False
@@ -489,7 +489,7 @@ class ObsidianTools:
     def create_wikilink(self, path: str) -> str:
         """Create a full-path wikilink.
 
-        Per OBSIDIAN_PIVOT.md Section 4.3: Full Path Always.
+        Per COLLECTION_PIVOT.md Section 4.3: Full Path Always.
 
         Args:
             path: Relative path to the note
@@ -504,26 +504,26 @@ class ObsidianTools:
 
 
 # Global instance for import in sandboxed code
-# This will be set by the executor with the correct vault path
-obsidian: ObsidianTools | None = None
+# This will be set by the executor with the correct collection path
+obsidian: CollectionTools | None = None
 
 
 def init_tools(
-    vault_path: Path,
+    collection_path: Path,
     collection_name: str | None = None,
-) -> ObsidianTools:
+) -> CollectionTools:
     """Initialize the global obsidian tools instance.
 
     Args:
-        vault_path: Path to the vault
-        collection_name: Optional qmd collection name for this vault
+        collection_path: Path to the collection
+        collection_name: Optional qmd collection name for this collection
 
     Returns:
-        ObsidianTools instance
+        CollectionTools instance
     """
     global obsidian
-    obsidian = ObsidianTools(
-        vault_path=vault_path,
+    obsidian = CollectionTools(
+        collection_path=collection_path,
         collection_name=collection_name,
     )
     return obsidian

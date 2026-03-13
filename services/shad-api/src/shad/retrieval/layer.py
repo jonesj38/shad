@@ -27,7 +27,7 @@ class RetrievalResult:
     """Highlighted snippet containing the matched query."""
 
     collection: str = ""
-    """Name of the collection/vault this result came from."""
+    """Name of the collection/collection this result came from."""
 
     docid: str = ""
     """Unique document identifier (qmd hash or generated)."""

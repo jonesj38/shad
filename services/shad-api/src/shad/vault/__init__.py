@@ -1,18 +1,18 @@
-"""Vault curation tools for ingestion, indexing, and gap detection."""
+"""Collection curation tools for ingestion, indexing, and gap detection."""
 
-from shad.vault.gap_detection import (
+from shad.collection.gap_detection import (
     GapDetector,
     GapReport,
     GapScore,
     QueryHistoryAnalyzer,
 )
-from shad.vault.ingestion import (
+from shad.collection.ingestion import (
     IngestPreset,
     IngestResult,
     SnapshotMetadata,
     VaultIngester,
 )
-from shad.vault.shadow_index import (
+from shad.collection.shadow_index import (
     ShadowIndex,
     SnapshotEntry,
     SourceEntry,

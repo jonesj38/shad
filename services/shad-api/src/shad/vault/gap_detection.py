@@ -1,4 +1,4 @@
-"""Gap detection for vault curation.
+"""Gap detection for collection curation.
 
 Per SPEC.md Section 2.12:
 - Combined scoring: history_pain, coverage_miss, llm_score
@@ -47,7 +47,7 @@ class GapReport:
     def to_markdown(self) -> str:
         """Convert report to markdown format."""
         lines = [
-            "# Vault Gap Report",
+            "# Collection Gap Report",
             "",
             f"**Queries Analyzed:** {self.total_queries_analyzed}",
             f"**Coverage:** {self.coverage_percentage:.0%}",
@@ -90,7 +90,7 @@ class QueryHistoryAnalyzer:
     """Analyzes query history to identify problematic topics.
 
     Tracks query frequency, retrieval scores, and fallback usage
-    to identify areas where vault content is lacking.
+    to identify areas where collection content is lacking.
     """
 
     def __init__(self) -> None:
@@ -166,7 +166,7 @@ class QueryHistoryAnalyzer:
 
 
 class GapDetector:
-    """Detects knowledge gaps in the vault.
+    """Detects knowledge gaps in the collection.
 
     Per SPEC.md Section 2.12.1:
     gap_score = 0.55 * history_pain + 0.25 * coverage_miss + 0.20 * llm_score
@@ -272,7 +272,7 @@ class GapDetector:
         """Generate a gap report.
 
         Args:
-            vault_topics: List of topics currently in the vault
+            vault_topics: List of topics currently in the collection
             llm_scores: Optional LLM-generated relevance scores per topic
 
         Returns:

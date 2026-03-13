@@ -1,24 +1,24 @@
-# QMD Pivot: From Obsidian API to Local Hybrid Search
+# QMD Pivot: From Collection API to Local Hybrid Search
 
 > **Date**: 2026-01-27
 > **Status**: Complete
-> **Decision**: Replace Obsidian REST API + MCP with qmd as primary retrieval backend
+> **Decision**: Replace Collection REST API + MCP with qmd as primary retrieval backend
 
 ---
 
 ## Summary
 
-Shad originally used the Obsidian Local REST API for collection operations. This required Obsidian to be running and added complexity for multi-collection support. We pivoted to [qmd](https://github.com/tobi/qmd) as the primary retrieval backend, which provides better search quality with no runtime dependencies. For OpenAI embeddings support, use the fork: https://github.com/jonesj38/qmd/tree/feat/openai-embeddings.
+Shad originally used the Collection Local REST API for collection operations. This required Collection to be running and added complexity for multi-collection support. We pivoted to [qmd](https://github.com/tobi/qmd) as the primary retrieval backend, which provides better search quality with no runtime dependencies. For OpenAI embeddings support, use the fork: https://github.com/jonesj38/qmd/tree/feat/openai-embeddings.
 
 ---
 
 ## The Problem
 
-### Obsidian REST API Limitations
+### Collection REST API Limitations
 
-1. **Runtime Dependency**: Obsidian must be running for shad to access collections
+1. **Runtime Dependency**: Collection must be running for shad to access collections
 2. **Single Collection**: API bound to one collection at a time
-3. **Multi-Collection Complexity**: Would require multiple Obsidian instances or complex routing
+3. **Multi-Collection Complexity**: Would require multiple Collection instances or complex routing
 4. **Search Quality**: Basic keyword search only, no semantic understanding
 5. **Deployment**: Doesn't work on headless servers or CI/CD
 
@@ -32,8 +32,8 @@ shad run "Build auth system" \
   --collection ~/Docs
 ```
 
-With Obsidian API, this would require:
-- Running multiple Obsidian instances (one per collection)
+With Collection API, this would require:
+- Running multiple Collection instances (one per collection)
 - Complex routing logic to dispatch queries
 - Result merging with priority weighting
 - Significant infrastructure overhead
@@ -44,10 +44,10 @@ With Obsidian API, this would require:
 
 [qmd](https://github.com/tobi/qmd) is a local CLI tool that provides:
 
-| Feature | Obsidian API | qmd |
+| Feature | Collection API | qmd |
 |---------|--------------|-----|
 | Search type | Keyword only | Hybrid (BM25 + vectors + LLM reranking) |
-| Runtime dependency | Obsidian running | None (standalone CLI) |
+| Runtime dependency | Collection running | None (standalone CLI) |
 | Multi-collection | Complex routing | Native collections |
 | Semantic search | No | Yes (local embeddings) |
 | Headless/CI | No | Yes |
@@ -135,9 +135,9 @@ def get_retriever(paths, collection_names, prefer="auto"):
 
 ### For Users
 
-**Before (Obsidian API)**:
+**Before (Collection API)**:
 ```bash
-# Required Obsidian running with REST API plugin
+# Required Collection running with REST API plugin
 export OBSIDIAN_API_KEY=your_key
 export OBSIDIAN_BASE_URL=https://127.0.0.1:27124
 shad run "task" --collection ~/Collection
@@ -182,7 +182,7 @@ shad run "task" --collection ~/Collection
 
 ## Benefits Realized
 
-1. **No Runtime Dependency**: Shad works without Obsidian running
+1. **No Runtime Dependency**: Shad works without Collection running
 2. **Better Search**: Hybrid BM25 + vector search with LLM reranking
 3. **Native Multi-Collection**: `--collection` flag accepts multiple paths
 4. **Simpler Config**: No API keys or URLs to configure

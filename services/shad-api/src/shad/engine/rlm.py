@@ -6,10 +6,10 @@ The core reasoning engine that:
 3. Caches/verifies/recomposes results
 4. Enforces budget constraints
 
-Per OBSIDIAN_PIVOT.md Section 3: Code Execution (The RLM Pattern)
+Per COLLECTION_PIVOT.md Section 3: Code Execution (The RLM Pattern)
 - RLM writes Python scripts that import MCP tools
-- Scripts execute in sandboxed container with vault access
-- Scripts filter, aggregate, process vault data before returning
+- Scripts execute in sandboxed container with collection access
+- Scripts filter, aggregate, process collection data before returning
 - Only final distilled output enters context window
 """
 
@@ -77,9 +77,9 @@ class RLMEngine:
     - Synthesizing results
     - Enforcing budget constraints
 
-    Per OBSIDIAN_PIVOT.md:
-    - Uses Code Mode for vault operations
-    - Supports Obsidian MCP client for vault access
+    Per COLLECTION_PIVOT.md:
+    - Uses Code Mode for collection operations
+    - Supports Collection MCP client for collection access
     - Implements hash-based cache validation
     """
 
@@ -89,7 +89,7 @@ class RLMEngine:
         cache: RedisCache | None = None,
         retriever: RetrievalLayer | None = None,
         code_executor: CodeExecutor | None = None,
-        vault_path: Path | str | None = None,
+        collection_path: Path | str | None = None,
         collections: list[str] | None = None,
         use_code_mode: bool = True,
         use_qmd_hybrid: bool = False,
@@ -98,10 +98,10 @@ class RLMEngine:
         self.cache: RedisCache | None = cache
         self.settings = get_settings()
 
-        # Store vault path
-        self.vault_path = Path(vault_path) if vault_path else None
+        # Store collection path
+        self.collection_path = Path(collection_path) if collection_path else None
 
-        # Store collection names for multi-vault search
+        # Store collection names for multi-collection search
         self.collections = collections or []
 
         # Initialize retrieval layer
@@ -110,28 +110,28 @@ class RLMEngine:
         else:
             # Auto-detect best available retriever
             collection_paths = {}
-            if self.vault_path:
-                collection_paths[self.vault_path.name] = self.vault_path
+            if self.collection_path:
+                collection_paths[self.collection_path.name] = self.collection_path
             self.retriever = get_retriever(
-                paths=[self.vault_path] if self.vault_path else None,
+                paths=[self.collection_path] if self.collection_path else None,
                 collection_names=collection_paths if collection_paths else None,
             )
         logger.info(f"[RETRIEVAL] Using {type(self.retriever).__name__}")
 
         # Initialize CodeExecutor for Code Mode
-        self._use_code_mode = use_code_mode and self.vault_path is not None
+        self._use_code_mode = use_code_mode and self.collection_path is not None
         self._use_qmd_hybrid = use_qmd_hybrid
         if code_executor:
             self.code_executor = code_executor
-        elif self._use_code_mode and self.vault_path:
-            # Use first collection name if available, otherwise default to vault dir name
+        elif self._use_code_mode and self.collection_path:
+            # Use first collection name if available, otherwise default to collection dir name
             collection_name = self.collections[0] if self.collections else None
             sandbox_config = SandboxConfig(
-                vault_path=self.vault_path,
+                collection_path=self.collection_path,
                 collection_name=collection_name,
             )
             self.code_executor = CodeExecutor(sandbox_config)
-            logger.info(f"[CODE_MODE] Initialized CodeExecutor with vault: {self.vault_path}, collection: {collection_name or self.vault_path.name}")
+            logger.info(f"[CODE_MODE] Initialized CodeExecutor with collection: {self.collection_path}, collection: {collection_name or self.collection_path.name}")
         else:
             self.code_executor = None
 
@@ -177,20 +177,20 @@ class RLMEngine:
             logger.info(f"[STRATEGY] Selected: {strategy_result.strategy_type.value} "
                        f"(confidence: {strategy_result.confidence:.2f}, override: {strategy_result.is_override})")
 
-            # Retrieve context from vault(s) if specified
+            # Retrieve context from collection(s) if specified
             context = ""
-            if config.vault_path or self.collections:
-                logger.debug(f"[CONTEXT] Vault path: {config.vault_path}, collections: {self.collections}")
+            if config.collection_path or self.collections:
+                logger.debug(f"[CONTEXT] Collection path: {config.collection_path}, collections: {self.collections}")
                 if self.retriever.available:
-                    context = await self._retrieve_vault_context(goal_spec.normalized_goal)
+                    context = await self._retrieve_collection_context(goal_spec.normalized_goal)
                     if context:
                         logger.debug(f"[CONTEXT] Context length: {len(context)} chars")
                     else:
-                        logger.debug("[CONTEXT] No context retrieved from vault")
+                        logger.debug("[CONTEXT] No context retrieved from collection")
                 else:
                     logger.debug("[CONTEXT] Retriever NOT available - cannot retrieve context")
             else:
-                logger.debug("[CONTEXT] No vault_path or collections specified")
+                logger.debug("[CONTEXT] No collection_path or collections specified")
 
             # Create root node
             root_node = DAGNode(
@@ -333,7 +333,7 @@ class RLMEngine:
         Resume a partial or failed run.
 
         Per SPEC.md Section 2.8.2: Uses delta verification.
-        - Checks vault manifest against stored hashes
+        - Checks collection manifest against stored hashes
         - Stale nodes undergo re-verification or re-execution
         - Unchanged nodes are trusted
 
@@ -362,8 +362,8 @@ class RLMEngine:
             nodes_to_replay: list[str] = []
 
             if replay_mode == "stale":
-                # Get current vault hashes and find stale nodes
-                current_hashes = await self._get_current_vault_hashes(run)
+                # Get current collection hashes and find stale nodes
+                current_hashes = await self._get_current_collection_hashes(run)
                 nodes_to_replay = self.delta_verifier.get_stale_nodes(current_hashes)
                 logger.info(f"[DELTA] Found {len(nodes_to_replay)} stale nodes")
             elif replay_mode and replay_mode.startswith("subtree:"):
@@ -410,7 +410,7 @@ class RLMEngine:
                 context = ""  # Retrieve fresh context
                 if self.retriever.available:
                     logger.info(f"[RESUME] Retrieving context for node...")
-                    context = await self._retrieve_vault_context(node.task, limit=5)
+                    context = await self._retrieve_collection_context(node.task, limit=5)
                     logger.info(f"[RESUME] Got {len(context)} chars of context")
 
                 logger.info(f"[RESUME] Executing node...")
@@ -600,9 +600,9 @@ class RLMEngine:
                             subtask_context = f"{soft_dep_context}\n\n{context}"
                             logger.info(f"[CONTEXT] Injected {len(soft_dep_context)} chars from soft deps: {soft_deps}")
 
-                    # Retrieve subtask-specific context from vault
+                    # Retrieve subtask-specific context from collection
                     if self.retriever.available:
-                        fresh_context = await self._retrieve_vault_context(task, limit=5)
+                        fresh_context = await self._retrieve_collection_context(task, limit=5)
                         if fresh_context:
                             logger.info(f"[CONTEXT] Retrieved {len(fresh_context)} chars for subtask: {task[:50]}...")
                             subtask_context = f"{subtask_context}\n\n{fresh_context}"
@@ -735,7 +735,7 @@ class RLMEngine:
     ) -> str:
         """Generate a cache key for a task.
 
-        Per OBSIDIAN_PIVOT.md Section 6.2: Hash Validation
+        Per COLLECTION_PIVOT.md Section 6.2: Hash Validation
         Cache keys include context_hash derived from file content/mtime.
         """
         # Include context hash for cache coherence
@@ -781,8 +781,8 @@ class RLMEngine:
 
         return None
 
-    async def _retrieve_vault_context(self, query: str, limit: int = 10) -> str:
-        """Retrieve relevant context from the vault(s).
+    async def _retrieve_collection_context(self, query: str, limit: int = 10) -> str:
+        """Retrieve relevant context from the collection(s).
 
         Uses the configured retrieval backend (qmd or filesystem).
         
@@ -1080,7 +1080,7 @@ class RLMEngine:
                 if path.endswith(".md"):
                     path = path[:-3]
 
-                # Include collection name if multi-vault
+                # Include collection name if multi-collection
                 if result.collection:
                     link = f"[[{result.collection}:{path}]]"
                     title = f"{result.collection}/{result.path}"
@@ -1229,7 +1229,7 @@ class RLMEngine:
     ) -> str | None:
         """Execute a Code Mode script.
 
-        Per OBSIDIAN_PIVOT.md Section 3.1:
+        Per COLLECTION_PIVOT.md Section 3.1:
         1. RLM writes Python script importing MCP tools
         2. Script executes in sandboxed container
         3. Script filters/aggregates data before returning
@@ -1255,17 +1255,17 @@ class RLMEngine:
             logger.error(f"Code Mode execution error: {e}")
             return None
 
-    def _generate_retrieval_script(self, query: str, vault_path: str) -> str:
+    def _generate_retrieval_script(self, query: str, collection_path: str) -> str:
         """Generate a Code Mode script for context retrieval.
 
-        Per OBSIDIAN_PIVOT.md Section 3.2: Context Initialization
+        Per COLLECTION_PIVOT.md Section 3.2: Context Initialization
         - Runs start with empty context (goal text only)
         - Code Mode scripts fetch data dynamically
         """
         return f'''
 from shad.sandbox.tools import obsidian
 
-# Search for relevant notes in the vault
+# Search for relevant notes in the collection
 results = obsidian.search("{query}", limit=10)
 
 # Extract and format relevant content
@@ -1293,7 +1293,7 @@ for r in results:
 
 # Return distilled context
 __result__ = {{
-    "vault_path": "{vault_path}",
+    "collection_path": "{collection_path}",
     "results": context_parts,
     "total": len(context_parts),
 }}
@@ -1301,18 +1301,18 @@ __result__ = {{
 
     async def retrieve_context_code_mode(
         self,
-        vault_path: str,
+        collection_path: str,
         query: str,
     ) -> str:
         """Retrieve context using Code Mode execution.
 
-        Per OBSIDIAN_PIVOT.md Section 3.1 and 3.2:
-        Uses code execution to fetch and filter vault data.
+        Per COLLECTION_PIVOT.md Section 3.1 and 3.2:
+        Uses code execution to fetch and filter collection data.
         """
         if not self.code_executor:
             return ""
 
-        script = self._generate_retrieval_script(query, vault_path)
+        script = self._generate_retrieval_script(query, collection_path)
 
         try:
             result = await self.code_executor.execute(script)
@@ -1582,8 +1582,8 @@ __result__ = {{
             return match.group(1).strip()
         return None
 
-    async def _get_current_vault_hashes(self, run: Run) -> dict[str, str]:
-        """Get current hashes for vault files used in the run.
+    async def _get_current_collection_hashes(self, run: Run) -> dict[str, str]:
+        """Get current hashes for collection files used in the run.
 
         Used for delta verification during resume.
         """
@@ -1610,7 +1610,7 @@ __result__ = {{
         self,
         node_id: str,
         context: str,
-        vault_path: str | None = None,
+        collection_path: str | None = None,
     ) -> None:
         """Track context used by a node for delta verification.
 

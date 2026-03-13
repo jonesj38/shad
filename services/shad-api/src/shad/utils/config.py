@@ -4,6 +4,7 @@ import os
 from functools import lru_cache
 from pathlib import Path
 
+from pydantic import Field
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 # Get SHAD_HOME for .env file location
@@ -33,8 +34,12 @@ class Settings(BaseSettings):
     # Redis Settings
     redis_url: str = "redis://localhost:6379/0"
 
-    # Collection Settings (OBSIDIAN_VAULT_PATH kept for backward compat)
-    obsidian_vault_path: str = ""  # Default collection path (env var fallback)
+    # Collection Settings
+    default_collection_path: str = Field(
+        default="",
+        alias="SHAD_COLLECTION_PATH",
+        description="Default collection path (env var fallback)",
+    )
 
     # LLM Provider Settings (legacy fallback - Claude CLI is primary)
     # API keys only needed if Claude CLI is unavailable

@@ -7,7 +7,7 @@ Per SPEC.md Section 2.2:
 
 Strategies:
 - software: Build software with contracts-first, type consistency
-- research: Gather and cite sources from vault
+- research: Gather and cite sources from collection
 - analysis: Analyze data with explicit criteria and tradeoffs
 - planning: Create plans with milestones and dependencies
 """
@@ -349,7 +349,7 @@ class ResearchStrategy(Strategy):
                 ),
                 StrategyStage(
                     name="gather_sources",
-                    description="Gather sources from vault",
+                    description="Gather sources from collection",
                     required=True,
                     depends_on=["clarify_scope"],
                     tags=["retrieval"],
@@ -388,7 +388,7 @@ class ResearchStrategy(Strategy):
             constraints=[
                 StrategyConstraint(
                     name="must_cite_vault",
-                    description="All claims must be supported by vault sources",
+                    description="All claims must be supported by collection sources",
                     value=True,
                 ),
                 StrategyConstraint(
@@ -409,7 +409,7 @@ class ResearchStrategy(Strategy):
         return """You are decomposing a research task.
 
 IMPORTANT CONSTRAINTS:
-1. MUST CITE VAULT: All claims must be supported by vault sources
+1. MUST CITE VAULT: All claims must be supported by collection sources
    - Use [[wikilinks]] for citations
    - Do not make unsupported claims
    - Indicate confidence level for claims
@@ -420,7 +420,7 @@ IMPORTANT CONSTRAINTS:
 
 DECOMPOSITION STRUCTURE:
 1. Clarify scope - Define research questions
-2. Gather sources - Search vault for relevant notes
+2. Gather sources - Search collection for relevant notes
 3. Synthesize - Combine findings into coherent answer
 4. Cite - Add proper citations
 

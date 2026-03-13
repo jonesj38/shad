@@ -10,17 +10,17 @@ from unittest.mock import AsyncMock, MagicMock, patch
 import pytest
 
 from shad.sandbox.executor import CodeExecutor, ExecutionResult, SandboxConfig
-from shad.sandbox.tools import ObsidianTools
+from shad.sandbox.tools import CollectionTools
 
 
 class TestCodeExecutor:
     """Tests for CodeExecutor."""
 
     @pytest.fixture
-    def sandbox_config(self, temp_vault: Path) -> SandboxConfig:
+    def sandbox_config(self, temp_collection: Path) -> SandboxConfig:
         """Create sandbox configuration."""
         return SandboxConfig(
-            vault_path=temp_vault,
+            collection_path=temp_collection,
             timeout_seconds=30,
             max_memory_mb=512,
             network_enabled=False,
@@ -33,7 +33,7 @@ class TestCodeExecutor:
 
     @pytest.mark.asyncio
     async def test_execute_simple_script(
-        self, executor: CodeExecutor, temp_vault: Path
+        self, executor: CodeExecutor, temp_collection: Path
     ) -> None:
         """Test executing a simple Python script."""
         script = """
@@ -66,11 +66,11 @@ __result__ = main()
 
     @pytest.mark.asyncio
     async def test_execute_with_obsidian_tools(
-        self, executor: CodeExecutor, temp_vault: Path
+        self, executor: CodeExecutor, temp_collection: Path
     ) -> None:
-        """Test using Obsidian tools in script."""
+        """Test using Collection tools in script."""
         # Create a test note
-        note_path = temp_vault / "test_note.md"
+        note_path = temp_collection / "test_note.md"
         note_path.write_text("---\ntype: note\n---\n# Test Content")
 
         # The executor already has obsidian tools injected via _setup_globals
@@ -121,11 +121,11 @@ x = 1 / 0
 
     @pytest.mark.asyncio
     async def test_sandbox_isolation(
-        self, executor: CodeExecutor, temp_vault: Path
+        self, executor: CodeExecutor, temp_collection: Path
     ) -> None:
-        """Test that sandbox restricts access outside vault."""
+        """Test that sandbox restricts access outside collection."""
         script = """
-# Try to access files outside vault
+# Try to access files outside collection
 try:
     with open("/etc/passwd", "r") as f:
         __result__ = {"error": None, "accessed": True}
@@ -140,17 +140,17 @@ except Exception as e:
         assert result.success is True
         if result.return_value and result.return_value.get("accessed") is False:
             # Good - access was blocked
-            assert "outside vault" in result.return_value.get("error", "").lower() or \
+            assert "outside collection" in result.return_value.get("error", "").lower() or \
                    "permission" in result.return_value.get("error", "").lower()
 
     @pytest.mark.asyncio
     async def test_execute_search_and_filter(
-        self, executor: CodeExecutor, temp_vault: Path
+        self, executor: CodeExecutor, temp_collection: Path
     ) -> None:
         """Test search and filter operation in script."""
         # Create test notes
-        (temp_vault / "python.md").write_text("---\ntype: note\n---\n# Python\nPython is great.")
-        (temp_vault / "javascript.md").write_text("---\ntype: note\n---\n# JS\nJavaScript is popular.")
+        (temp_collection / "python.md").write_text("---\ntype: note\n---\n# Python\nPython is great.")
+        (temp_collection / "javascript.md").write_text("---\ntype: note\n---\n# JS\nJavaScript is popular.")
 
         # obsidian is pre-injected by the executor
         script = """
@@ -170,17 +170,17 @@ __result__ = {
         assert result.return_value["total_results"] >= 1
 
 
-class TestObsidianTools:
-    """Tests for ObsidianTools helper."""
+class TestCollectionTools:
+    """Tests for CollectionTools helper."""
 
     @pytest.fixture
-    def tools(self, temp_vault: Path) -> ObsidianTools:
+    def tools(self, temp_collection: Path) -> CollectionTools:
         """Create tools instance."""
-        return ObsidianTools(vault_path=temp_vault)
+        return CollectionTools(collection_path=temp_collection)
 
-    def test_read_note(self, tools: ObsidianTools, temp_vault: Path) -> None:
+    def test_read_note(self, tools: CollectionTools, temp_collection: Path) -> None:
         """Test reading a note synchronously."""
-        note_path = temp_vault / "read_test.md"
+        note_path = temp_collection / "read_test.md"
         note_path.write_text("---\ntype: note\n---\n# Content")
 
         content = tools.read_note("read_test.md")
@@ -188,23 +188,23 @@ class TestObsidianTools:
         assert content is not None
         assert "# Content" in content
 
-    def test_read_note_not_found(self, tools: ObsidianTools) -> None:
+    def test_read_note_not_found(self, tools: CollectionTools) -> None:
         """Test reading non-existent note."""
         content = tools.read_note("nonexistent.md")
         assert content is None
 
-    def test_search(self, tools: ObsidianTools, temp_vault: Path) -> None:
+    def test_search(self, tools: CollectionTools, temp_collection: Path) -> None:
         """Test search functionality."""
         # Create test notes
-        (temp_vault / "note1.md").write_text("---\ntype: note\n---\nKeyword here")
-        (temp_vault / "note2.md").write_text("---\ntype: note\n---\nOther content")
+        (temp_collection / "note1.md").write_text("---\ntype: note\n---\nKeyword here")
+        (temp_collection / "note2.md").write_text("---\ntype: note\n---\nOther content")
 
         results = tools.search("Keyword")
 
         assert len(results) >= 1
         assert any("Keyword" in r.get("content", "") for r in results)
 
-    def test_write_note(self, tools: ObsidianTools, temp_vault: Path) -> None:
+    def test_write_note(self, tools: CollectionTools, temp_collection: Path) -> None:
         """Test writing a new note."""
         result = tools.write_note(
             path="new_note.md",
@@ -213,12 +213,12 @@ class TestObsidianTools:
         )
 
         assert result is True
-        assert (temp_vault / "new_note.md").exists()
+        assert (temp_collection / "new_note.md").exists()
 
-    def test_list_notes(self, tools: ObsidianTools, temp_vault: Path) -> None:
+    def test_list_notes(self, tools: CollectionTools, temp_collection: Path) -> None:
         """Test listing notes."""
         # Create test notes in subdirectory
-        subdir = temp_vault / "TestDir"
+        subdir = temp_collection / "TestDir"
         subdir.mkdir()
         (subdir / "note1.md").write_text("# Note 1")
         (subdir / "note2.md").write_text("# Note 2")
@@ -228,10 +228,10 @@ class TestObsidianTools:
         assert len(files) == 2
 
     def test_update_frontmatter(
-        self, tools: ObsidianTools, temp_vault: Path
+        self, tools: CollectionTools, temp_collection: Path
     ) -> None:
         """Test updating frontmatter."""
-        note_path = temp_vault / "update_fm.md"
+        note_path = temp_collection / "update_fm.md"
         note_path.write_text("---\ntype: note\nstatus: raw\n---\n# Content")
 
         result = tools.update_frontmatter("update_fm.md", {"status": "processed"})
@@ -241,10 +241,10 @@ class TestObsidianTools:
         assert "status: processed" in content
 
     def test_get_frontmatter(
-        self, tools: ObsidianTools, temp_vault: Path
+        self, tools: CollectionTools, temp_collection: Path
     ) -> None:
         """Test extracting frontmatter."""
-        note_path = temp_vault / "fm_test.md"
+        note_path = temp_collection / "fm_test.md"
         note_path.write_text("---\ntype: source\nstatus: verified\n---\n# Body")
 
         frontmatter = tools.get_frontmatter("fm_test.md")
@@ -303,18 +303,18 @@ class TestExecutionResult:
 class TestSandboxConfig:
     """Tests for SandboxConfig."""
 
-    def test_default_config(self, temp_vault: Path) -> None:
+    def test_default_config(self, temp_collection: Path) -> None:
         """Test default configuration values."""
-        config = SandboxConfig(vault_path=temp_vault)
+        config = SandboxConfig(collection_path=temp_collection)
 
         assert config.timeout_seconds == 60
         assert config.max_memory_mb == 512
         assert config.network_enabled is False
 
-    def test_custom_config(self, temp_vault: Path) -> None:
+    def test_custom_config(self, temp_collection: Path) -> None:
         """Test custom configuration."""
         config = SandboxConfig(
-            vault_path=temp_vault,
+            collection_path=temp_collection,
             timeout_seconds=120,
             max_memory_mb=1024,
             network_enabled=True,
@@ -325,17 +325,17 @@ class TestSandboxConfig:
         assert config.network_enabled is True
 
 
-class TestObsidianToolsAdvanced:
-    """Advanced tests for ObsidianTools."""
+class TestCollectionToolsAdvanced:
+    """Advanced tests for CollectionTools."""
 
     @pytest.fixture
-    def tools(self, temp_vault: Path) -> ObsidianTools:
+    def tools(self, temp_collection: Path) -> CollectionTools:
         """Create tools instance."""
-        return ObsidianTools(vault_path=temp_vault)
+        return CollectionTools(collection_path=temp_collection)
 
-    def test_get_hash(self, tools: ObsidianTools, temp_vault: Path) -> None:
+    def test_get_hash(self, tools: CollectionTools, temp_collection: Path) -> None:
         """Test getting file hash."""
-        note_path = temp_vault / "hash_test.md"
+        note_path = temp_collection / "hash_test.md"
         note_path.write_text("# Content for hashing")
 
         file_hash = tools.get_hash("hash_test.md")
@@ -343,40 +343,40 @@ class TestObsidianToolsAdvanced:
         assert file_hash is not None
         assert len(file_hash) == 16  # Short hash
 
-    def test_get_hash_not_found(self, tools: ObsidianTools) -> None:
+    def test_get_hash_not_found(self, tools: CollectionTools) -> None:
         """Test getting hash for missing file."""
         file_hash = tools.get_hash("missing.md")
         assert file_hash is None
 
-    def test_create_wikilink(self, tools: ObsidianTools) -> None:
+    def test_create_wikilink(self, tools: CollectionTools) -> None:
         """Test creating wikilinks."""
         wikilink = tools.create_wikilink("Folder/SubFolder/Note.md")
         assert wikilink == "[[Folder/SubFolder/Note]]"
 
-    def test_create_wikilink_simple(self, tools: ObsidianTools) -> None:
+    def test_create_wikilink_simple(self, tools: CollectionTools) -> None:
         """Test creating simple wikilinks."""
         wikilink = tools.create_wikilink("Note.md")
         assert wikilink == "[[Note]]"
 
-    def test_list_notes_empty_dir(self, tools: ObsidianTools, temp_vault: Path) -> None:
+    def test_list_notes_empty_dir(self, tools: CollectionTools, temp_collection: Path) -> None:
         """Test listing notes in empty directory."""
-        empty_dir = temp_vault / "EmptyDir"
+        empty_dir = temp_collection / "EmptyDir"
         empty_dir.mkdir()
 
         files = tools.list_notes("EmptyDir")
 
         assert files == []
 
-    def test_list_notes_nonexistent_dir(self, tools: ObsidianTools) -> None:
+    def test_list_notes_nonexistent_dir(self, tools: CollectionTools) -> None:
         """Test listing notes in non-existent directory."""
         files = tools.list_notes("NonExistent")
         assert files == []
 
     def test_get_frontmatter_no_frontmatter(
-        self, tools: ObsidianTools, temp_vault: Path
+        self, tools: CollectionTools, temp_collection: Path
     ) -> None:
         """Test getting frontmatter from file without frontmatter."""
-        note_path = temp_vault / "no_fm.md"
+        note_path = temp_collection / "no_fm.md"
         note_path.write_text("# Just content\n\nNo YAML here.")
 
         frontmatter = tools.get_frontmatter("no_fm.md")
@@ -384,7 +384,7 @@ class TestObsidianToolsAdvanced:
         assert frontmatter == {} or frontmatter is None
 
     def test_write_note_with_frontmatter(
-        self, tools: ObsidianTools, temp_vault: Path
+        self, tools: CollectionTools, temp_collection: Path
     ) -> None:
         """Test writing note with automatic frontmatter."""
         result = tools.write_note(
@@ -395,15 +395,15 @@ class TestObsidianToolsAdvanced:
         )
 
         assert result is True
-        content = (temp_vault / "with_fm.md").read_text()
+        content = (temp_collection / "with_fm.md").read_text()
         assert "type: source" in content
         assert "status: raw" in content
 
     def test_update_frontmatter_creates_if_missing(
-        self, tools: ObsidianTools, temp_vault: Path
+        self, tools: CollectionTools, temp_collection: Path
     ) -> None:
         """Test that update_frontmatter creates frontmatter if missing."""
-        note_path = temp_vault / "add_fm.md"
+        note_path = temp_collection / "add_fm.md"
         note_path.write_text("# No frontmatter initially")
 
         result = tools.update_frontmatter("add_fm.md", {"type": "note", "status": "raw"})
@@ -416,10 +416,10 @@ class TestCodeExecutorAdvanced:
     """Advanced tests for CodeExecutor."""
 
     @pytest.fixture
-    def sandbox_config(self, temp_vault: Path) -> SandboxConfig:
+    def sandbox_config(self, temp_collection: Path) -> SandboxConfig:
         """Create sandbox configuration."""
         return SandboxConfig(
-            vault_path=temp_vault,
+            collection_path=temp_collection,
             timeout_seconds=30,
             max_memory_mb=512,
             network_enabled=False,
@@ -472,12 +472,12 @@ result = "string" + 5
 
     @pytest.mark.asyncio
     async def test_execute_with_list_operations(
-        self, executor: CodeExecutor, temp_vault: Path
+        self, executor: CodeExecutor, temp_collection: Path
     ) -> None:
         """Test script with complex list operations."""
         # Create some test notes
-        (temp_vault / "a.md").write_text("---\ntype: note\n---\n# Alpha")
-        (temp_vault / "b.md").write_text("---\ntype: note\n---\n# Beta")
+        (temp_collection / "a.md").write_text("---\ntype: note\n---\n# Alpha")
+        (temp_collection / "b.md").write_text("---\ntype: note\n---\n# Beta")
 
         script = """
 files = obsidian.list_notes("")

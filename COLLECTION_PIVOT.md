@@ -1,10 +1,10 @@
-# Shad (Shannon's Daemon) — Obsidian Edition
+# Shad (Shannon's Daemon) — Collection Edition
 
 ## Technical Specification v2.0
 
 **Status:** APPROVED
 **Last Updated:** 2026-01-13
-**Minimum Obsidian Version:** 1.10+
+**Minimum Collection Version:** 1.10+
 
 ---
 
@@ -14,7 +14,7 @@ Shad is a personal AI infrastructure (PAI) for long-context reasoning over large
 
 **Core premise:** Long-context reasoning is an inference problem, not a prompting problem.
 
-**Storage backend:** Local-first Markdown via Obsidian, accessed via Model Context Protocol (MCP).
+**Storage backend:** Local-first Markdown via Collection, accessed via Model Context Protocol (MCP).
 
 ### 1.1 Architecture Diagram
 
@@ -53,31 +53,31 @@ Shad is a personal AI infrastructure (PAI) for long-context reasoning over large
 │                      Code Execution Sandbox                          │
 │  ┌──────────────────────────────────────────────────────────────┐  │
 │  │              Docker Container (Isolated)                      │  │
-│  │   - Vault bind-mounted at /mnt/data                          │  │
+│  │   - Collection bind-mounted at /mnt/data                          │  │
 │  │   - Network: host.docker.internal access only                │  │
-│  │   - No system file access outside vault                      │  │
+│  │   - No system file access outside collection                      │  │
 │  └──────────────────────────────┬───────────────────────────────┘  │
 └─────────────────────────────────┼───────────────────────────────────┘
                                   │
 ┌─────────────────────────────────┴───────────────────────────────────┐
 │                        External Services                             │
 │  ┌──────────────┐  ┌───────────────────────┐  ┌─────────────────┐  │
-│  │    Redis     │  │  Obsidian MCP Server  │  │  LLM Provider   │  │
+│  │    Redis     │  │  Collection MCP Server  │  │  LLM Provider   │  │
 │  │  (Central    │  │  (cyanheads/obsidian- │  │  (Claude/Local) │  │
 │  │   Ledger)    │  │   mcp-server)         │  │                 │  │
 │  └──────────────┘  └───────────┬───────────┘  └─────────────────┘  │
 └────────────────────────────────┼────────────────────────────────────┘
                                  │
 ┌────────────────────────────────┴────────────────────────────────────┐
-│                     Obsidian Instance                                │
+│                     Collection Instance                                │
 │  ┌──────────────────────────────────────────────────────────────┐  │
 │  │              Local REST API Plugin (HTTPS)                    │  │
 │  │              Port 27124 (TLS) / API Key Auth                 │  │
 │  └──────────────────────────────┬───────────────────────────────┘  │
 │                                 │                                   │
 │  ┌──────────────────────────────┴───────────────────────────────┐  │
-│  │                    Obsidian Vault                             │  │
-│  │   /Shad/History/     - Run artifacts (inside vault)          │  │
+│  │                    Collection Collection                             │  │
+│  │   /Shad/History/     - Run artifacts (inside collection)          │  │
 │  │   /Shad/Skills/      - User skill overrides                  │  │
 │  │   /Shad/Staging/     - Learnings pending review              │  │
 │  │   /.base files       - Bases view definitions                │  │
@@ -91,12 +91,12 @@ Shad is a personal AI infrastructure (PAI) for long-context reasoning over large
 
 | Component | Role |
 |-----------|------|
-| **RLM Engine** | Recursive Language Model engine. Treats the Obsidian vault as an external environment. Generates **code** (Python) to inspect, query, and modify the vault via MCP tools, reducing context pollution. |
-| **Obsidian Vault** | The knowledge substrate. A local file system of Markdown files. Uses the **Bases** plugin for database-like views and **Frontmatter** for structured metadata. |
-| **MCP Client (Shad)** | Connects to the Obsidian MCP Server. Translates RLM intents into tool execution requests. |
-| **Obsidian MCP Server** | The bridge between Shad and the vault. Communicates with the **Obsidian Local REST API** plugin to execute read/write/search operations. |
+| **RLM Engine** | Recursive Language Model engine. Treats the Collection collection as an external environment. Generates **code** (Python) to inspect, query, and modify the collection via MCP tools, reducing context pollution. |
+| **Collection Collection** | The knowledge substrate. A local file system of Markdown files. Uses the **Bases** plugin for database-like views and **Frontmatter** for structured metadata. |
+| **MCP Client (Shad)** | Connects to the Collection MCP Server. Translates RLM intents into tool execution requests. |
+| **Collection MCP Server** | The bridge between Shad and the collection. Communicates with the **Collection Local REST API** plugin to execute read/write/search operations. |
 | **Redis** | Central ledger for budget enforcement. Caches reasoning steps and expensive tool outputs. Turns recursion tree into a DAG. |
-| **Code Sandbox** | Docker container with vault bind-mounted. Executes RLM-generated scripts in isolation. |
+| **Code Sandbox** | Docker container with collection bind-mounted. Executes RLM-generated scripts in isolation. |
 
 ---
 
@@ -107,8 +107,8 @@ Instead of standard chat-based tool calling (one turn per action), Shad implemen
 ### 3.1 Workflow
 
 1. RLM writes a Python script that imports MCP tools (e.g., `obsidian.search`, `obsidian.read`)
-2. Script executes in sandboxed container with vault access
-3. Script filters, aggregates, and processes vault data *before* returning results
+2. Script executes in sandboxed container with collection access
+3. Script filters, aggregates, and processes collection data *before* returning results
 4. Only final distilled output enters the context window
 
 ### 3.2 Context Initialization
@@ -131,13 +131,13 @@ Instead of standard chat-based tool calling (one turn per action), Shad implemen
 
 ---
 
-## 4. Obsidian Vault Topology
+## 4. Collection Collection Topology
 
 Shad imposes a **Topology** onto Markdown files using Frontmatter and Folders, managed via the **Bases** plugin.
 
 ### 4.1 Node Types (Mapped to Frontmatter)
 
-| Shad Concept | Obsidian Implementation |
+| Shad Concept | Collection Implementation |
 |--------------|------------------------|
 | **Notebook** | A **Base** view (defined in `.base` files) or a Folder context |
 | **Source** | Markdown file with `type: source`. Contains raw text, transcripts, PDF exports |
@@ -151,7 +151,7 @@ Shad imposes a **Topology** onto Markdown files using Frontmatter and Folders, m
 - **Typed Notes:** Query via Bases logic for high-precision retrieval
 - **Untyped Notes:** Retrieve via `obsidian_global_search` for high-recall retrieval
 - **On Access:** When Shad reads an untyped note, it infers type and writes frontmatter back
-- **Result:** Vault becomes more organized over time without requiring bulk migration
+- **Result:** Collection becomes more organized over time without requiring bulk migration
 
 ### 4.3 Wikilink Citations
 
@@ -164,21 +164,21 @@ Shad imposes a **Topology** onto Markdown files using Frontmatter and Folders, m
 
 ### 4.4 History Storage
 
-**Location:** Inside Vault at `Vault/Shad/History/`
+**Location:** Inside Collection at `Collection/Shad/History/`
 
 ```
-Vault/Shad/History/
+Collection/Shad/History/
 └── Run_<id>/
     ├── Run_<id>.md          # final.report.md (permanent, searchable)
     ├── dag.json             # DAG structure (for resume)
     ├── metrics/
     │   └── summary.json     # Token counts, timing
-    └── artifacts/           # Heavy files (excluded from Obsidian views)
+    └── artifacts/           # Heavy files (excluded from Collection views)
 ```
 
 - Run notes are first-class citizens, searchable via `obsidian_global_search`
 - Linkable from other notes: `[[Shad/History/Run_123|Analysis of Q3 Earnings]]`
-- Configure Obsidian "Excluded files" to hide `artifacts/` from file explorer
+- Configure Collection "Excluded files" to hide `artifacts/` from file explorer
 
 ### 4.5 Learnings System
 
@@ -200,7 +200,7 @@ Vault/Shad/History/
 
 | Tool | Purpose |
 |------|---------|
-| `obsidian_global_search` | Vector or full-text search across vault |
+| `obsidian_global_search` | Vector or full-text search across collection |
 | `obsidian_read_note` | Retrieve specific file content and frontmatter |
 | `obsidian_list_notes` | Scan directories for file structure |
 | `obsidian_manage_frontmatter` | Update YAML properties |
@@ -208,7 +208,7 @@ Vault/Shad/History/
 | `obsidian_update_note` | Append/overwrite existing notes |
 | `obsidian_delete_note` | Delete note (**HITL gated**) |
 
-### 5.2 Vault Cache Service
+### 5.2 Collection Cache Service
 
 - MCP server maintains in-memory map of file content and modification times
 - Sub-100ms lookups for metadata
@@ -344,7 +344,7 @@ shad run <id> --resume
 - Pre-flight check: verify file `mtime` hasn't changed since read
 - Detect conflict artifacts (e.g., `Note (conflict).md`)
 - Raise `StateCorruptionError` if detected
-- User resolves conflict in Obsidian, then runs `--resume`
+- User resolves conflict in Collection, then runs `--resume`
 
 ---
 
@@ -391,7 +391,7 @@ POST /v1/admin/hitl/:id/approve  # User approves action
 
 | Priority | Path | Purpose |
 |----------|------|---------|
-| 1 (highest) | `Vault/Shad/Skills/` | User overrides |
+| 1 (highest) | `Collection/Shad/Skills/` | User overrides |
 | 2 | `services/shad-api/Skills/` | Codebase defaults |
 
 - Scan both paths for `SKILL.md` files
@@ -412,7 +412,7 @@ When primary skill declares `composes_with: [skill_a, skill_b]`:
 
 **Strategy:** Optional Post-Process
 
-- Voice as a Skill (stored in `Vault/Shad/Skills/Voices/`)
+- Voice as a Skill (stored in `Collection/Shad/Skills/Voices/`)
 - Intermediate notes remain **neutral** (no persona transformation)
 - Only `final.report.md` optionally passes through Voice filter
 - Command: `shad run ... --voice <name>`
@@ -431,10 +431,10 @@ When primary skill declares `composes_with: [skill_a, skill_b]`:
 
 **Level:** Container (Docker)
 
-- Vault bind-mounted at `/mnt/data`
-- No system file access outside vault
+- Collection bind-mounted at `/mnt/data`
+- No system file access outside collection
 - Network restricted to `host.docker.internal` (MCP server access)
-- Scoped to specific vault directories per principle of least privilege
+- Scoped to specific collection directories per principle of least privilege
 
 ### 12.3 API Security
 
@@ -560,11 +560,11 @@ SHAD_OFFLINE_MODE=false          # Enable for local LLM only
 REDIS_URL=redis://localhost:6379
 ```
 
-### 15.2 Obsidian Requirements
+### 15.2 Collection Requirements
 
 | Requirement | Version | Status |
 |-------------|---------|--------|
-| Obsidian | **1.10+** | Required (Bases core plugin) |
+| Collection | **1.10+** | Required (Bases core plugin) |
 | Local REST API | Latest | Required (community plugin) |
 | Bases | Core | Required |
 
@@ -577,14 +577,14 @@ REDIS_URL=redis://localhost:6379
 - User loses spreadsheet-like Table View only
 - Native search (`["type": "task"]`) still works
 
-### 15.4 Multi-Vault Support
+### 15.4 Multi-Collection Support
 
-**Strategy:** Single Vault Only
+**Strategy:** Single Collection Only
 
-- One vault per Shad instance
+- One collection per Shad instance
 - Prevents MCP tool naming collisions
 - Maintains security isolation
-- For multiple vaults: run separate Shad instances with distinct configs
+- For multiple collections: run separate Shad instances with distinct configs
 
 ### 15.5 Offline Mode
 
@@ -628,7 +628,7 @@ REDIS_URL=redis://localhost:6379
 - [ ] Timeout handling: synthesis attempt
 
 ### Phase 5 — Skills System Migration
-- [ ] Layered skill discovery (codebase + vault)
+- [ ] Layered skill discovery (codebase + collection)
 - [ ] Skill composition via prompt injection
 - [ ] Voice as optional skill
 - [ ] Progressive standardization for legacy notes
@@ -709,26 +709,26 @@ wall_time_seconds: <float>
 | Decision | Choice | Rationale |
 |----------|--------|-----------|
 | Error Recovery | Checkpoint Model | DAG-based, supports resume without losing completed work |
-| Cache Coherence | Hash Validation | Content hash in keys auto-invalidates on vault changes |
+| Cache Coherence | Hash Validation | Content hash in keys auto-invalidates on collection changes |
 | Legacy Notes | Progressive Standardization | "Gardener" pattern tags notes on access |
 | Wikilinks | Full Path Always | Deterministic resolution, future-proof |
 | Concurrency | Single-Writer | Prevents race conditions, root applies all writes |
-| Sandbox | Container-Level | Docker with bind-mounted vault, strong isolation |
+| Sandbox | Container-Level | Docker with bind-mounted collection, strong isolation |
 | Delete Confirm | HITL Queue | Async approval, non-blocking |
 | Citation Verify | Entailment Check | JUDGE model validates claims |
 | Trigger Loops | Explicit Task Notes | State machine with frontmatter flags |
 | Decomposition | LLM Decides | Model determines split, budget enforces limits |
 | Context Init | Minimal + Expand | Empty start, Code Mode fetches dynamically |
-| Voice Layer | Optional Post-Process | Neutral data in vault, voice applied on render |
-| Skill Discovery | Layered Override | Codebase defaults + vault overrides |
+| Voice Layer | Optional Post-Process | Neutral data in collection, voice applied on render |
+| Skill Discovery | Layered Override | Codebase defaults + collection overrides |
 | Skill Compose | Prompt Injection | Support skill instructions in system prompt |
 | Learning Promo | Frontmatter Flag | Status field transitions, no folder moves |
-| History Location | Inside Vault | Runs searchable and linkable |
+| History Location | Inside Collection | Runs searchable and linkable |
 | Resume State | DAG + Cache Only | Restore structure, re-execute incomplete |
 | Timeout Cleanup | Synthesis Attempt | Compile partial answer from completed nodes |
 | API Streaming | SSE | MCP-compliant, real-time progress |
 | Progress UX | Tree Visualization | ASCII DAG with node statuses |
-| Multi-Vault | Single Vault Only | Security isolation, prevent tool collisions |
+| Multi-Collection | Single Collection Only | Security isolation, prevent tool collisions |
 | Version Floor | 1.10+ (Bases) | Hard requirement for Bases plugin |
 | Bases Fallback | Frontmatter-Only | Progressive enhancement |
 | Offline Mode | Degraded Local | Support with explicit warnings |

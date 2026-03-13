@@ -529,7 +529,7 @@ shad run "Build auth system" --collection ~/Project --collection ~/Patterns --co
 All core phases complete:
 
 - [x] Foundation — CLI, API, RLM engine, Redis caching
-- [x] qmd migration — hybrid search, multi-collection, no Obsidian dependency
+- [x] qmd migration — hybrid search, multi-collection, no Collection dependency
 - [x] Task-aware decomposition — strategy skeletons, soft dependencies
 - [x] File output mode — two-pass imports, contracts-first
 - [x] Verification layer — progressive strictness, repair loops

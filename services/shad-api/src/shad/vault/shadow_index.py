@@ -1,4 +1,4 @@
-"""Shadow index for tracking vault sources and snapshots.
+"""Shadow index for tracking collection sources and snapshots.
 
 Per SPEC.md Section 2.12:
 - Maps source_url → latest_snapshot

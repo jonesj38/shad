@@ -112,7 +112,7 @@ class HistoryManager:
 
         config = RunConfig(
             goal=manifest["config"]["goal"],
-            vault_path=manifest["config"].get("vault_path"),
+            collection_path=manifest["config"].get("collection_path"),
             budget=Budget(**manifest["config"].get("budget", {})),
             voice=manifest["config"].get("voice"),
         )
@@ -206,7 +206,7 @@ class HistoryManager:
             "version": "1.0",
             "config": {
                 "goal": run.config.goal,
-                "vault_path": run.config.vault_path,
+                "collection_path": run.config.collection_path,
                 "budget": run.config.budget.model_dump(),
                 "voice": run.config.voice,
             },

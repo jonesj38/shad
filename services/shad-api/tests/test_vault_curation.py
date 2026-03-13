@@ -1,4 +1,4 @@
-"""Tests for vault curation tools.
+"""Tests for collection curation tools.
 
 Per SPEC.md Section 2.3 and 2.12:
 - Ingestion pipeline: Clone, process repos with presets
@@ -15,19 +15,19 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
-from shad.vault.ingestion import (
+from shad.collection.ingestion import (
     IngestPreset,
     IngestResult,
     SnapshotMetadata,
     VaultIngester,
 )
-from shad.vault.shadow_index import (
+from shad.collection.shadow_index import (
     ShadowIndex,
     SourceEntry,
     SnapshotEntry,
     UpdatePolicy,
 )
-from shad.vault.gap_detection import (
+from shad.collection.gap_detection import (
     GapDetector,
     GapReport,
     GapScore,
@@ -90,14 +90,14 @@ class TestSnapshotMetadata:
 
 
 class TestVaultIngester:
-    """Tests for vault ingestion."""
+    """Tests for collection ingestion."""
 
     @pytest.fixture
     def ingester(self, tmp_path: Path) -> VaultIngester:
-        """Create ingester with temp vault."""
-        vault_path = tmp_path / "vault"
-        vault_path.mkdir()
-        return VaultIngester(vault_path=vault_path)
+        """Create ingester with temp collection."""
+        collection_path = tmp_path / "collection"
+        collection_path.mkdir()
+        return VaultIngester(collection_path=collection_path)
 
     def test_generate_snapshot_path(self, ingester: VaultIngester) -> None:
         """Test generating snapshot path structure."""
@@ -147,7 +147,7 @@ class TestVaultIngester:
             assert len(result.files_processed) == 2
 
             # Verify entry note was created
-            sources_dir = ingester.vault_path / "Sources"
+            sources_dir = ingester.collection_path / "Sources"
             entry_files = list(sources_dir.rglob("_entry.md"))
             assert len(entry_files) == 1
 
@@ -262,7 +262,7 @@ class TestShadowIndex:
 
 
 class TestGapDetector:
-    """Tests for vault gap detection."""
+    """Tests for collection gap detection."""
 
     @pytest.fixture
     def detector(self) -> GapDetector:
@@ -308,7 +308,7 @@ class TestGapDetector:
         # Topics that should have anchor notes
         common_topics = ["authentication", "api design", "testing", "deployment"]
 
-        # Vault has some but not all
+        # Collection has some but not all
         vault_topics = ["testing", "deployment"]
 
         misses = detector.find_coverage_misses(common_topics, vault_topics)
@@ -420,15 +420,15 @@ class TestQueryHistoryAnalyzer:
 
 
 class TestVaultCurationIntegration:
-    """Integration tests for vault curation."""
+    """Integration tests for collection curation."""
 
     @pytest.mark.asyncio
     async def test_full_ingestion_workflow(self, tmp_path: Path) -> None:
         """Test complete ingestion workflow."""
-        vault_path = tmp_path / "vault"
-        vault_path.mkdir()
+        collection_path = tmp_path / "collection"
+        collection_path.mkdir()
 
-        ingester = VaultIngester(vault_path=vault_path)
+        ingester = VaultIngester(collection_path=collection_path)
         index = ShadowIndex(db_path=tmp_path / "index.sqlite")
 
         # Mock the actual clone

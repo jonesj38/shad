@@ -210,7 +210,7 @@ class TestStrategyDecomposer:
         mock_llm.complete = AsyncMock(return_value=(
             """[
                 {"stage_name": "clarify_scope", "task": "Define research scope", "hard_deps": [], "soft_deps": []},
-                {"stage_name": "gather_sources", "task": "Search vault for sources", "hard_deps": ["clarify_scope"], "soft_deps": []},
+                {"stage_name": "gather_sources", "task": "Search collection for sources", "hard_deps": ["clarify_scope"], "soft_deps": []},
                 {"stage_name": "synthesize", "task": "Synthesize findings", "hard_deps": ["gather_sources"], "soft_deps": []},
                 {"stage_name": "cite", "task": "Add citations", "hard_deps": ["synthesize"], "soft_deps": []}
             ]""",

@@ -1,9 +1,9 @@
 """Code Execution Sandbox.
 
-Per OBSIDIAN_PIVOT.md Section 3 and Section 12.2:
+Per COLLECTION_PIVOT.md Section 3 and Section 12.2:
 - RLM writes Python scripts that import MCP tools
-- Script executes in sandboxed container with vault access
-- Script filters, aggregates, processes vault data before returning
+- Script executes in sandboxed container with collection access
+- Script filters, aggregates, processes collection data before returning
 - Only final distilled output enters context window
 """
 
@@ -27,13 +27,13 @@ class SandboxConfig:
     """Configuration for the code execution sandbox.
 
     Sandboxed scripts have access to:
-    - Vault filesystem via ObsidianTools
+    - Collection filesystem via CollectionTools
     - Search via qmd (if available) or filesystem
     - Limited Python builtins
     """
 
-    vault_path: Path
-    collection_name: str | None = None  # qmd collection name for this vault
+    collection_path: Path
+    collection_name: str | None = None  # qmd collection name for this collection
     timeout_seconds: int = 60
     max_memory_mb: int = 512
     network_enabled: bool = False
@@ -74,7 +74,7 @@ class ExecutionResult:
 class CodeExecutor:
     """Execute Python code in a sandboxed environment.
 
-    Per OBSIDIAN_PIVOT.md Section 3.1: Workflow
+    Per COLLECTION_PIVOT.md Section 3.1: Workflow
     1. RLM writes Python script importing MCP tools
     2. Script executes in sandboxed container
     3. Script filters/aggregates data before returning
@@ -93,8 +93,8 @@ class CodeExecutor:
         from shad.sandbox import tools
 
         # Create obsidian tools instance
-        obsidian_tools = tools.ObsidianTools(
-            vault_path=self.config.vault_path,
+        obsidian_tools = tools.CollectionTools(
+            collection_path=self.config.collection_path,
             collection_name=self.config.collection_name,
         )
 
@@ -103,7 +103,7 @@ class CodeExecutor:
             "__builtins__": self._get_safe_builtins(),
             "__name__": "__main__",
             "obsidian": obsidian_tools,
-            "vault_path": self.config.vault_path,
+            "collection_path": self.config.collection_path,
         }
 
         # Add allowed imports
@@ -144,21 +144,21 @@ class CodeExecutor:
         *args: Any,
         **kwargs: Any,
     ) -> Any:
-        """Restricted open that only allows access within vault."""
+        """Restricted open that only allows access within collection."""
         file_path = Path(file).resolve()
-        vault_resolved = self.config.vault_path.resolve()
+        collection_resolved = self.config.collection_path.resolve()
 
-        # Check if path is within vault
+        # Check if path is within collection
         try:
-            file_path.relative_to(vault_resolved)
+            file_path.relative_to(collection_resolved)
         except ValueError as e:
             raise PermissionError(
-                f"Access denied: {file_path} is outside vault"
+                f"Access denied: {file_path} is outside collection"
             ) from e
 
         # Only allow read modes
         if "w" in mode or "a" in mode:
-            # Allow writes only within vault
+            # Allow writes only within collection
             pass
 
         return open(file_path, mode, *args, **kwargs)

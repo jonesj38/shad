@@ -29,9 +29,9 @@ class IngestResult:
 class URLIngester:
     """Ingest content from web URLs."""
 
-    def __init__(self, vault_path: Path) -> None:
-        self.vault_path = vault_path
-        self._sources_dir = vault_path / "Sources"
+    def __init__(self, collection_path: Path) -> None:
+        self.collection_path = collection_path
+        self._sources_dir = collection_path / "Sources"
         self._sources_dir.mkdir(exist_ok=True)
 
     async def ingest(self, url: str) -> IngestResult:
@@ -87,7 +87,7 @@ title: {title}
 
         return IngestResult(
             success=True,
-            files_created=[str(file_path.relative_to(self.vault_path))],
+            files_created=[str(file_path.relative_to(self.collection_path))],
             metadata={"title": title, "url": url, "hash": content_hash},
         )
 
@@ -144,9 +144,9 @@ title: {title}
 class FeedIngester:
     """Ingest content from RSS/Atom feeds."""
 
-    def __init__(self, vault_path: Path) -> None:
-        self.vault_path = vault_path
-        self._sources_dir = vault_path / "Sources"
+    def __init__(self, collection_path: Path) -> None:
+        self.collection_path = collection_path
+        self._sources_dir = collection_path / "Sources"
         self._sources_dir.mkdir(exist_ok=True)
 
     async def ingest(self, feed_url: str, max_items: int = 10) -> IngestResult:
@@ -192,7 +192,7 @@ class FeedIngester:
             try:
                 file_path = self._process_entry(entry, feed_dir, feed_url)
                 if file_path:
-                    files_created.append(str(file_path.relative_to(self.vault_path)))
+                    files_created.append(str(file_path.relative_to(self.collection_path)))
             except Exception as e:
                 errors.append(f"Failed to process entry: {e}")
 
@@ -264,9 +264,9 @@ title: {title}
 class FolderIngester:
     """Watch and sync local folders."""
 
-    def __init__(self, vault_path: Path) -> None:
-        self.vault_path = vault_path
-        self._sources_dir = vault_path / "Sources"
+    def __init__(self, collection_path: Path) -> None:
+        self.collection_path = collection_path
+        self._sources_dir = collection_path / "Sources"
         self._sources_dir.mkdir(exist_ok=True)
 
     async def ingest(self, folder_path: str) -> IngestResult:
@@ -308,7 +308,7 @@ ingested_at: {datetime.now(UTC).isoformat()}
                         content = frontmatter + content
 
                     target_path.write_text(content)
-                    files_created.append(str(target_path.relative_to(self.vault_path)))
+                    files_created.append(str(target_path.relative_to(self.collection_path)))
                 except Exception as e:
                     errors.append(f"Failed to copy {file_path}: {e}")
 

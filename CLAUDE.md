@@ -4,7 +4,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Project Overview
 
-Shad (Shannon's Daemon) enables AI to utilize virtually unlimited context by treating an Obsidian collection as an explorable environment. It recursively decomposes complex tasks, retrieves targeted context for each subtask via **Code Mode** (LLM-generated Python scripts), and assembles coherent outputs.
+Shad (Shannon's Daemon) enables AI to utilize virtually unlimited context by treating an Collection collection as an explorable environment. It recursively decomposes complex tasks, retrieves targeted context for each subtask via **Code Mode** (LLM-generated Python scripts), and assembles coherent outputs.
 
 Core premise: **Long-context reasoning is an inference problem, not a prompting problem.**
 
@@ -47,7 +47,7 @@ shad run "Build app" --collection ~/MyVault
          ├── Strategy Selection → Decomposition (DAG of subtasks)
          │
          ├── For each node:
-         │     Code Mode → CodeExecutor → ObsidianTools → Collection
+         │     Code Mode → CodeExecutor → CollectionTools → Collection
          │                  (sandboxed)
          │
          ├── Verification Layer (syntax, types, imports)
@@ -65,7 +65,7 @@ shad run "Build app" --collection ~/MyVault
 | `engine/decomposition.py` | Task decomposition into subtasks |
 | `engine/context_packets.py` | Cross-subtask context sharing |
 | `sandbox/executor.py` | Sandboxed Python execution for Code Mode scripts |
-| `sandbox/tools.py` | `ObsidianTools` API available to retrieval scripts |
+| `sandbox/tools.py` | `CollectionTools` API available to retrieval scripts |
 | `retrieval/layer.py` | RetrievalLayer protocol and RetrievalResult dataclass |
 | `retrieval/qmd.py` | QmdRetriever - hybrid BM25 + vector search via qmd CLI |
 | `retrieval/filesystem.py` | FilesystemRetriever - fallback when qmd not installed |
@@ -88,7 +88,7 @@ pattern = obsidian.read_note("Patterns/Auth.md")
 __result__ = {"context": ..., "citations": [...], "confidence": 0.72}
 ```
 
-Scripts run in a sandbox with restricted builtins and collection access via `ObsidianTools`.
+Scripts run in a sandbox with restricted builtins and collection access via `CollectionTools`.
 Search modes: `hybrid` (default, BM25 + vectors), `bm25` (fast keyword), `vector` (semantic).
 
 ### Strategy Skeletons
