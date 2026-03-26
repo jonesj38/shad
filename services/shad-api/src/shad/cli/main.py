@@ -122,7 +122,7 @@ def cli() -> None:
 @cli.command("run")
 @click.argument("goal")
 @click.option("--collection", "-c", multiple=True, help="Collection path(s) for context (can specify multiple)")
-@click.option("--collection", "-v", multiple=True, hidden=True, help="[deprecated: use --collection] Collection path(s)")
+@click.option("--vault", "legacy_collection", "-v", multiple=True, hidden=True, help="[deprecated: use --collection] Collection path(s)")
 @click.option("--retriever", "-r", type=click.Choice(["auto", "qmd", "filesystem"]), default="auto",
               help="Retrieval backend (auto detects qmd)")
 @click.option("--profile", type=click.Choice(["fast", "balanced", "deep"], case_sensitive=False),
@@ -152,7 +152,7 @@ def cli() -> None:
 def run(
     goal: str,
     collection: tuple[str, ...],
-    collection: tuple[str, ...],
+    legacy_collection: tuple[str, ...],
     retriever: str,
     profile: str | None,
     auto_profile: bool,
@@ -250,11 +250,32 @@ def run(
 
     # If API specified, use remote execution
     if api:
-        _run_via_api(goal, collection[0] if collection else None, max_depth, api)
+        _run_via_api(
+            api=api,
+            payload={
+                "goal": goal,
+                "collection_path": (collection or legacy_collection)[0] if (collection or legacy_collection) else None,
+                "budget": {
+                    "max_depth": max_depth,
+                    "max_nodes": max_nodes,
+                    "max_wall_time": max_time,
+                    "max_tokens": max_tokens,
+                },
+                "voice": voice,
+                "strategy": strategy,
+                "verify": verify,
+                "write_files": write_files,
+                "output_path": output_dir,
+                "use_gemini_cli": gemini,
+                "orchestrator_model": orchestrator_model,
+                "worker_model": worker_model,
+                "leaf_model": leaf_model,
+            },
+        )
         return
 
-    # Merge --collection and --collection (backward compat)
-    _all_paths = collection or collection
+    # Merge --collection and deprecated --vault
+    _all_paths = collection or legacy_collection
     collection_paths: list[Path] = []
     collection_names: dict[str, Path] = {}
 
@@ -454,17 +475,61 @@ def run(
         sys.exit(2)
 
 
-def _run_via_api(goal: str, collection: str | None, max_depth: int, api: str) -> None:
+def _run_via_api(api: str, payload: dict[str, Any]) -> None:
     """Run a goal via the API."""
+    import time
+
     try:
         with httpx.Client(timeout=120.0) as client:
-            payload: dict[str, Any] = {"goal": goal, "budget": {"max_depth": max_depth}}
-            if collection:
-                payload["collection_path"] = collection
-
-            response = client.post(f"{api}/v1/run", json=payload)
+            response = client.post(f"{api}/v1/runs", json=payload)
             response.raise_for_status()
             data = response.json()
+
+            run_id = data["run_id"]
+            event_offset = 0
+
+            with Progress(
+                SpinnerColumn(),
+                TextColumn("[progress.description]{task.description}"),
+                console=console,
+            ) as progress:
+                task_id = progress.add_task("Queued...", total=None)
+
+                while True:
+                    events_response = client.get(
+                        f"{api}/v1/runs/{run_id}/events",
+                        params={"since": event_offset, "limit": 100},
+                    )
+                    events_response.raise_for_status()
+                    events_data = events_response.json()
+                    event_offset = events_data["next_offset"]
+
+                    for event in events_data["events"]:
+                        event_type = event.get("type", "event")
+                        if event_type == "run_started":
+                            progress.update(task_id, description="Running...")
+                        elif event_type == "run_completed":
+                            progress.update(task_id, description="Finalizing...")
+                        elif event_type == "run_failed":
+                            progress.update(task_id, description="Failed")
+                        console.print(f"[dim][API] {event_type}[/dim]")
+
+                    status_response = client.get(f"{api}/v1/runs/{run_id}")
+                    status_response.raise_for_status()
+                    run_data = status_response.json()
+                    status_value = run_data.get("status", "unknown")
+
+                    if status_value == "running":
+                        progress.update(task_id, description="Running...")
+                    elif status_value == "pending":
+                        progress.update(task_id, description="Queued...")
+
+                    if status_value in {"complete", "partial", "failed", "aborted"}:
+                        progress.update(task_id, description="Complete")
+                        data = run_data
+                        break
+
+                    time.sleep(2)
     except httpx.ConnectError:
         console.print("[red]Could not connect to Shad API. Is it running?[/red]")
         console.print(f"[dim]Tried: {api}[/dim]")
@@ -847,12 +912,19 @@ def list_models(refresh: bool, ollama: bool) -> None:
 @cli.command("search")
 @click.argument("query")
 @click.option("--collection", "-c", multiple=True, help="Collection path(s) to search")
-@click.option("--collection", "-v", multiple=True, hidden=True, help="[deprecated: use --collection]")
+@click.option("--vault", "legacy_collection", "-v", multiple=True, hidden=True, help="[deprecated: use --collection]")
 @click.option("--limit", "-l", default=10, help="Maximum results")
 @click.option("--mode", "-m", type=click.Choice(["hybrid", "bm25", "vector"]), default="hybrid",
               help="Search mode (default: hybrid)")
 @click.option("--json", "as_json", is_flag=True, default=False, help="Output results as JSON")
-def search(query: str, collection: tuple[str, ...], collection: tuple[str, ...], limit: int, mode: str, as_json: bool) -> None:
+def search(
+    query: str,
+    collection: tuple[str, ...],
+    legacy_collection: tuple[str, ...],
+    limit: int,
+    mode: str,
+    as_json: bool,
+) -> None:
     """Search collection(s) for matching documents.
 
     \b
@@ -861,8 +933,8 @@ def search(query: str, collection: tuple[str, ...], collection: tuple[str, ...],
         shad search "authentication" --collection ~/Notes
         shad search "API design" --mode bm25 --limit 20
     """
-    # Build collection paths (merge --collection and deprecated --collection)
-    _all_paths = collection or collection
+    # Build collection paths (merge --collection and deprecated --vault)
+    _all_paths = collection or legacy_collection
     collection_paths: list[Path] = []
     collection_names: dict[str, Path] = {}
 
@@ -944,7 +1016,7 @@ Retrieved documents:
 @cli.command("context")
 @click.argument("query")
 @click.option("--collection", "-c", multiple=True, help="Collection path(s) to search")
-@click.option("--collection", "-v", multiple=True, hidden=True, help="[deprecated: use --collection]")
+@click.option("--vault", "legacy_collection", "-v", multiple=True, hidden=True, help="[deprecated: use --collection]")
 @click.option("--limit", "-l", default=10, help="Max retrieval results")
 @click.option("--max-chars", default=4000, help="Max output chars for brief")
 @click.option("--mode", "-m", type=click.Choice(["hybrid", "bm25", "vector"]), default="hybrid",
@@ -954,7 +1026,7 @@ Retrieved documents:
 def context(
     query: str,
     collection: tuple[str, ...],
-    collection: tuple[str, ...],
+    legacy_collection: tuple[str, ...],
     limit: int,
     max_chars: int,
     mode: str,
@@ -974,8 +1046,8 @@ def context(
     """
     import json as json_mod
 
-    # Build collection paths (merge --collection and deprecated --collection)
-    _all_paths = collection or collection
+    # Build collection paths (merge --collection and deprecated --vault)
+    _all_paths = collection or legacy_collection
     collection_paths: list[Path] = []
     collection_names: dict[str, Path] = {}
 
@@ -1158,10 +1230,15 @@ def ingest() -> None:
 @ingest.command("github")
 @click.argument("url")
 @click.option("--collection", "-c", required=True, type=click.Path(), help="Target collection path")
-@click.option("--collection", "-v", type=click.Path(), hidden=True, help="[deprecated: use --collection]")
+@click.option("--vault", "legacy_collection", "-v", type=click.Path(), hidden=True, help="[deprecated: use --collection]")
 @click.option("--preset", type=click.Choice(["mirror", "docs", "deep"]), default="docs",
               help="Ingestion preset (default: docs)")
-def ingest_github(url: str, collection: str | None, collection: str | None, preset: str) -> None:
+def ingest_github(
+    url: str,
+    collection: str | None,
+    legacy_collection: str | None,
+    preset: str,
+) -> None:
     """Ingest a GitHub repository into a collection.
 
     \b
@@ -1171,7 +1248,7 @@ def ingest_github(url: str, collection: str | None, collection: str | None, pres
     """
     from shad.collection.ingestion import IngestPreset, VaultIngester
 
-    target = collection or collection
+    target = collection or legacy_collection
     if not target:
         console.print("[red]Target collection path required (use --collection)[/red]")
         sys.exit(1)
@@ -1551,7 +1628,7 @@ def sources() -> None:
 @click.argument("source_type", type=click.Choice(["github", "url", "feed", "folder"]))
 @click.argument("location")
 @click.option("--collection", "-c", required=True, help="Target collection path")
-@click.option("--collection", "-v", hidden=True, help="[deprecated: use --collection]")
+@click.option("--vault", "legacy_collection", hidden=True, help="[deprecated: use --collection]")
 @click.option("--schedule", "-s", type=click.Choice(["manual", "hourly", "daily", "weekly", "monthly"]),
               default="daily", help="Sync schedule")
 @click.option("--preset", "-p", default="docs", help="Ingestion preset (for github)")
@@ -1559,7 +1636,7 @@ def sources_add(
     source_type: str,
     location: str,
     collection: str | None,
-    collection: str | None,
+    legacy_collection: str | None,
     schedule: str,
     preset: str,
 ) -> None:
@@ -1590,7 +1667,7 @@ def sources_add(
         "monthly": SourceSchedule.MONTHLY,
     }
 
-    target = collection or collection
+    target = collection or legacy_collection
     if not target:
         console.print("[red]Target collection path required (use --collection)[/red]")
         sys.exit(1)

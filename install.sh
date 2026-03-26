@@ -35,7 +35,7 @@ check_dependencies() {
     local missing=()
 
     # Python 3.11+
-    if command -c python3 &> /dev/null; then
+    if command -v python3 &> /dev/null; then
         local py_version=$(python3 -c 'import sys; print(f"{sys.version_info.major}.{sys.version_info.minor}")')
         local py_major=$(echo "$py_version" | cut -d. -f1)
         local py_minor=$(echo "$py_version" | cut -d. -f2)
@@ -51,14 +51,14 @@ check_dependencies() {
     fi
 
     # Git
-    if command -c git &> /dev/null; then
+    if command -v git &> /dev/null; then
         log_success "Git $(git --version | cut -d' ' -f3)"
     else
         missing+=("git")
     fi
 
     # Docker
-    if command -c docker &> /dev/null; then
+    if command -v docker &> /dev/null; then
         log_success "Docker $(docker --version | cut -d' ' -f3 | tr -d ',')"
     else
         missing+=("docker")
@@ -72,17 +72,17 @@ check_dependencies() {
     fi
 
     # Claude CLI (optional but recommended)
-    if command -c claude &> /dev/null; then
+    if command -v claude &> /dev/null; then
         log_success "Claude CLI found"
     else
         log_warn "Claude CLI not found - install from https://claude.ai/code"
     fi
 
     # bun or npm (for qmd installation)
-    if command -c bun &> /dev/null; then
+    if command -v bun &> /dev/null; then
         log_success "bun $(bun --version)"
         HAS_BUN=true
-    elif command -c npm &> /dev/null; then
+    elif command -v npm &> /dev/null; then
         log_success "npm $(npm --version)"
         HAS_NPM=true
     else
@@ -114,7 +114,7 @@ setup_repo() {
         # we'll sync the local content to it.
         mkdir -p "$SHAD_HOME/repo"
         
-        if command -c rsync &> /dev/null; then
+        if command -v rsync &> /dev/null; then
             rsync -a --delete --exclude='.git' --exclude='__pycache__' --exclude='*.egg-info' --exclude='.venv' --exclude='venv' "$script_dir/" "$SHAD_HOME/repo/"
         else
             # Fallback to cp if rsync not available
@@ -178,7 +178,7 @@ setup_qmd() {
     log_info "qmd repo: ${QMD_REPO}"
 
     # Check if qmd is already installed
-    if command -c qmd &> /dev/null; then
+    if command -v qmd &> /dev/null; then
         log_success "qmd already installed ($(qmd --version 2>/dev/null || echo 'version unknown'))"
         return 0
     fi

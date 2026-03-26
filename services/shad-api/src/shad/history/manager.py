@@ -11,7 +11,7 @@ from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
-from shad.models.run import DAGNode, NodeStatus, Run, RunStatus
+from shad.models.run import DAGNode, NodeStatus, Run, RunStatus, StopReason
 from shad.utils.config import get_settings
 
 logger = logging.getLogger(__name__)
@@ -115,6 +115,11 @@ class HistoryManager:
             collection_path=manifest["config"].get("collection_path"),
             budget=Budget(**manifest["config"].get("budget", {})),
             voice=manifest["config"].get("voice"),
+            strategy_override=manifest["config"].get("strategy_override"),
+            verify_level=manifest["config"].get("verify_level"),
+            write_files=manifest["config"].get("write_files", False),
+            output_path=manifest["config"].get("output_path"),
+            model_config_override=manifest["config"].get("model_config_override"),
         )
 
         run = Run(
@@ -133,9 +138,12 @@ class HistoryManager:
         if manifest.get("completed_at"):
             run.completed_at = datetime.fromisoformat(manifest["completed_at"])
 
-        run.stop_reason = manifest.get("stop_reason")
+        if manifest.get("stop_reason"):
+            run.stop_reason = StopReason(manifest["stop_reason"])
         run.error = manifest.get("error")
         run.final_result = manifest.get("final_result")
+        run.citations = manifest.get("citations", [])
+        run.metadata = manifest.get("metadata", {})
 
         # Load nodes
         for node_data in dag_data.get("nodes", []):
@@ -199,6 +207,45 @@ class HistoryManager:
         with events_path.open("a") as f:
             f.write(json.dumps(event) + "\n")
 
+    def load_events(
+        self,
+        run_id: str,
+        since: int = 0,
+        limit: int = 100,
+    ) -> tuple[list[dict[str, Any]], int]:
+        """Load run events from the event log.
+
+        Args:
+            run_id: Run identifier
+            since: Zero-based event offset to start from
+            limit: Maximum number of events to return
+
+        Returns:
+            Tuple of (events, total_events)
+        """
+        run_path = self.get_run_path(run_id)
+        events_path = run_path / "events.jsonl"
+
+        if not events_path.exists():
+            if not run_path.exists():
+                raise FileNotFoundError(f"Run {run_id} not found")
+            return [], 0
+
+        events: list[dict[str, Any]] = []
+        total = 0
+        start_index = max(since, 0)
+
+        with events_path.open() as f:
+            for index, line in enumerate(f):
+                total = index + 1
+                if index < start_index:
+                    continue
+                if len(events) >= limit:
+                    continue
+                events.append(json.loads(line))
+
+        return events, total
+
     def _save_manifest(self, run: Run, run_path: Path) -> None:
         """Save run manifest."""
         manifest = {
@@ -209,6 +256,15 @@ class HistoryManager:
                 "collection_path": run.config.collection_path,
                 "budget": run.config.budget.model_dump(),
                 "voice": run.config.voice,
+                "strategy_override": run.config.strategy_override,
+                "verify_level": run.config.verify_level,
+                "write_files": run.config.write_files,
+                "output_path": run.config.output_path,
+                "model_config_override": (
+                    run.config.model_config_override.model_dump()
+                    if run.config.model_config_override
+                    else None
+                ),
             },
             "status": run.status.value,
             "created_at": run.created_at.isoformat() if run.created_at else None,
@@ -218,6 +274,8 @@ class HistoryManager:
             "stop_reason": run.stop_reason.value if run.stop_reason else None,
             "error": run.error,
             "final_result": run.final_result,
+            "citations": run.citations,
+            "metadata": run.metadata,
         }
 
         manifest_path = run_path / "run.manifest.json"

@@ -2,12 +2,14 @@
 
 from __future__ import annotations
 
+import asyncio
 import logging
 from collections.abc import AsyncGenerator
 from contextlib import asynccontextmanager
+from pathlib import Path
 from typing import Any
 
-from fastapi import APIRouter, BackgroundTasks, FastAPI, HTTPException
+from fastapi import APIRouter, BackgroundTasks, FastAPI, HTTPException, Query, status
 from pydantic import BaseModel, Field
 
 from shad import __version__
@@ -36,6 +38,7 @@ n8n_client: N8NClient | None = None
 hitl_queue: HITLQueue | None = None
 learnings_store: LearningsStore | None = None
 retriever: RetrievalLayer | None = None
+run_tasks: dict[str, asyncio.Task[None]] = {}
 
 
 @asynccontextmanager
@@ -54,7 +57,6 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
     await cache.connect()
 
     # Initialize retriever
-    from pathlib import Path
     collection_path = Path(settings.default_collection_path) if settings.default_collection_path else None
     retriever = get_retriever(
         paths=[collection_path] if collection_path else None,
@@ -120,6 +122,10 @@ class RunRequest(BaseModel):
     verify: str | None = Field(default="basic", description="Verification level: off, basic, build, strict")
     write_files: bool = Field(default=False, description="Write output files to disk")
     output_path: str | None = Field(default=None, description="Output directory for files")
+    use_gemini_cli: bool = Field(default=False, description="Use Gemini CLI instead of Claude Code")
+    orchestrator_model: str | None = Field(default=None, description="Override orchestrator model")
+    worker_model: str | None = Field(default=None, description="Override worker model")
+    leaf_model: str | None = Field(default=None, description="Override leaf model")
 
 
 class RunResponse(BaseModel):
@@ -164,6 +170,120 @@ class ResumeRequest(BaseModel):
     )
 
 
+class RunAcceptedResponse(BaseModel):
+    """Response model for accepted async runs."""
+
+    run_id: str
+    status: str
+    goal: str
+
+
+class RunEventsResponse(BaseModel):
+    """Response model for run events."""
+
+    run_id: str
+    events: list[dict[str, Any]]
+    total: int
+    next_offset: int
+
+
+def _build_run_config(request: RunRequest) -> RunConfig:
+    """Build run configuration from request."""
+    settings = get_settings()
+    budget_dict = {
+        "max_depth": settings.default_max_depth,
+        "max_nodes": settings.default_max_nodes,
+        "max_wall_time": settings.default_max_wall_time,
+        "max_tokens": settings.default_max_tokens,
+    }
+
+    if request.budget:
+        budget_dict.update(request.budget)
+
+    model_config = None
+    if request.orchestrator_model or request.worker_model or request.leaf_model:
+        from shad.models import ModelConfig
+
+        model_config = ModelConfig(
+            orchestrator_model=request.orchestrator_model,
+            worker_model=request.worker_model,
+            leaf_model=request.leaf_model,
+        )
+
+    return RunConfig(
+        goal=request.goal,
+        collection_path=request.collection_path,
+        budget=Budget(**budget_dict),
+        voice=request.voice,
+        strategy_override=request.strategy,
+        verify_level=request.verify,
+        write_files=request.write_files,
+        output_path=request.output_path,
+        model_config_override=model_config,
+    )
+
+
+def _build_engine_for_config(config: RunConfig, use_gemini_cli: bool = False) -> RLMEngine:
+    """Build a fresh engine instance for one run."""
+    collection_path = Path(config.collection_path).expanduser() if config.collection_path else None
+    local_retriever = get_retriever(
+        paths=[collection_path] if collection_path else None,
+        collection_names={collection_path.name: collection_path} if collection_path else None,
+    )
+    collections = [collection_path.name] if collection_path else None
+
+    return RLMEngine(
+        llm_provider=LLMProvider(
+            model_config=config.model_config_override,
+            use_gemini_cli=use_gemini_cli,
+            use_claude_code=not use_gemini_cli,
+        ),
+        cache=cache,
+        retriever=local_retriever,
+        collection_path=collection_path,
+        collections=collections,
+    )
+
+
+def _append_run_event(run_id: str, event_type: str, **payload: Any) -> None:
+    """Append a structured run event if history is available."""
+    if history is None:
+        return
+    history.append_event(run_id, {"type": event_type, **payload})
+
+
+async def _execute_run_in_background(run: Run, use_gemini_cli: bool = False) -> None:
+    """Execute an async run and persist status transitions."""
+    if history is None:
+        return
+
+    try:
+        run.status = RunStatus.RUNNING
+        history.save_run(run)
+        _append_run_event(run.run_id, "run_started", status=run.status.value)
+
+        run_engine = _build_engine_for_config(run.config, use_gemini_cli=use_gemini_cli)
+        completed_run = await run_engine.execute(run.config)
+        completed_run.run_id = run.run_id
+        completed_run.created_at = run.created_at
+        history.save_run(completed_run)
+        _append_run_event(
+            completed_run.run_id,
+            "run_completed",
+            status=completed_run.status.value,
+            stop_reason=completed_run.stop_reason.value if completed_run.stop_reason else None,
+            total_tokens=completed_run.total_tokens,
+        )
+    except Exception as e:
+        logger.exception("Async run execution failed: %s", e)
+        run.status = RunStatus.FAILED
+        run.error = str(e)
+        history.save_run(run)
+        _append_run_event(run.run_id, "run_failed", status=run.status.value, error=str(e))
+    finally:
+        run_tasks.pop(run.run_id, None)
+
+
 @health_router.get("/v1/health")
 async def health_check() -> dict[str, Any]:
     """Health check endpoint."""
@@ -185,32 +305,11 @@ async def create_run(request: RunRequest, background_tasks: BackgroundTasks) -> 
     if engine is None or history is None:
         raise HTTPException(status_code=503, detail="Service not initialized")
 
-    # Build budget from defaults and overrides
-    settings = get_settings()
-    budget_dict = {
-        "max_depth": settings.default_max_depth,
-        "max_nodes": settings.default_max_nodes,
-        "max_wall_time": settings.default_max_wall_time,
-        "max_tokens": settings.default_max_tokens,
-    }
-
-    if request.budget:
-        budget_dict.update(request.budget)
-
-    config = RunConfig(
-        goal=request.goal,
-        collection_path=request.collection_path,
-        budget=Budget(**budget_dict),
-        voice=request.voice,
-        strategy_override=request.strategy,
-        verify_level=request.verify,
-        write_files=request.write_files,
-        output_path=request.output_path,
-    )
+    config = _build_run_config(request)
 
     # Execute run
     try:
-        run = await engine.execute(config)
+        run = await _build_engine_for_config(config, use_gemini_cli=request.use_gemini_cli).execute(config)
     except Exception as e:
         logger.exception(f"Run execution failed: {e}")
         raise HTTPException(status_code=500, detail=str(e)) from e
@@ -219,6 +318,23 @@ async def create_run(request: RunRequest, background_tasks: BackgroundTasks) -> 
     background_tasks.add_task(history.save_run, run)
 
     return RunResponse.from_run(run)
+
+
+@run_router.post("/runs", response_model=RunAcceptedResponse, status_code=status.HTTP_202_ACCEPTED)
+async def create_async_run(request: RunRequest) -> RunAcceptedResponse:
+    """Create a run and execute it asynchronously."""
+    if history is None:
+        raise HTTPException(status_code=503, detail="Service not initialized")
+
+    config = _build_run_config(request)
+    run = Run(config=config, status=RunStatus.PENDING)
+    history.save_run(run)
+    _append_run_event(run.run_id, "run_queued", status=run.status.value)
+
+    task = asyncio.create_task(_execute_run_in_background(run, use_gemini_cli=request.use_gemini_cli))
+    run_tasks[run.run_id] = task
+
+    return RunAcceptedResponse(run_id=run.run_id, status=run.status.value, goal=run.config.goal)
 
 
 @run_router.get("/run/{run_id}", response_model=RunResponse)
@@ -233,6 +349,35 @@ async def get_run(run_id: str) -> RunResponse:
         raise HTTPException(status_code=404, detail=f"Run {run_id} not found") from e
 
     return RunResponse.from_run(run)
+
+
+@run_router.get("/runs/{run_id}", response_model=RunResponse)
+async def get_async_run(run_id: str) -> RunResponse:
+    """Get async run status and results."""
+    return await get_run(run_id)
+
+
+@run_router.get("/runs/{run_id}/events", response_model=RunEventsResponse)
+async def get_run_events(
+    run_id: str,
+    since: int = Query(default=0, ge=0, description="Zero-based event offset"),
+    limit: int = Query(default=100, ge=1, le=500, description="Maximum events to return"),
+) -> RunEventsResponse:
+    """Get pollable events for a run."""
+    if history is None:
+        raise HTTPException(status_code=503, detail="Service not initialized")
+
+    try:
+        events, total = history.load_events(run_id, since=since, limit=limit)
+    except FileNotFoundError as e:
+        raise HTTPException(status_code=404, detail=f"Run {run_id} not found") from e
+
+    return RunEventsResponse(
+        run_id=run_id,
+        events=events,
+        total=total,
+        next_offset=min(total, since + len(events)),
+    )
 
 
 @run_router.post("/run/{run_id}/resume", response_model=RunResponse)
