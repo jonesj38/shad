@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import json
 import logging
 from collections.abc import AsyncGenerator
 from contextlib import asynccontextmanager
@@ -10,6 +11,7 @@ from pathlib import Path
 from typing import Any
 
 from fastapi import APIRouter, BackgroundTasks, FastAPI, HTTPException, Query, status
+from fastapi.responses import StreamingResponse
 from pydantic import BaseModel, Field
 
 from shad import __version__
@@ -252,6 +254,11 @@ def _append_run_event(run_id: str, event_type: str, **payload: Any) -> None:
     history.append_event(run_id, {"type": event_type, **payload})
 
 
+def _is_terminal_status(status_value: str) -> bool:
+    """Return whether a run status is terminal."""
+    return status_value in {"complete", "partial", "failed", "aborted"}
+
+
 async def _execute_run_in_background(run: Run, use_gemini_cli: bool = False) -> None:
     """Execute an async run and persist status transitions."""
     if history is None:
@@ -378,6 +385,46 @@ async def get_run_events(
         total=total,
         next_offset=min(total, since + len(events)),
     )
+
+
+@run_router.get("/runs/{run_id}/events/stream")
+async def stream_run_events(
+    run_id: str,
+    since: int = Query(default=0, ge=0, description="Zero-based event offset"),
+    poll_interval: float = Query(default=1.0, ge=0.2, le=10.0, description="Seconds between polls"),
+) -> StreamingResponse:
+    """Stream run events as server-sent events."""
+    if history is None:
+        raise HTTPException(status_code=503, detail="Service not initialized")
+
+    try:
+        history.load_run(run_id)
+    except FileNotFoundError as e:
+        raise HTTPException(status_code=404, detail=f"Run {run_id} not found") from e
+
+    async def event_stream() -> AsyncGenerator[str, None]:
+        offset = since
+
+        while True:
+            try:
+                events, total = history.load_events(run_id, since=offset, limit=100)
+                run = history.load_run(run_id)
+            except FileNotFoundError:
+                yield f"data: {json.dumps({'type': 'run_missing', 'run_id': run_id})}\n\n"
+                break
+
+            for event in events:
+                yield f"data: {json.dumps(event)}\n\n"
+
+            offset = total
+
+            if _is_terminal_status(run.status.value):
+                break
+
+            yield ": keep-alive\n\n"
+            await asyncio.sleep(poll_interval)
+
+    return StreamingResponse(event_stream(), media_type="text/event-stream")
 
 
 @run_router.post("/run/{run_id}/resume", response_model=RunResponse)

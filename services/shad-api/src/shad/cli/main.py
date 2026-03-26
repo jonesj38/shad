@@ -477,6 +477,7 @@ def run(
 
 def _run_via_api(api: str, payload: dict[str, Any]) -> None:
     """Run a goal via the API."""
+    import json as json_mod
     import time
 
     try:
@@ -488,48 +489,83 @@ def _run_via_api(api: str, payload: dict[str, Any]) -> None:
             run_id = data["run_id"]
             event_offset = 0
 
+            def _poll_until_complete() -> dict[str, Any]:
+                nonlocal event_offset
+
+                with Progress(
+                    SpinnerColumn(),
+                    TextColumn("[progress.description]{task.description}"),
+                    console=console,
+                ) as progress:
+                    task_id = progress.add_task("Queued...", total=None)
+
+                    while True:
+                        events_response = client.get(
+                            f"{api}/v1/runs/{run_id}/events",
+                            params={"since": event_offset, "limit": 100},
+                        )
+                        events_response.raise_for_status()
+                        events_data = events_response.json()
+                        event_offset = events_data["next_offset"]
+
+                        for event in events_data["events"]:
+                            event_type = event.get("type", "event")
+                            if event_type == "run_started":
+                                progress.update(task_id, description="Running...")
+                            elif event_type == "run_completed":
+                                progress.update(task_id, description="Finalizing...")
+                            elif event_type == "run_failed":
+                                progress.update(task_id, description="Failed")
+                            console.print(f"[dim][API] {event_type}[/dim]")
+
+                        status_response = client.get(f"{api}/v1/runs/{run_id}")
+                        status_response.raise_for_status()
+                        run_data = status_response.json()
+                        status_value = run_data.get("status", "unknown")
+
+                        if status_value == "running":
+                            progress.update(task_id, description="Running...")
+                        elif status_value == "pending":
+                            progress.update(task_id, description="Queued...")
+
+                        if status_value in {"complete", "partial", "failed", "aborted"}:
+                            progress.update(task_id, description="Complete")
+                            return run_data
+
+                        time.sleep(2)
+
             with Progress(
                 SpinnerColumn(),
                 TextColumn("[progress.description]{task.description}"),
                 console=console,
             ) as progress:
                 task_id = progress.add_task("Queued...", total=None)
+                progress.stop()
 
-                while True:
-                    events_response = client.get(
-                        f"{api}/v1/runs/{run_id}/events",
-                        params={"since": event_offset, "limit": 100},
-                    )
-                    events_response.raise_for_status()
-                    events_data = events_response.json()
-                    event_offset = events_data["next_offset"]
+            try:
+                with client.stream("GET", f"{api}/v1/runs/{run_id}/events/stream") as stream:
+                    if stream.status_code != 200:
+                        data = _poll_until_complete()
+                    else:
+                        terminal = False
+                        for line in stream.iter_lines():
+                            if not line or not line.startswith("data: "):
+                                continue
+                            event = json_mod.loads(line[6:])
+                            event_type = event.get("type", "event")
+                            console.print(f"[dim][API] {event_type}[/dim]")
+                            if event_type in {"run_completed", "run_failed"}:
+                                terminal = True
+                                break
 
-                    for event in events_data["events"]:
-                        event_type = event.get("type", "event")
-                        if event_type == "run_started":
-                            progress.update(task_id, description="Running...")
-                        elif event_type == "run_completed":
-                            progress.update(task_id, description="Finalizing...")
-                        elif event_type == "run_failed":
-                            progress.update(task_id, description="Failed")
-                        console.print(f"[dim][API] {event_type}[/dim]")
-
-                    status_response = client.get(f"{api}/v1/runs/{run_id}")
-                    status_response.raise_for_status()
-                    run_data = status_response.json()
-                    status_value = run_data.get("status", "unknown")
-
-                    if status_value == "running":
-                        progress.update(task_id, description="Running...")
-                    elif status_value == "pending":
-                        progress.update(task_id, description="Queued...")
-
-                    if status_value in {"complete", "partial", "failed", "aborted"}:
-                        progress.update(task_id, description="Complete")
-                        data = run_data
-                        break
-
-                    time.sleep(2)
+                        if not terminal:
+                            data = _poll_until_complete()
+                        else:
+                            status_response = client.get(f"{api}/v1/runs/{run_id}")
+                            status_response.raise_for_status()
+                            data = status_response.json()
+            except Exception:
+                data = _poll_until_complete()
     except httpx.ConnectError:
         console.print("[red]Could not connect to Shad API. Is it running?[/red]")
         console.print(f"[dim]Tried: {api}[/dim]")
