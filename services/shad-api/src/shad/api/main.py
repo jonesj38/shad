@@ -118,6 +118,7 @@ class RunRequest(BaseModel):
 
     goal: str = Field(..., description="The goal/task to accomplish")
     collection_path: str | None = Field(default=None, description="Collection path for context")
+    collection_paths: list[str] | None = Field(default=None, description="Collection paths for multi-collection context")
     budget: dict[str, int] | None = Field(default=None, description="Budget overrides")
     voice: str | None = Field(default=None, description="Voice for output rendering")
     strategy: str | None = Field(default=None, description="Strategy override: software, research, analysis, planning")
@@ -214,7 +215,7 @@ def _build_run_config(request: RunRequest) -> RunConfig:
 
     return RunConfig(
         goal=request.goal,
-        collection_path=request.collection_path,
+        collection_path=(request.collection_paths[0] if request.collection_paths else request.collection_path),
         budget=Budget(**budget_dict),
         voice=request.voice,
         strategy_override=request.strategy,
@@ -225,14 +226,31 @@ def _build_run_config(request: RunRequest) -> RunConfig:
     )
 
 
-def _build_engine_for_config(config: RunConfig, use_gemini_cli: bool = False) -> RLMEngine:
+def _get_collection_paths(
+    config: RunConfig,
+    collection_paths: list[str] | None = None,
+) -> list[Path]:
+    """Resolve collection paths from request or run state."""
+    raw_paths = collection_paths or []
+    if not raw_paths and config.collection_path:
+        raw_paths = [config.collection_path]
+    return [Path(path).expanduser() for path in raw_paths]
+
+
+def _build_engine_for_config(
+    config: RunConfig,
+    use_gemini_cli: bool = False,
+    collection_paths: list[str] | None = None,
+) -> RLMEngine:
     """Build a fresh engine instance for one run."""
-    collection_path = Path(config.collection_path).expanduser() if config.collection_path else None
+    resolved_paths = _get_collection_paths(config, collection_paths)
+    collection_path = resolved_paths[0] if resolved_paths else None
+    collection_names = {path.name: path for path in resolved_paths}
     local_retriever = get_retriever(
-        paths=[collection_path] if collection_path else None,
-        collection_names={collection_path.name: collection_path} if collection_path else None,
+        paths=resolved_paths or None,
+        collection_names=collection_names or None,
     )
-    collections = [collection_path.name] if collection_path else None
+    collections = list(collection_names.keys()) if collection_names else None
 
     return RLMEngine(
         llm_provider=LLMProvider(
@@ -269,7 +287,11 @@ async def _execute_run_in_background(run: Run, use_gemini_cli: bool = False) -> 
         history.save_run(run)
         _append_run_event(run.run_id, "run_started", status=run.status.value)
 
-        run_engine = _build_engine_for_config(run.config, use_gemini_cli=use_gemini_cli)
+        run_engine = _build_engine_for_config(
+            run.config,
+            use_gemini_cli=use_gemini_cli,
+            collection_paths=run.metadata.get("collection_paths"),
+        )
         completed_run = await run_engine.execute(run.config)
         completed_run.run_id = run.run_id
         completed_run.created_at = run.created_at
@@ -316,7 +338,11 @@ async def create_run(request: RunRequest, background_tasks: BackgroundTasks) -> 
 
     # Execute run
     try:
-        run = await _build_engine_for_config(config, use_gemini_cli=request.use_gemini_cli).execute(config)
+        run = await _build_engine_for_config(
+            config,
+            use_gemini_cli=request.use_gemini_cli,
+            collection_paths=request.collection_paths,
+        ).execute(config)
     except Exception as e:
         logger.exception(f"Run execution failed: {e}")
         raise HTTPException(status_code=500, detail=str(e)) from e
@@ -335,6 +361,8 @@ async def create_async_run(request: RunRequest) -> RunAcceptedResponse:
 
     config = _build_run_config(request)
     run = Run(config=config, status=RunStatus.PENDING)
+    if request.collection_paths:
+        run.metadata["collection_paths"] = request.collection_paths
     history.save_run(run)
     _append_run_event(run.run_id, "run_queued", status=run.status.value)
 

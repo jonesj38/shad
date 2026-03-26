@@ -255,6 +255,7 @@ def run(
             payload={
                 "goal": goal,
                 "collection_path": (collection or legacy_collection)[0] if (collection or legacy_collection) else None,
+                "collection_paths": list(collection or legacy_collection) if (collection or legacy_collection) else None,
                 "budget": {
                     "max_depth": max_depth,
                     "max_nodes": max_nodes,
