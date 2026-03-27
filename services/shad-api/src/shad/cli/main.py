@@ -146,6 +146,34 @@ def _build_run_command_preview(
     return " ".join(parts)
 
 
+def _render_runs_table(runs: list[dict[str, Any]], title: str = "Shad Runs") -> None:
+    """Render a run listing table."""
+    if not runs:
+        console.print("[dim]No runs found.[/dim]")
+        return
+
+    table = Table(title=title)
+    table.add_column("Run ID", style="cyan")
+    table.add_column("Status")
+    table.add_column("Created")
+    table.add_column("Goal")
+
+    for run in runs:
+        run_id = str(run.get("run_id", ""))[:8]
+        status_value = str(run.get("status", "unknown"))
+        created = str(run.get("created_at", "") or "unknown")
+        goal = str(run.get("goal", "") or "")
+
+        if created and created != "unknown":
+            created = created.replace("T", " ")[:19]
+        if len(goal) > 70:
+            goal = goal[:67] + "..."
+
+        table.add_row(run_id, status_value, created, goal)
+
+    console.print(table)
+
+
 @click.group()
 @click.version_option(version=__version__, prog_name="shad")
 def cli() -> None:
@@ -154,6 +182,7 @@ def cli() -> None:
     \b
     Core Commands:
         run <goal>           Execute a reasoning task
+        runs                 List recent runs
         plan <goal>          Preflight a task and recommend a run command
         status <run_id>      Check the status of a run
         cancel <run_id>      Cancel a remote async run
@@ -660,6 +689,55 @@ def plan(
 
     console.print("\n[bold]Recommended Command[/bold]")
     console.print(f"[green]{command_preview}[/green]")
+
+
+@cli.command("runs")
+@click.option("--api", default=None, help="Shad API URL (defaults to local history if omitted)")
+@click.option("--limit", default=20, help="Maximum runs to show")
+@click.option("--active", is_flag=True, help="Show only pending/running runs")
+@click.option("--json", "as_json", is_flag=True, default=False, help="Output runs as JSON")
+def list_runs_command(api: str | None, limit: int, active: bool, as_json: bool) -> None:
+    """List recent runs from local history or the API.
+
+    Examples:
+        shad runs
+        shad runs --active
+        shad runs --api http://localhost:8000
+    """
+    import json as json_mod
+
+    runs: list[dict[str, Any]]
+    title: str
+
+    if api:
+        try:
+            with httpx.Client(timeout=30.0) as client:
+                response = client.get(f"{api}/v1/runs", params={"limit": limit})
+                response.raise_for_status()
+                payload = response.json()
+        except httpx.ConnectError:
+            console.print("[red]Could not connect to Shad API. Is it running?[/red]")
+            console.print(f"[dim]Tried: {api}[/dim]")
+            sys.exit(1)
+        except Exception as e:
+            console.print(f"[red]Error: {e}[/red]")
+            sys.exit(1)
+
+        runs = payload.get("runs", [])
+        title = "Remote Runs"
+    else:
+        history = HistoryManager()
+        runs = history.list_runs(limit=limit)
+        title = "Local Runs"
+
+    if active:
+        runs = [run for run in runs if run.get("status") in {"pending", "running"}]
+
+    if as_json:
+        click.echo(json_mod.dumps(runs, ensure_ascii=False, indent=2))
+        return
+
+    _render_runs_table(runs, title=title)
 
 
 @cli.command("collection")
