@@ -103,6 +103,14 @@ def _port_in_use(port: int, host: str = "127.0.0.1") -> bool:
         return sock.connect_ex((host, port)) == 0
 
 
+def _find_next_available_port(start_port: int, host: str = "127.0.0.1", max_tries: int = 20) -> int | None:
+    """Find the next available local port after start_port."""
+    for candidate in range(start_port + 1, start_port + max_tries + 1):
+        if not _port_in_use(candidate, host=host):
+            return candidate
+    return None
+
+
 def _pid_is_running(pid: int) -> bool:
     """Return whether a PID is currently alive."""
     try:
@@ -1864,7 +1872,8 @@ def server() -> None:
 @server.command("start")
 @click.option("--foreground", "-f", is_flag=True, help="Run API in foreground (don't daemonize)")
 @click.option("--port", type=int, default=None, help="API port override (default: configured SHAD_API_PORT or 8000)")
-def server_start(foreground: bool, port: int | None) -> None:
+@click.option("--auto-port/--no-auto-port", default=True, help="Auto-fallback to the next free port if the requested port is occupied")
+def server_start(foreground: bool, port: int | None, auto_port: bool) -> None:
     """Start the Shad server (Redis + API)."""
     import subprocess
 
@@ -1873,11 +1882,11 @@ def server_start(foreground: bool, port: int | None) -> None:
     api_dir = _find_api_dir(repo_dir)
     log_file = shad_home / "shad-api.log"
     api_port = int(port or _api_listen_port())
-    api_base_url = f"http://127.0.0.1:{api_port}"
-    api_health_url = f"{api_base_url}/v1/health"
     meta = _read_server_meta(shad_home)
     managed_pid = int(meta.get("pid", 0)) if meta.get("pid") else None
     managed_port = int(meta.get("port", api_port)) if meta.get("port") else api_port
+    api_base_url = f"http://127.0.0.1:{api_port}"
+    api_health_url = f"{api_base_url}/v1/health"
 
     # Check if already running
     if managed_pid and _pid_is_running(managed_pid) and _api_is_healthy(meta.get("api_url", api_base_url)):
@@ -1897,13 +1906,35 @@ def server_start(foreground: bool, port: int | None) -> None:
                 console.print("[dim]This listener is not managed by the current server metadata.[/dim]")
                 return
 
-            console.print(f"[red]Port {api_port} is already serving an older or incompatible Shad API surface.[/red]")
-            console.print("[dim]Stop the existing process, choose another port with --port, or set SHAD_API_PORT before starting a new server.[/dim]")
-            return
+            if not auto_port:
+                console.print(f"[red]Port {api_port} is already serving an older or incompatible Shad API surface.[/red]")
+                console.print("[dim]Stop the existing process, choose another port with --port, or set SHAD_API_PORT before starting a new server.[/dim]")
+                return
 
-        console.print(f"[red]Port {api_port} is already in use by another process.[/red]")
-        console.print("[dim]Stop the existing listener, choose another port with --port, or set SHAD_API_PORT before starting Shad.[/dim]")
-        sys.exit(1)
+            fallback_port = _find_next_available_port(api_port)
+            if fallback_port is None:
+                console.print(f"[red]Port {api_port} is occupied by an incompatible Shad API and no nearby free port was found.[/red]")
+                sys.exit(1)
+
+            console.print(f"[yellow]Port {api_port} is occupied by an incompatible Shad API. Falling back to port {fallback_port}.[/yellow]")
+            api_port = fallback_port
+            api_base_url = f"http://127.0.0.1:{api_port}"
+            api_health_url = f"{api_base_url}/v1/health"
+        else:
+            if not auto_port:
+                console.print(f"[red]Port {api_port} is already in use by another process.[/red]")
+                console.print("[dim]Stop the existing listener, choose another port with --port, or set SHAD_API_PORT before starting Shad.[/dim]")
+                sys.exit(1)
+
+            fallback_port = _find_next_available_port(api_port)
+            if fallback_port is None:
+                console.print(f"[red]Port {api_port} is occupied and no nearby free port was found.[/red]")
+                sys.exit(1)
+
+            console.print(f"[yellow]Port {api_port} is in use. Falling back to port {fallback_port}.[/yellow]")
+            api_port = fallback_port
+            api_base_url = f"http://127.0.0.1:{api_port}"
+            api_health_url = f"{api_base_url}/v1/health"
 
     if managed_pid and _pid_is_running(managed_pid):
         console.print(f"[yellow]Shad API already running (PID {managed_pid})[/yellow]")
