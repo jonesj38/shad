@@ -147,14 +147,18 @@ def _api_supports_async_runs(base_url: str | None = None, timeout: float = 1.5) 
     return "post" in runs_entry and "get" in runs_entry
 
 
-def _wait_for_api_health(timeout_s: float = 20.0, require_async_runs: bool = False) -> bool:
+def _wait_for_api_health(
+    timeout_s: float = 20.0,
+    require_async_runs: bool = False,
+    base_url: str | None = None,
+) -> bool:
     """Wait until the API becomes healthy, optionally requiring async routes."""
     deadline = time.time() + timeout_s
-    base_url = _get_local_api_base_url()
+    resolved_base_url = base_url or _get_local_api_base_url()
 
     while time.time() < deadline:
-        if _api_is_healthy(base_url):
-            if not require_async_runs or _api_supports_async_runs(base_url):
+        if _api_is_healthy(resolved_base_url):
+            if not require_async_runs or _api_supports_async_runs(resolved_base_url):
                 return True
         time.sleep(0.5)
     return False
@@ -187,6 +191,54 @@ def _find_api_dir(repo_dir: Path) -> Path:
             return candidate
 
     return repo_dir / "services" / "shad-api"
+
+
+def _server_meta_path(shad_home: Path) -> Path:
+    """Path to managed server metadata."""
+    return shad_home / "shad-api.json"
+
+
+def _read_server_meta(shad_home: Path) -> dict[str, Any]:
+    """Load managed server metadata, tolerating legacy pid-only installs."""
+    meta_path = _server_meta_path(shad_home)
+    pid_file = shad_home / "shad-api.pid"
+
+    if meta_path.exists():
+        try:
+            payload = json.loads(meta_path.read_text(encoding="utf-8"))
+            if isinstance(payload, dict):
+                return payload
+        except (OSError, json.JSONDecodeError):
+            pass
+
+    legacy_pid = _read_pid_file(pid_file)
+    if legacy_pid is None:
+        return {}
+
+    port = _api_listen_port()
+    return {
+        "pid": legacy_pid,
+        "port": port,
+        "api_url": f"http://127.0.0.1:{port}",
+    }
+
+
+def _write_server_meta(shad_home: Path, *, pid: int, port: int) -> None:
+    """Persist managed server metadata."""
+    payload = {
+        "pid": pid,
+        "port": port,
+        "api_url": f"http://127.0.0.1:{port}",
+        "updated_at": time.time(),
+    }
+    _server_meta_path(shad_home).write_text(json.dumps(payload, indent=2), encoding="utf-8")
+    (shad_home / "shad-api.pid").write_text(str(pid), encoding="utf-8")
+
+
+def _clear_server_meta(shad_home: Path) -> None:
+    """Remove managed server metadata files."""
+    _server_meta_path(shad_home).unlink(missing_ok=True)
+    (shad_home / "shad-api.pid").unlink(missing_ok=True)
 
 
 def _resolve_collection_inputs(
@@ -1811,41 +1863,52 @@ def server() -> None:
 
 @server.command("start")
 @click.option("--foreground", "-f", is_flag=True, help="Run API in foreground (don't daemonize)")
-def server_start(foreground: bool) -> None:
+@click.option("--port", type=int, default=None, help="API port override (default: configured SHAD_API_PORT or 8000)")
+def server_start(foreground: bool, port: int | None) -> None:
     """Start the Shad server (Redis + API)."""
     import subprocess
 
     shad_home = Path(os.environ.get("SHAD_HOME", os.path.expanduser("~/.shad")))
     repo_dir = _find_repo_dir(shad_home)
     api_dir = _find_api_dir(repo_dir)
-    pid_file = shad_home / "shad-api.pid"
     log_file = shad_home / "shad-api.log"
-    api_port = _api_listen_port()
-    api_base_url = _get_local_api_base_url()
-    api_health_url = _api_health_url()
+    api_port = int(port or _api_listen_port())
+    api_base_url = f"http://127.0.0.1:{api_port}"
+    api_health_url = f"{api_base_url}/v1/health"
+    meta = _read_server_meta(shad_home)
+    managed_pid = int(meta.get("pid", 0)) if meta.get("pid") else None
+    managed_port = int(meta.get("port", api_port)) if meta.get("port") else api_port
 
     # Check if already running
-    existing_pid = _read_pid_file(pid_file)
-    if existing_pid and _pid_is_running(existing_pid) and _api_is_healthy(api_base_url):
-        console.print(f"[yellow]Shad API already running (PID {existing_pid})[/yellow]")
-        console.print(f"[dim]API URL: {api_base_url}[/dim]")
+    if managed_pid and _pid_is_running(managed_pid) and _api_is_healthy(meta.get("api_url", api_base_url)):
+        console.print(f"[yellow]Shad API already running (PID {managed_pid})[/yellow]")
+        console.print(f"[dim]API URL: {meta.get('api_url', api_base_url)}[/dim]")
+        if managed_port != api_port:
+            console.print(f"[dim]Use --port {managed_port} to target the managed instance.[/dim]")
         return
-    if pid_file.exists():
-        pid_file.unlink(missing_ok=True)
+    if meta:
+        _clear_server_meta(shad_home)
 
     if _port_in_use(api_port):
         if _api_is_healthy(api_base_url):
             if _api_supports_async_runs(api_base_url):
                 console.print(f"[yellow]A healthy Shad API is already listening on port {api_port}.[/yellow]")
                 console.print(f"[dim]API URL: {api_base_url}[/dim]")
+                console.print("[dim]This listener is not managed by the current server metadata.[/dim]")
                 return
 
             console.print(f"[red]Port {api_port} is already serving an older or incompatible Shad API surface.[/red]")
-            console.print("[dim]Stop the existing process or change SHAD_API_PORT before starting a new server.[/dim]")
+            console.print("[dim]Stop the existing process, choose another port with --port, or set SHAD_API_PORT before starting a new server.[/dim]")
             return
+
         console.print(f"[red]Port {api_port} is already in use by another process.[/red]")
-        console.print("[dim]Stop the existing listener or change SHAD_API_PORT before starting Shad.[/dim]")
+        console.print("[dim]Stop the existing listener, choose another port with --port, or set SHAD_API_PORT before starting Shad.[/dim]")
         sys.exit(1)
+
+    if managed_pid and _pid_is_running(managed_pid):
+        console.print(f"[yellow]Shad API already running (PID {managed_pid})[/yellow]")
+        console.print(f"[dim]API URL: {api_base_url}[/dim]")
+        return
 
     # Start Redis via Docker Compose
     console.print("[blue]Starting Redis...[/blue]")
@@ -1905,8 +1968,8 @@ def server_start(foreground: bool) -> None:
             )
 
         console.print(f"[dim]Waiting for API health check: {api_health_url}[/dim]")
-        if _wait_for_api_health(require_async_runs=True):
-            pid_file.write_text(str(proc.pid), encoding="utf-8")
+        if _wait_for_api_health(require_async_runs=True, base_url=api_base_url):
+            _write_server_meta(shad_home, pid=proc.pid, port=api_port)
             console.print(f"[green]✓ Shad API started (PID {proc.pid})[/green]")
             console.print(f"[dim]Log file: {log_file}[/dim]")
             console.print(f"[dim]API URL: {api_base_url}[/dim]")
@@ -1915,7 +1978,7 @@ def server_start(foreground: bool) -> None:
                 proc.terminate()
             except Exception:
                 pass
-            pid_file.unlink(missing_ok=True)
+            _clear_server_meta(shad_home)
             console.print(f"[red]Shad API did not become healthy within timeout (PID {proc.pid})[/red]")
             console.print(f"[dim]Check logs: {log_file}[/dim]")
             sys.exit(1)
@@ -1932,13 +1995,13 @@ def server_stop() -> None:
 
     shad_home = Path(os.environ.get("SHAD_HOME", os.path.expanduser("~/.shad")))
     repo_dir = _find_repo_dir(shad_home)
-    pid_file = shad_home / "shad-api.pid"
+    meta = _read_server_meta(shad_home)
 
     stopped_api = False
     stopped_redis = False
 
     # Stop API server
-    pid = _read_pid_file(pid_file)
+    pid = int(meta.get("pid", 0)) if meta.get("pid") else None
     if pid is not None:
         try:
             os.kill(pid, signal.SIGTERM)
@@ -1946,9 +2009,9 @@ def server_stop() -> None:
             stopped_api = True
         except OSError:
             console.print("[dim]API was not running[/dim]")
-        pid_file.unlink(missing_ok=True)
+        _clear_server_meta(shad_home)
     else:
-        console.print("[dim]No API PID file found[/dim]")
+        console.print("[dim]No managed API metadata found; not stopping externally managed listeners.[/dim]")
 
     # Stop Redis via Docker Compose
     compose_file = repo_dir / "docker-compose.yml"
@@ -1971,14 +2034,16 @@ def server_stop() -> None:
 
 
 @server.command("status")
-def server_status() -> None:
+@click.option("--port", type=int, default=None, help="Inspect a specific API port (default: managed port or configured SHAD_API_PORT)")
+def server_status(port: int | None) -> None:
     """Check Shad server status."""
     import subprocess
 
     shad_home = Path(os.environ.get("SHAD_HOME", os.path.expanduser("~/.shad")))
-    pid_file = shad_home / "shad-api.pid"
-    api_base_url = _get_local_api_base_url()
-    api_port = _api_listen_port()
+    meta = _read_server_meta(shad_home)
+    managed_port = int(meta.get("port", _api_listen_port())) if meta else _api_listen_port()
+    api_port = int(port or managed_port)
+    api_base_url = f"http://127.0.0.1:{api_port}"
 
     table = Table(title="Shad Server Status")
     table.add_column("Service", style="cyan")
@@ -1987,19 +2052,19 @@ def server_status() -> None:
 
     # Check API
     api_running = _api_is_healthy(api_base_url)
-    pid = _read_pid_file(pid_file)
+    pid = int(meta.get("pid", 0)) if meta.get("pid") else None
     pid_running = pid is not None and _pid_is_running(pid)
     api_details = "Not started"
 
     if api_running:
         route_details = "async runs ready" if _api_supports_async_runs(api_base_url) else "legacy API surface"
-        if pid_running:
+        if pid_running and api_port == managed_port:
             api_details = f"PID {pid}, {api_base_url} ({route_details})"
         elif _port_in_use(api_port):
             api_details = f"{api_base_url} ({route_details}, managed externally)"
         else:
             api_details = f"{api_base_url} ({route_details})"
-    elif pid_file.exists():
+    elif meta:
         api_details = f"Stale PID file ({pid})" if pid is not None else "Stale PID file"
     elif _port_in_use(api_port):
         api_details = f"Port {api_port} in use but health check failed"
