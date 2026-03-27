@@ -6,6 +6,8 @@ import asyncio
 import logging
 import os
 import platform
+import re
+import shlex
 import sys
 from pathlib import Path
 from typing import Any
@@ -21,6 +23,7 @@ from rich.tree import Tree
 from shad import __version__
 from shad.engine import LLMProvider, RLMEngine
 from shad.engine.llm import ModelTier
+from shad.engine.strategies import StrategySelector, StrategyType
 from shad.history import HistoryManager
 from shad.models import Budget, ModelConfig, RunConfig
 from shad.models.run import NodeStatus, Run, RunStatus, StopReason
@@ -74,6 +77,75 @@ def get_api_url() -> str:
     return f"http://{settings.api_host}:{settings.api_port}"
 
 
+def _resolve_collection_inputs(
+    collection: tuple[str, ...],
+    legacy_collection: tuple[str, ...],
+) -> tuple[list[Path], dict[str, Path], str]:
+    """Resolve collection paths from CLI options or environment."""
+    _all_paths = collection or legacy_collection
+    collection_paths: list[Path] = []
+    collection_names: dict[str, Path] = {}
+
+    if _all_paths:
+        source = "CLI"
+        for value in _all_paths:
+            path = Path(value).expanduser()
+            if not path.is_absolute():
+                path = Path.cwd() / path
+            collection_paths.append(path)
+            collection_names[path.name] = path
+    elif get_settings().default_collection_path:
+        source = "env"
+        path = Path(get_settings().default_collection_path).expanduser()
+        collection_paths.append(path)
+        collection_names[path.name] = path
+    else:
+        source = "none"
+
+    return collection_paths, collection_names, source
+
+
+def _recommended_profile(explicit: str | None, auto_profile: bool) -> tuple[str | None, str | None]:
+    """Determine the profile choice and how it was selected."""
+    if explicit:
+        return explicit.lower(), "explicit"
+    if auto_profile:
+        cpu_count, mem_gb = _get_system_specs()
+        return _suggest_profile(cpu_count, mem_gb), "auto"
+    cpu_count, mem_gb = _get_system_specs()
+    return _suggest_profile(cpu_count, mem_gb), "suggested"
+
+
+def _slugify_goal(goal: str) -> str:
+    """Create a directory-friendly slug from a goal."""
+    slug = re.sub(r"[^a-z0-9]+", "-", goal.lower()).strip("-")
+    return slug[:48] or "shad-output"
+
+
+def _build_run_command_preview(
+    goal: str,
+    collection_paths: list[Path],
+    strategy: str,
+    profile: str | None,
+    verify: str,
+    write_files: bool,
+    output_dir: str | None,
+) -> str:
+    """Build a recommended shad run command."""
+    parts = ["shad", "run", shlex.quote(goal)]
+    for path in collection_paths:
+        parts.extend(["--collection", shlex.quote(str(path))])
+    parts.extend(["--strategy", strategy])
+    if profile:
+        parts.extend(["--profile", profile])
+    parts.extend(["--verify", verify])
+    if write_files:
+        parts.append("--write-files")
+    if output_dir:
+        parts.extend(["--output-dir", shlex.quote(output_dir)])
+    return " ".join(parts)
+
+
 @click.group()
 @click.version_option(version=__version__, prog_name="shad")
 def cli() -> None:
@@ -82,7 +154,9 @@ def cli() -> None:
     \b
     Core Commands:
         run <goal>           Execute a reasoning task
+        plan <goal>          Preflight a task and recommend a run command
         status <run_id>      Check the status of a run
+        cancel <run_id>      Cancel a remote async run
         resume <run_id>      Resume a partial/failed run
         export <run_id>      Export files from a completed run
         debug <run_id>       Enter debug mode for a run
@@ -113,6 +187,7 @@ def cli() -> None:
     \b
     Quick Start:
         shad init                                    # Set up project permissions
+        shad plan "Build a REST API" --collection ~/Notes
         shad run "Build a REST API" --collection ~/Notes  # Run with collection context
         shad status <run_id>                         # Check progress
     """
@@ -198,6 +273,11 @@ def run(
         # Set shad loggers to INFO
         logging.getLogger("shad").setLevel(logging.INFO)
 
+    if write_files and output and not output_dir:
+        output_dir = output
+        output = None
+        console.print("[yellow][HINT] Interpreting --output as --output-dir because --write-files is enabled[/yellow]")
+
     # Apply budget profile if provided (can be overridden by explicit flags)
     if profile:
         profile_key = profile.lower()
@@ -276,22 +356,7 @@ def run(
         return
 
     # Merge --collection and deprecated --vault
-    _all_paths = collection or legacy_collection
-    collection_paths: list[Path] = []
-    collection_names: dict[str, Path] = {}
-
-    if _all_paths:
-        for v in _all_paths:
-            vp = Path(v).expanduser()
-            if not vp.is_absolute():
-                vp = Path.cwd() / vp
-            collection_paths.append(vp)
-            collection_names[vp.name] = vp
-    elif get_settings().default_collection_path:
-        # Fall back to env var
-        vp = Path(get_settings().default_collection_path).expanduser()
-        collection_paths.append(vp)
-        collection_names[vp.name] = vp
+    collection_paths, collection_names, source = _resolve_collection_inputs(collection, legacy_collection)
 
     # Primary collection path (first one) for backward compatibility
     primary_collection = collection_paths[0] if collection_paths else None
@@ -319,7 +384,6 @@ def run(
     collections: list[str] = []
 
     if collection_paths:
-        source = "CLI" if (_all_paths) else "env"
         if len(collection_paths) == 1:
             console.print(f"[dim][CONTEXT] Using collection ({source}): {collection_paths[0]}[/dim]")
         else:
@@ -476,6 +540,165 @@ def run(
         sys.exit(2)
 
 
+@cli.command("plan")
+@click.argument("goal")
+@click.option("--collection", "-c", multiple=True, help="Collection path(s) for context (can specify multiple)")
+@click.option("--vault", "legacy_collection", "-v", multiple=True, hidden=True, help="[deprecated: use --collection] Collection path(s)")
+@click.option("--retriever", "-r", type=click.Choice(["auto", "qmd", "filesystem"]), default="auto",
+              help="Retrieval backend (auto detects qmd)")
+@click.option("--profile", type=click.Choice(["fast", "balanced", "deep"], case_sensitive=False),
+              help="Preset budget profile override")
+@click.option("--auto-profile", is_flag=True, help="Auto-select profile based on machine specs")
+@click.option("--strategy", "-s", type=click.Choice(["software", "research", "analysis", "planning"]),
+              help="Override automatic strategy selection")
+@click.option("--verify", type=click.Choice(["off", "basic", "build", "strict"]),
+              help="Verification level override")
+@click.option("--json", "as_json", is_flag=True, default=False, help="Output plan as JSON")
+def plan(
+    goal: str,
+    collection: tuple[str, ...],
+    legacy_collection: tuple[str, ...],
+    retriever: str,
+    profile: str | None,
+    auto_profile: bool,
+    strategy: str | None,
+    verify: str | None,
+    as_json: bool,
+) -> None:
+    """Preflight a task and recommend a run command.
+
+    Examples:
+        shad plan "Build a task app" --collection ~/TeamDocs
+        shad plan "Analyze this architecture" --collection ~/Docs --json
+    """
+    import json as json_mod
+
+    collection_paths, collection_names, source = _resolve_collection_inputs(collection, legacy_collection)
+    if not collection_paths:
+        console.print("[yellow]No collection specified. Use --collection or set SHAD_COLLECTION_PATH[/yellow]")
+        sys.exit(1)
+
+    profile_choice, profile_source = _recommended_profile(profile, auto_profile)
+    selector = StrategySelector()
+    override = StrategyType(strategy) if strategy else None
+    strategy_result = selector.select(goal, override=override)
+    recommended_strategy = strategy_result.strategy_type.value
+    recommended_verify = verify or ("strict" if recommended_strategy == "software" else "basic")
+    should_write_files = recommended_strategy == "software"
+    recommended_output_dir = f"./{_slugify_goal(goal)}" if should_write_files else None
+
+    retriever_instance = get_retriever(
+        paths=collection_paths,
+        collection_names=collection_names,
+        prefer=retriever,
+    )
+
+    async def do_search() -> list:
+        return await retriever_instance.search(
+            goal,
+            mode="hybrid",
+            collections=list(collection_names.keys()),
+            limit=5,
+        )
+
+    results = run_async(do_search())
+    command_preview = _build_run_command_preview(
+        goal=goal,
+        collection_paths=collection_paths,
+        strategy=recommended_strategy,
+        profile=profile_choice,
+        verify=recommended_verify,
+        write_files=should_write_files,
+        output_dir=recommended_output_dir,
+    )
+
+    plan_data = {
+        "goal": goal,
+        "collections": [str(path) for path in collection_paths],
+        "collection_source": source,
+        "retriever": type(retriever_instance).__name__,
+        "strategy": recommended_strategy,
+        "strategy_confidence": round(strategy_result.confidence, 2),
+        "matched_keywords": strategy_result.matched_keywords,
+        "profile": profile_choice,
+        "profile_source": profile_source,
+        "verify": recommended_verify,
+        "write_files": should_write_files,
+        "output_dir": recommended_output_dir,
+        "retrieval_hits": len(results),
+        "top_hits": [
+            {
+                "path": result.path,
+                "collection": result.collection,
+                "score": round(result.score, 4),
+            }
+            for result in results[:3]
+        ],
+        "recommended_command": command_preview,
+    }
+
+    if as_json:
+        click.echo(json_mod.dumps(plan_data, ensure_ascii=False, indent=2))
+        return
+
+    console.print(Panel(f"[bold]Goal:[/bold] {goal}", title="Shad Plan", border_style="cyan"))
+    console.print(f"[dim][CONTEXT] Using {len(collection_paths)} collection(s) from {source}[/dim]")
+    console.print(f"[dim][RETRIEVER] {type(retriever_instance).__name__}[/dim]")
+    console.print(f"[dim][STRATEGY] {recommended_strategy} (confidence {strategy_result.confidence:.2f})[/dim]")
+    console.print(f"[dim][PROFILE] {profile_choice} ({profile_source})[/dim]")
+    console.print(f"[dim][VERIFY] {recommended_verify}[/dim]")
+    if should_write_files and recommended_output_dir:
+        console.print(f"[dim][OUTPUT] write files -> {recommended_output_dir}[/dim]")
+
+    if results:
+        console.print(f"\n[bold]Retrieval Check[/bold]")
+        for idx, result in enumerate(results[:3], 1):
+            prefix = f"[{result.collection}] " if result.collection else ""
+            console.print(f"{idx}. [cyan]{prefix}{result.path}[/cyan] [dim](score: {result.score:.2f})[/dim]")
+    else:
+        console.print("\n[yellow]No retrieval hits for this goal. Validate the collection with `shad search` or qmd indexing before the full run.[/yellow]")
+
+    console.print("\n[bold]Recommended Command[/bold]")
+    console.print(f"[green]{command_preview}[/green]")
+
+
+@cli.command("collection")
+@click.option("--collection", "-c", multiple=True, help="Collection path(s) to inspect")
+@click.option("--vault", "legacy_collection", "-v", multiple=True, hidden=True, help="[deprecated: use --collection]")
+def collection_status(collection: tuple[str, ...], legacy_collection: tuple[str, ...]) -> None:
+    """Inspect collection and retriever status."""
+    import shutil
+
+    collection_paths, collection_names, source = _resolve_collection_inputs(collection, legacy_collection)
+    retriever = get_retriever(
+        paths=collection_paths or None,
+        collection_names=collection_names or None,
+    ) if collection_paths else QmdRetriever()
+
+    console.print(Panel("Collection Status", border_style="blue"))
+    console.print(f"[dim][RETRIEVER] {type(retriever).__name__}[/dim]")
+    console.print(f"[dim][QMD] {'available' if shutil.which('qmd') else 'not installed'}[/dim]")
+
+    if collection_paths:
+        console.print(f"[dim][SOURCE] {source}[/dim]")
+        for path in collection_paths:
+            exists = "exists" if path.exists() else "missing"
+            console.print(f"[dim]  - {path} ({exists})[/dim]")
+    else:
+        console.print("[yellow]No collection specified. Use --collection or set SHAD_COLLECTION_PATH[/yellow]")
+
+    if isinstance(retriever, QmdRetriever) and retriever.available:
+        async def get_status() -> dict[str, Any]:
+            return await retriever.status()
+
+        status = run_async(get_status())
+        collections = status.get("collections", [])
+        if collections:
+            console.print("\n[bold]qmd Collections[/bold]")
+            for coll in collections:
+                console.print(f"[dim]- {coll.get('name', 'unknown')}: {coll.get('path', '')}[/dim]")
+
+
 def _run_via_api(api: str, payload: dict[str, Any]) -> None:
     """Run a goal via the API."""
     import json as json_mod
@@ -608,6 +831,45 @@ def status(run_id: str) -> None:
         sys.exit(1)
 
     _display_run_status(run_data)
+
+
+@cli.command("cancel")
+@click.argument("run_id")
+@click.option("--api", default=None, help="Shad API URL (defaults to local server)")
+def cancel_run(run_id: str, api: str | None) -> None:
+    """Cancel a remote async run.
+
+    Example:
+        shad cancel abc12345
+        shad cancel abc12345 --api http://localhost:8000
+    """
+    api_url = api or get_api_url()
+
+    try:
+        with httpx.Client(timeout=30.0) as client:
+            response = client.post(f"{api_url}/v1/runs/{run_id}/cancel")
+            response.raise_for_status()
+            data = response.json()
+    except httpx.ConnectError:
+        console.print("[red]Could not connect to Shad API. Is it running?[/red]")
+        console.print(f"[dim]Tried: {api_url}[/dim]")
+        sys.exit(1)
+    except httpx.HTTPStatusError as e:
+        detail = ""
+        try:
+            detail = e.response.json().get("detail", "")
+        except Exception:
+            detail = e.response.text
+        console.print(f"[red]Cancel failed: {detail or e}[/red]")
+        sys.exit(1)
+    except Exception as e:
+        console.print(f"[red]Error: {e}[/red]")
+        sys.exit(1)
+
+    console.print(f"[green]✓ Cancel request processed for run {run_id}[/green]")
+    console.print(f"[dim]Status: {data.get('status', 'unknown')}[/dim]")
+    if data.get("error"):
+        console.print(f"[dim]Message: {data['error']}[/dim]")
 
 
 @cli.group()
@@ -1413,10 +1675,25 @@ def server_start(foreground: bool) -> None:
 
     env = os.environ.copy()
     env["PYTHONPATH"] = os.path.join(api_dir, "src")
+    api_url = "http://localhost:8000/v1/health"
+
+    def wait_for_api_health(timeout_s: float = 20.0) -> bool:
+        deadline = time.time() + timeout_s
+        while time.time() < deadline:
+            try:
+                with httpx.Client(timeout=1.5) as client:
+                    response = client.get(api_url)
+                    if response.status_code == 200:
+                        return True
+            except Exception:
+                pass
+            time.sleep(0.5)
+        return False
 
     if foreground:
         # Run in foreground
         console.print("[dim]Running in foreground. Press Ctrl+C to stop.[/dim]")
+        console.print(f"[dim]Health check: {api_url}[/dim]")
         try:
             subprocess.run(
                 [venv_python, "-m", "uvicorn", "shad.api.main:app",
@@ -1445,9 +1722,21 @@ def server_start(foreground: bool) -> None:
         with open(pid_file, "w") as f:
             f.write(str(proc.pid))
 
-        console.print(f"[green]✓ Shad API started (PID {proc.pid})[/green]")
-        console.print(f"[dim]Log file: {log_file}[/dim]")
-        console.print("[dim]API URL: http://localhost:8000[/dim]")
+        console.print(f"[dim]Waiting for API health check: {api_url}[/dim]")
+        if wait_for_api_health():
+            console.print(f"[green]✓ Shad API started (PID {proc.pid})[/green]")
+            console.print(f"[dim]Log file: {log_file}[/dim]")
+            console.print("[dim]API URL: http://localhost:8000[/dim]")
+        else:
+            try:
+                proc.terminate()
+            except Exception:
+                pass
+            if os.path.exists(pid_file):
+                os.remove(pid_file)
+            console.print(f"[red]Shad API did not become healthy within timeout (PID {proc.pid})[/red]")
+            console.print(f"[dim]Check logs: {log_file}[/dim]")
+            sys.exit(1)
 
     console.print("\n[green]Shad is ready![/green]")
     console.print("[dim]Try: shad run \"Hello, Shad!\"[/dim]")

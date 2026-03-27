@@ -9,7 +9,7 @@ Load any directory of markdown, code, or docs — then accomplish complex tasks 
 shad run "Build a task management app with auth, offline sync, and push notifications" \
   --collection ~/TeamDocs \
   --strategy software \
-  --write-files --output ./TaskApp
+  --write-files --output-dir ./TaskApp
 ```
 
 ---
@@ -89,24 +89,24 @@ shad server logs -f   # Follow logs
 ### Basic Usage
 
 ```bash
-# Run a task with collection context
-shad run "Summarize the key concepts in my notes" --collection ~/MyVault
+# Validate that the collection is registered and searchable
+shad collection --collection ~/MyCollection
+shad search "oauth refresh token" --collection ~/MyCollection
+shad context "How should this app handle auth?" --collection ~/MyCollection
 
-# Use multiple collections (searched in priority order)
-shad run "Build auth system" --collection ~/Project --collection ~/Patterns --collection ~/Docs
+# Preflight the task and get a recommended run command
+shad plan "Build a task management app with auth, offline sync, and push notifications" \
+  --collection ~/Project \
+  --collection ~/Patterns \
+  --collection ~/Docs
 
-# Generate code with verification
+# Execute the real run
 shad run "Build a REST API for user management" \
   --collection ~/TeamDocs \
   --strategy software \
+  --profile deep \
   --verify strict \
-  --write-files --output ./api
-
-# Quick context retrieval (no DAG, faster than run)
-shad context "BSV authentication decisions" -c ~/Notes
-
-# Search your collection directly
-shad search "oauth refresh token" --mode hybrid
+  --write-files --output-dir ./api
 
 # Check environment health
 shad doctor
@@ -118,6 +118,42 @@ shad doctor --fix   # Install qmd + register collection + embed
 ```bash
 shad server stop
 ```
+
+---
+
+## Recommended Workflow
+
+For large app-building tasks, the best flow is:
+
+```bash
+# 1. Build or sync a collection
+shad ingest github https://github.com/your-org/your-repo --collection ~/MyCollection --preset docs
+shad sources add folder ~/TeamDocs --collection ~/MyCollection --schedule daily
+
+# 2. Index it with qmd
+qmd collection add ~/MyCollection --name mycollection
+QMD_OPENAI=1 qmd embed
+
+# 3. Validate retrieval before the expensive run
+shad collection --collection ~/MyCollection
+shad search "authentication patterns" --collection ~/MyCollection
+shad context "What are the main architecture constraints?" --collection ~/MyCollection
+
+# 4. Plan the run
+shad plan "Build a task management app with auth, offline sync, and push notifications" \
+  --collection ~/MyCollection
+
+# 5. Execute the run
+shad run "Build a task management app with auth, offline sync, and push notifications" \
+  --collection ~/MyCollection \
+  --strategy software \
+  --profile deep \
+  --verify strict \
+  --write-files \
+  --output-dir ./TaskApp
+```
+
+Use `shad plan` when you want Shad to recommend the right strategy, profile, verification level, and output mode before spending tokens on a full recursive run.
 
 ---
 
@@ -267,6 +303,9 @@ Without qmd, Shad falls back to filesystem search (basic keyword matching). Use 
 ### Core Commands
 
 ```bash
+# Preflight a task and get a recommended run command
+shad plan "Build a task app" --collection ~/collection
+
 # Execute a task with collection context
 shad run "Your task" [options]
 
@@ -278,6 +317,9 @@ shad search "query" [--mode hybrid|bm25|vector]
 
 # Check run status
 shad status <run_id>
+
+# Cancel a remote async run
+shad cancel <run_id> [--api http://localhost:8000]
 
 # View execution tree
 shad trace tree <run_id>
@@ -293,6 +335,9 @@ shad export <run_id> --output ./out
 
 # List available models
 shad models [--refresh] [--ollama]
+
+# Inspect collection/index status
+shad collection [--collection ~/collection]
 ```
 
 ### Run Options
@@ -319,6 +364,20 @@ shad models [--refresh] [--ollama]
 --gemini               Use Gemini CLI instead of Claude CLI
 ```
 
+### Planning
+
+```bash
+shad plan "Build a task app" --collection ~/Collection
+shad plan "Analyze this architecture" --collection ~/Collection --json
+```
+
+`shad plan` performs a low-cost preflight:
+- resolves collections and retriever
+- selects a recommended strategy
+- suggests a machine-appropriate profile
+- checks whether the goal retrieves useful context
+- prints a recommended `shad run ...` command
+
 ### Server Management
 
 ```bash
@@ -334,7 +393,7 @@ shad server logs [-f]  # View/follow logs
 shad doctor            # Check environment health (Python, qmd, Redis, collection)
 shad doctor --fix      # Auto-fix: install qmd, register collection, generate embeddings
 shad init              # Initialize project permissions for Claude Code
-shad collection             # Check retriever status
+shad collection        # Check collection + retriever status
 ```
 
 ### Sources Scheduler
@@ -388,6 +447,9 @@ shad run "task" --collection ~/V --profile deep -O opus -W sonnet -L haiku
 
 # Preview before running
 shad run "task" --collection ~/V --auto-profile --dry-run
+
+# Or preflight the real command
+shad plan "task" --collection ~/V --auto-profile
 ```
 
 ### Budget Defaults by Machine
@@ -472,7 +534,7 @@ Shad works with minimal configuration. Set optional environment variables in `~/
 
 ```bash
 # Default collection (so you don't need --collection every time)
-OBSIDIAN_COLLECTION_PATH=/path/to/your/collection
+SHAD_COLLECTION_PATH=/path/to/your/collection
 
 # Redis for cross-run caching (defaults to localhost:6379)
 REDIS_URL=redis://localhost:6379/0

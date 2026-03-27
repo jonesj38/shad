@@ -21,7 +21,7 @@ from shad.history import HistoryManager
 from shad.integrations import N8NClient
 from shad.learnings import LearningsStore
 from shad.models import Budget, RunConfig
-from shad.models.run import Run, RunStatus
+from shad.models.run import Run, RunStatus, StopReason
 from shad.retrieval import RetrievalLayer, get_retriever
 from shad.skills import SkillRouter
 from shad.utils.config import get_settings
@@ -303,6 +303,14 @@ async def _execute_run_in_background(run: Run, use_gemini_cli: bool = False) -> 
             stop_reason=completed_run.stop_reason.value if completed_run.stop_reason else None,
             total_tokens=completed_run.total_tokens,
         )
+    except asyncio.CancelledError:
+        logger.info("Async run cancelled: %s", run.run_id)
+        run.status = RunStatus.ABORTED
+        run.stop_reason = StopReason.ABORTED
+        run.error = "Run cancelled by user"
+        history.save_run(run)
+        _append_run_event(run.run_id, "run_cancelled", status=run.status.value)
+        raise
     except Exception as e:
         logger.exception("Async run execution failed: %s", e)
         run.status = RunStatus.FAILED
@@ -453,6 +461,35 @@ async def stream_run_events(
             await asyncio.sleep(poll_interval)
 
     return StreamingResponse(event_stream(), media_type="text/event-stream")
+
+
+@run_router.post("/runs/{run_id}/cancel", response_model=RunResponse)
+async def cancel_async_run(run_id: str) -> RunResponse:
+    """Cancel a pending or running async run."""
+    if history is None:
+        raise HTTPException(status_code=503, detail="Service not initialized")
+
+    try:
+        run = history.load_run(run_id)
+    except FileNotFoundError as e:
+        raise HTTPException(status_code=404, detail=f"Run {run_id} not found") from e
+
+    if run.status in (RunStatus.COMPLETE, RunStatus.PARTIAL, RunStatus.FAILED, RunStatus.ABORTED):
+        return RunResponse.from_run(run)
+
+    task = run_tasks.get(run_id)
+    if task is not None and not task.done():
+        task.cancel()
+        await asyncio.gather(task, return_exceptions=True)
+    else:
+        run.status = RunStatus.ABORTED
+        run.stop_reason = StopReason.ABORTED
+        run.error = "Run cancelled by user"
+        history.save_run(run)
+        _append_run_event(run.run_id, "run_cancelled", status=run.status.value)
+
+    updated_run = history.load_run(run_id)
+    return RunResponse.from_run(updated_run)
 
 
 @run_router.post("/run/{run_id}/resume", response_model=RunResponse)
