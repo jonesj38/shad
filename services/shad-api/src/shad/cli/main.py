@@ -3,12 +3,15 @@
 from __future__ import annotations
 
 import asyncio
+import json
 import logging
 import os
 import platform
 import re
 import shlex
+import socket
 import sys
+import time
 from pathlib import Path
 from typing import Any
 
@@ -75,6 +78,115 @@ def get_api_url() -> str:
     """Get the Shad API URL."""
     settings = get_settings()
     return f"http://{settings.api_host}:{settings.api_port}"
+
+
+def _get_local_api_base_url() -> str:
+    """Return a loopback URL for local health checks."""
+    settings = get_settings()
+    return f"http://127.0.0.1:{settings.api_port}"
+
+
+def _api_health_url() -> str:
+    """Return the local API health-check URL."""
+    return f"{_get_local_api_base_url()}/v1/health"
+
+
+def _api_listen_port() -> int:
+    """Return the configured API listen port."""
+    return int(get_settings().api_port)
+
+
+def _port_in_use(port: int, host: str = "127.0.0.1") -> bool:
+    """Best-effort local port occupancy check."""
+    with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as sock:
+        sock.settimeout(0.2)
+        return sock.connect_ex((host, port)) == 0
+
+
+def _pid_is_running(pid: int) -> bool:
+    """Return whether a PID is currently alive."""
+    try:
+        os.kill(pid, 0)
+    except OSError:
+        return False
+    return True
+
+
+def _read_pid_file(pid_file: Path) -> int | None:
+    """Read a PID file safely."""
+    try:
+        return int(pid_file.read_text(encoding="utf-8").strip())
+    except (OSError, ValueError):
+        return None
+
+
+def _api_is_healthy(base_url: str | None = None, timeout: float = 1.5) -> bool:
+    """Return whether the local API health endpoint is responding."""
+    url = f"{base_url or _get_local_api_base_url()}/v1/health"
+    try:
+        with httpx.Client(timeout=timeout) as client:
+            response = client.get(url)
+            return response.status_code == 200
+    except Exception:
+        return False
+
+
+def _api_supports_async_runs(base_url: str | None = None, timeout: float = 1.5) -> bool:
+    """Return whether the API exposes the async run surface."""
+    url = f"{base_url or _get_local_api_base_url()}/openapi.json"
+    try:
+        with httpx.Client(timeout=timeout) as client:
+            response = client.get(url)
+            response.raise_for_status()
+        payload = response.json()
+    except Exception:
+        return False
+
+    paths = payload.get("paths", {})
+    runs_entry = paths.get("/v1/runs", {})
+    return "post" in runs_entry and "get" in runs_entry
+
+
+def _wait_for_api_health(timeout_s: float = 20.0, require_async_runs: bool = False) -> bool:
+    """Wait until the API becomes healthy, optionally requiring async routes."""
+    deadline = time.time() + timeout_s
+    base_url = _get_local_api_base_url()
+
+    while time.time() < deadline:
+        if _api_is_healthy(base_url):
+            if not require_async_runs or _api_supports_async_runs(base_url):
+                return True
+        time.sleep(0.5)
+    return False
+
+
+def _find_repo_dir(shad_home: Path) -> Path:
+    """Resolve the Shad repo root for docker-compose and dev installs."""
+    env_repo = os.environ.get("SHAD_REPO_PATH")
+    candidates: list[Path] = []
+
+    if env_repo:
+        candidates.append(Path(env_repo).expanduser())
+    candidates.append(shad_home / "repo")
+    candidates.append(Path.cwd())
+    candidates.extend(Path(__file__).resolve().parents)
+
+    for candidate in candidates:
+        candidate = candidate.resolve()
+        if (candidate / "docker-compose.yml").exists() and (candidate / "services" / "shad-api").exists():
+            return candidate
+
+    return (shad_home / "repo").resolve()
+
+
+def _find_api_dir(repo_dir: Path) -> Path:
+    """Resolve the API service directory for uvicorn startup."""
+    current = Path(__file__).resolve()
+    for candidate in current.parents:
+        if (candidate / "src" / "shad" / "api" / "main.py").exists():
+            return candidate
+
+    return repo_dir / "services" / "shad-api"
 
 
 def _resolve_collection_inputs(
@@ -1701,33 +1813,47 @@ def server() -> None:
 @click.option("--foreground", "-f", is_flag=True, help="Run API in foreground (don't daemonize)")
 def server_start(foreground: bool) -> None:
     """Start the Shad server (Redis + API)."""
-    import os
     import subprocess
-    import time
 
-    shad_home = os.environ.get("SHAD_HOME", os.path.expanduser("~/.shad"))
-    repo_dir = os.path.join(shad_home, "repo")
-    pid_file = os.path.join(shad_home, "shad-api.pid")
+    shad_home = Path(os.environ.get("SHAD_HOME", os.path.expanduser("~/.shad")))
+    repo_dir = _find_repo_dir(shad_home)
+    api_dir = _find_api_dir(repo_dir)
+    pid_file = shad_home / "shad-api.pid"
+    log_file = shad_home / "shad-api.log"
+    api_port = _api_listen_port()
+    api_base_url = _get_local_api_base_url()
+    api_health_url = _api_health_url()
 
     # Check if already running
-    if os.path.exists(pid_file):
-        with open(pid_file) as f:
-            pid = int(f.read().strip())
-        try:
-            os.kill(pid, 0)  # Check if process exists
-            console.print(f"[yellow]Shad API already running (PID {pid})[/yellow]")
-            console.print("[dim]Use 'shad server stop' to stop it first[/dim]")
+    existing_pid = _read_pid_file(pid_file)
+    if existing_pid and _pid_is_running(existing_pid) and _api_is_healthy(api_base_url):
+        console.print(f"[yellow]Shad API already running (PID {existing_pid})[/yellow]")
+        console.print(f"[dim]API URL: {api_base_url}[/dim]")
+        return
+    if pid_file.exists():
+        pid_file.unlink(missing_ok=True)
+
+    if _port_in_use(api_port):
+        if _api_is_healthy(api_base_url):
+            if _api_supports_async_runs(api_base_url):
+                console.print(f"[yellow]A healthy Shad API is already listening on port {api_port}.[/yellow]")
+                console.print(f"[dim]API URL: {api_base_url}[/dim]")
+                return
+
+            console.print(f"[red]Port {api_port} is already serving an older or incompatible Shad API surface.[/red]")
+            console.print("[dim]Stop the existing process or change SHAD_API_PORT before starting a new server.[/dim]")
             return
-        except OSError:
-            os.remove(pid_file)  # Stale PID file
+        console.print(f"[red]Port {api_port} is already in use by another process.[/red]")
+        console.print("[dim]Stop the existing listener or change SHAD_API_PORT before starting Shad.[/dim]")
+        sys.exit(1)
 
     # Start Redis via Docker Compose
     console.print("[blue]Starting Redis...[/blue]")
-    compose_file = os.path.join(repo_dir, "docker-compose.yml")
+    compose_file = repo_dir / "docker-compose.yml"
 
-    if os.path.exists(compose_file):
+    if compose_file.exists():
         result = subprocess.run(
-            ["docker", "compose", "-f", compose_file, "up", "-d", "redis"],
+            ["docker", "compose", "-f", str(compose_file), "up", "-d", "redis"],
             capture_output=True,
             text=True,
         )
@@ -1744,74 +1870,52 @@ def server_start(foreground: bool) -> None:
     # Start API server
     console.print("[blue]Starting Shad API...[/blue]")
 
-    api_dir = os.path.join(repo_dir, "services", "shad-api")
-    venv_python = os.path.join(shad_home, "venv", "bin", "python")
+    venv_python = shad_home / "venv" / "bin" / "python"
 
-    if not os.path.exists(venv_python):
-        # Fallback to system python if venv doesn't exist
-        venv_python = sys.executable
+    if not venv_python.exists():
+        venv_python = Path(sys.executable)
 
     env = os.environ.copy()
-    env["PYTHONPATH"] = os.path.join(api_dir, "src")
-    api_url = "http://localhost:8000/v1/health"
-
-    def wait_for_api_health(timeout_s: float = 20.0) -> bool:
-        deadline = time.time() + timeout_s
-        while time.time() < deadline:
-            try:
-                with httpx.Client(timeout=1.5) as client:
-                    response = client.get(api_url)
-                    if response.status_code == 200:
-                        return True
-            except Exception:
-                pass
-            time.sleep(0.5)
-        return False
+    env["PYTHONPATH"] = str(api_dir / "src")
 
     if foreground:
         # Run in foreground
         console.print("[dim]Running in foreground. Press Ctrl+C to stop.[/dim]")
-        console.print(f"[dim]Health check: {api_url}[/dim]")
+        console.print(f"[dim]Health check: {api_health_url}[/dim]")
         try:
             subprocess.run(
-                [venv_python, "-m", "uvicorn", "shad.api.main:app",
-                 "--host", "0.0.0.0", "--port", "8000"],
-                cwd=api_dir,
+                [str(venv_python), "-m", "uvicorn", "shad.api.main:app",
+                 "--host", "0.0.0.0", "--port", str(api_port)],
+                cwd=str(api_dir),
                 env=env,
             )
         except KeyboardInterrupt:
             console.print("\n[yellow]Stopping...[/yellow]")
     else:
         # Run in background
-        log_file = os.path.join(shad_home, "shad-api.log")
-
-        with open(log_file, "a") as log:
+        with log_file.open("a", encoding="utf-8") as log:
             proc = subprocess.Popen(
-                [venv_python, "-m", "uvicorn", "shad.api.main:app",
-                 "--host", "0.0.0.0", "--port", "8000"],
-                cwd=api_dir,
+                [str(venv_python), "-m", "uvicorn", "shad.api.main:app",
+                 "--host", "0.0.0.0", "--port", str(api_port)],
+                cwd=str(api_dir),
                 env=env,
                 stdout=log,
                 stderr=log,
                 start_new_session=True,
             )
 
-        # Save PID
-        with open(pid_file, "w") as f:
-            f.write(str(proc.pid))
-
-        console.print(f"[dim]Waiting for API health check: {api_url}[/dim]")
-        if wait_for_api_health():
+        console.print(f"[dim]Waiting for API health check: {api_health_url}[/dim]")
+        if _wait_for_api_health(require_async_runs=True):
+            pid_file.write_text(str(proc.pid), encoding="utf-8")
             console.print(f"[green]✓ Shad API started (PID {proc.pid})[/green]")
             console.print(f"[dim]Log file: {log_file}[/dim]")
-            console.print("[dim]API URL: http://localhost:8000[/dim]")
+            console.print(f"[dim]API URL: {api_base_url}[/dim]")
         else:
             try:
                 proc.terminate()
             except Exception:
                 pass
-            if os.path.exists(pid_file):
-                os.remove(pid_file)
+            pid_file.unlink(missing_ok=True)
             console.print(f"[red]Shad API did not become healthy within timeout (PID {proc.pid})[/red]")
             console.print(f"[dim]Check logs: {log_file}[/dim]")
             sys.exit(1)
@@ -1823,36 +1927,34 @@ def server_start(foreground: bool) -> None:
 @server.command("stop")
 def server_stop() -> None:
     """Stop the Shad server (Redis + API)."""
-    import os
     import signal
     import subprocess
 
-    shad_home = os.environ.get("SHAD_HOME", os.path.expanduser("~/.shad"))
-    repo_dir = os.path.join(shad_home, "repo")
-    pid_file = os.path.join(shad_home, "shad-api.pid")
+    shad_home = Path(os.environ.get("SHAD_HOME", os.path.expanduser("~/.shad")))
+    repo_dir = _find_repo_dir(shad_home)
+    pid_file = shad_home / "shad-api.pid"
 
     stopped_api = False
     stopped_redis = False
 
     # Stop API server
-    if os.path.exists(pid_file):
-        with open(pid_file) as f:
-            pid = int(f.read().strip())
+    pid = _read_pid_file(pid_file)
+    if pid is not None:
         try:
             os.kill(pid, signal.SIGTERM)
             console.print(f"[green]✓ Stopped Shad API (PID {pid})[/green]")
             stopped_api = True
         except OSError:
             console.print("[dim]API was not running[/dim]")
-        os.remove(pid_file)
+        pid_file.unlink(missing_ok=True)
     else:
         console.print("[dim]No API PID file found[/dim]")
 
     # Stop Redis via Docker Compose
-    compose_file = os.path.join(repo_dir, "docker-compose.yml")
-    if os.path.exists(compose_file):
+    compose_file = repo_dir / "docker-compose.yml"
+    if compose_file.exists():
         result = subprocess.run(
-            ["docker", "compose", "-f", compose_file, "stop", "redis"],
+            ["docker", "compose", "-f", str(compose_file), "stop", "redis"],
             capture_output=True,
             text=True,
         )
@@ -1871,11 +1973,12 @@ def server_stop() -> None:
 @server.command("status")
 def server_status() -> None:
     """Check Shad server status."""
-    import os
     import subprocess
 
-    shad_home = os.environ.get("SHAD_HOME", os.path.expanduser("~/.shad"))
-    pid_file = os.path.join(shad_home, "shad-api.pid")
+    shad_home = Path(os.environ.get("SHAD_HOME", os.path.expanduser("~/.shad")))
+    pid_file = shad_home / "shad-api.pid"
+    api_base_url = _get_local_api_base_url()
+    api_port = _api_listen_port()
 
     table = Table(title="Shad Server Status")
     table.add_column("Service", style="cyan")
@@ -1883,19 +1986,23 @@ def server_status() -> None:
     table.add_column("Details")
 
     # Check API
-    api_running = False
-    api_details = ""
-    if os.path.exists(pid_file):
-        with open(pid_file) as f:
-            pid = int(f.read().strip())
-        try:
-            os.kill(pid, 0)
-            api_running = True
-            api_details = f"PID {pid}, http://localhost:8000"
-        except OSError:
-            api_details = "Stale PID file"
-    else:
-        api_details = "Not started"
+    api_running = _api_is_healthy(api_base_url)
+    pid = _read_pid_file(pid_file)
+    pid_running = pid is not None and _pid_is_running(pid)
+    api_details = "Not started"
+
+    if api_running:
+        route_details = "async runs ready" if _api_supports_async_runs(api_base_url) else "legacy API surface"
+        if pid_running:
+            api_details = f"PID {pid}, {api_base_url} ({route_details})"
+        elif _port_in_use(api_port):
+            api_details = f"{api_base_url} ({route_details}, managed externally)"
+        else:
+            api_details = f"{api_base_url} ({route_details})"
+    elif pid_file.exists():
+        api_details = f"Stale PID file ({pid})" if pid is not None else "Stale PID file"
+    elif _port_in_use(api_port):
+        api_details = f"Port {api_port} in use but health check failed"
 
     table.add_row(
         "Shad API",
@@ -1927,13 +2034,13 @@ def server_status() -> None:
     )
 
     # Check Claude CLI
-    claude_available = False
+    claude_installed = False
     claude_details = ""
     try:
         result = subprocess.run(["claude", "--version"], capture_output=True, text=True)
         if result.returncode == 0:
-            claude_available = True
-            claude_details = result.stdout.strip().split("\n")[0]
+            claude_installed = True
+            claude_details = f"{result.stdout.strip().splitlines()[0]} (auth not checked)"
         else:
             claude_details = "Not configured"
     except FileNotFoundError:
@@ -1941,7 +2048,7 @@ def server_status() -> None:
 
     table.add_row(
         "Claude CLI",
-        "[green]Available[/green]" if claude_available else "[yellow]Missing[/yellow]",
+        "[green]Installed[/green]" if claude_installed else "[yellow]Missing[/yellow]",
         claude_details,
     )
 
@@ -1963,20 +2070,19 @@ def server_status() -> None:
 @click.option("--lines", "-n", default=50, help="Number of lines to show")
 def server_logs(follow: bool, lines: int) -> None:
     """View Shad API logs."""
-    import os
     import subprocess
 
-    shad_home = os.environ.get("SHAD_HOME", os.path.expanduser("~/.shad"))
-    log_file = os.path.join(shad_home, "shad-api.log")
+    shad_home = Path(os.environ.get("SHAD_HOME", os.path.expanduser("~/.shad")))
+    log_file = shad_home / "shad-api.log"
 
-    if not os.path.exists(log_file):
+    if not log_file.exists():
         console.print("[dim]No log file found. Start the server first.[/dim]")
         return
 
     if follow:
-        subprocess.run(["tail", "-f", log_file])
+        subprocess.run(["tail", "-f", str(log_file)])
     else:
-        subprocess.run(["tail", "-n", str(lines), log_file])
+        subprocess.run(["tail", "-n", str(lines), str(log_file)])
 
 
 # =============================================================================

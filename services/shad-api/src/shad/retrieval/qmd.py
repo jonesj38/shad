@@ -13,6 +13,7 @@ import os
 import re
 import shutil
 import subprocess
+from pathlib import Path
 from typing import Any
 
 from shad.retrieval.layer import RetrievalResult
@@ -129,7 +130,38 @@ class QmdRetriever:
             except Exception:
                 return False
 
-        supports = _check_help(["qmd", "--help"]) or _check_help(["qmd", "embed", "--help"])
+        def _check_package_metadata() -> bool:
+            if not self._qmd_path:
+                return False
+
+            qmd_script = Path(self._qmd_path).resolve()
+            candidate_dirs = [qmd_script.parent, *qmd_script.parents[:4]]
+
+            for directory in candidate_dirs:
+                package_json = directory / "package.json"
+                if not package_json.exists():
+                    continue
+                try:
+                    payload = json.loads(package_json.read_text(encoding="utf-8"))
+                except Exception:
+                    continue
+
+                dependency_sets = (
+                    payload.get("dependencies", {}),
+                    payload.get("optionalDependencies", {}),
+                    payload.get("peerDependencies", {}),
+                )
+                if any("openai" in deps for deps in dependency_sets):
+                    logger.debug("Detected qmd OpenAI support from %s", package_json)
+                    return True
+
+            return False
+
+        supports = (
+            _check_package_metadata()
+            or _check_help(["qmd", "--help"])
+            or _check_help(["qmd", "embed", "--help"])
+        )
         self._openai_support = supports
         return supports
 
