@@ -18,7 +18,7 @@ import json
 import logging
 from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
-from typing import Any
+from typing import Any, cast
 
 import redis.asyncio as redis
 from pydantic import BaseModel
@@ -133,7 +133,7 @@ class RedisCache:
                 decode_responses=True,
             )
             # Test connection
-            await self._client.ping()
+            await cast(Any, self._client.ping())
             self._connected = True
             logger.info(f"Connected to Redis at {self.redis_url}")
         except Exception as e:

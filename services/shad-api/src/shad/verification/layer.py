@@ -21,7 +21,7 @@ import ast
 import logging
 import re
 from dataclasses import dataclass, field
-from enum import Enum
+from enum import StrEnum
 from typing import Any
 
 from shad.output.import_resolution import ImportResolver
@@ -30,7 +30,7 @@ from shad.output.manifest import FileManifest
 logger = logging.getLogger(__name__)
 
 
-class VerificationLevel(str, Enum):
+class VerificationLevel(StrEnum):
     """Verification strictness levels."""
 
     OFF = "off"
@@ -39,7 +39,7 @@ class VerificationLevel(str, Enum):
     STRICT = "strict"
 
 
-class CheckStatus(str, Enum):
+class CheckStatus(StrEnum):
     """Status of a verification check."""
 
     PASSED = "passed"
@@ -48,7 +48,7 @@ class CheckStatus(str, Enum):
     WARNING = "warning"
 
 
-class ErrorClassification(str, Enum):
+class ErrorClassification(StrEnum):
     """Classification of verification errors.
 
     Per SPEC.md Section 2.6.3:

@@ -13,7 +13,7 @@ import json
 import logging
 from dataclasses import dataclass, field
 from datetime import UTC, datetime, timedelta
-from enum import Enum
+from enum import StrEnum
 from pathlib import Path
 from typing import Any
 
@@ -23,7 +23,7 @@ from shad.utils.config import get_settings
 logger = logging.getLogger(__name__)
 
 
-class LearningStatus(str, Enum):
+class LearningStatus(StrEnum):
     """Status of a learning in the pipeline."""
 
     PROPOSED = "proposed"  # Initially extracted

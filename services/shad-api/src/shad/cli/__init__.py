@@ -3,7 +3,7 @@
 __all__ = ["cli"]
 
 
-def __getattr__(name: str):
+def __getattr__(name: str) -> object:
     """Lazy import to avoid RuntimeWarning when running as entry point."""
     if name == "cli":
         from shad.cli.main import cli

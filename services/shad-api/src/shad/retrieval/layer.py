@@ -7,7 +7,10 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Any, Protocol, runtime_checkable
+from typing import TYPE_CHECKING, Any, Protocol, runtime_checkable
+
+if TYPE_CHECKING:
+    from shad.vault.shadow_index import MemoryType
 
 
 @dataclass
@@ -63,6 +66,31 @@ class RetrievalResult:
         if base_path:
             return base_path / self.path
         return Path(self.path)
+
+
+@dataclass
+class SearchOpts:
+    """Options for a retrieval search request."""
+
+    query: str
+    """Search query string."""
+
+    mode: str = "hybrid"
+    """Search mode: "bm25" (keyword), "vector" (semantic), or "hybrid" (both)."""
+
+    limit: int = 10
+    """Maximum number of results to return."""
+
+    min_score: float = 0.0
+    """Minimum relevance score threshold (0.0–1.0)."""
+
+    memory_type: MemoryType | list[MemoryType] | None = None
+    """Optional memory type filter.
+
+    Pass a single :class:`~shad.vault.shadow_index.MemoryType` to restrict results
+    to that classification, or a list to allow multiple types.
+    ``None`` (default) returns results across all memory types.
+    """
 
 
 @runtime_checkable

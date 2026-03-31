@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from datetime import UTC, datetime, timedelta
-from enum import Enum
+from enum import StrEnum
 from pathlib import Path
 from typing import Any
 
@@ -11,7 +11,7 @@ import yaml
 from pydantic import BaseModel, Field
 
 
-class SourceType(str, Enum):
+class SourceType(StrEnum):
     """Type of content source."""
 
     GITHUB = "github"
@@ -20,7 +20,7 @@ class SourceType(str, Enum):
     FOLDER = "folder"
 
 
-class SourceSchedule(str, Enum):
+class SourceSchedule(StrEnum):
     """Sync schedule frequency."""
 
     MANUAL = "manual"
@@ -152,7 +152,7 @@ class SourceConfig(BaseModel):
                 source_dict["last_sync"] = source_dict["last_sync"].isoformat() if hasattr(source_dict["last_sync"], "isoformat") else source_dict["last_sync"]
             sources_data.append(source_dict)
 
-        data = {"sources": sources_data}
+        data: dict[str, Any] = {"sources": sources_data}
         if self.default_collection:
             data["default_collection"] = self.default_collection
 

@@ -13,6 +13,8 @@ from urllib.parse import urlparse
 
 import httpx
 
+from shad.vault.shadow_index import source_to_memory_type
+
 logger = logging.getLogger(__name__)
 
 
@@ -70,9 +72,11 @@ class URLIngester:
 
         # Create frontmatter
         content_hash = hashlib.sha256(markdown.encode()).hexdigest()[:16]
+        memory_type = source_to_memory_type("url")
         frontmatter = f"""---
 source_url: {url}
 source_type: url
+memory_type: {memory_type.value}
 ingested_at: {datetime.now(UTC).isoformat()}
 content_hash: sha256:{content_hash}
 title: {title}
@@ -104,14 +108,14 @@ title: {title}
                 url=url,
             )
             if result:
-                return result
+                return str(result)
         except ImportError:
             pass
 
         try:
             # Fallback to markdownify
             from markdownify import markdownify
-            return markdownify(html, heading_style="ATX", strip=["script", "style"])
+            return str(markdownify(html, heading_style="ATX", strip=["script", "style"]))
         except ImportError:
             pass
 
@@ -233,9 +237,11 @@ class FeedIngester:
             return None
 
         # Create frontmatter
+        memory_type = source_to_memory_type("feed")
         frontmatter = f"""---
 source_url: {link}
 source_type: feed
+memory_type: {memory_type.value}
 feed_url: {feed_url}
 ingested_at: {datetime.now(UTC).isoformat()}
 published: {published}
@@ -298,9 +304,11 @@ class FolderIngester:
                     # Copy with frontmatter
                     content = file_path.read_text()
                     if not content.startswith("---"):
+                        memory_type = source_to_memory_type("folder")
                         frontmatter = f"""---
 source_path: {file_path}
 source_type: folder
+memory_type: {memory_type.value}
 ingested_at: {datetime.now(UTC).isoformat()}
 ---
 

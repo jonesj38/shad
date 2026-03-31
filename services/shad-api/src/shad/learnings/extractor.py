@@ -18,7 +18,7 @@ from __future__ import annotations
 import logging
 from dataclasses import dataclass, field
 from datetime import datetime
-from enum import Enum
+from enum import StrEnum
 from typing import Any
 
 from shad.engine.llm import LLMProvider, ModelTier
@@ -26,7 +26,7 @@ from shad.engine.llm import LLMProvider, ModelTier
 logger = logging.getLogger(__name__)
 
 
-class LearningType(str, Enum):
+class LearningType(StrEnum):
     """Types of learnings that can be extracted."""
 
     PROMPT_PATCH = "prompt_patch"  # Amendments to skill prompts

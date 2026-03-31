@@ -19,7 +19,7 @@ from __future__ import annotations
 import logging
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
-from enum import Enum
+from enum import StrEnum
 from typing import Any
 
 import httpx
@@ -30,7 +30,7 @@ from shad.utils.config import get_settings
 logger = logging.getLogger(__name__)
 
 
-class WebhookEvent(str, Enum):
+class WebhookEvent(StrEnum):
     """Events that trigger n8n webhooks."""
 
     RUN_STARTED = "run.started"

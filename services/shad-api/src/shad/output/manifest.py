@@ -16,7 +16,7 @@ import re
 from dataclasses import dataclass, field
 from enum import Enum
 from pathlib import Path
-from typing import Any
+from typing import Any, cast
 
 logger = logging.getLogger(__name__)
 
@@ -319,7 +319,7 @@ class ExportIndex:
     def get_import_path(self, symbol: str) -> str | None:
         """Get the import path for a symbol."""
         if symbol in self.exports:
-            return self.exports[symbol]["from"]
+            return cast(str | None, self.exports[symbol]["from"])
         return None
 
 

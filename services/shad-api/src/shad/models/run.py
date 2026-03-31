@@ -4,13 +4,13 @@ from __future__ import annotations
 
 import uuid
 from datetime import datetime
-from enum import Enum
+from enum import StrEnum
 from typing import Any
 
 from pydantic import BaseModel, Field
 
 
-class RunStatus(str, Enum):
+class RunStatus(StrEnum):
     """Status of a run."""
 
     PENDING = "pending"
@@ -21,7 +21,7 @@ class RunStatus(str, Enum):
     ABORTED = "aborted"
 
 
-class NodeStatus(str, Enum):
+class NodeStatus(StrEnum):
     """Status of a DAG node."""
 
     CREATED = "created"
@@ -33,7 +33,7 @@ class NodeStatus(str, Enum):
     CACHE_HIT = "cache_hit"
 
 
-class StopReason(str, Enum):
+class StopReason(StrEnum):
     """Reason why a run or node stopped."""
 
     COMPLETE = "complete"

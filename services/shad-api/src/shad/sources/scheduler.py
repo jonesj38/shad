@@ -135,7 +135,7 @@ class SourceScheduler:
                     "schedule": s.schedule.value,
                     "enabled": s.enabled,
                     "last_sync": s.last_sync.isoformat() if s.last_sync else None,
-                    "next_sync": s.next_sync().isoformat() if s.next_sync() else None,
+                    "next_sync": ns.isoformat() if (ns := s.next_sync()) is not None else None,
                     "last_error": s.last_error,
                     "is_due": s.is_due(),
                 }

@@ -15,14 +15,16 @@ import re
 import subprocess
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
-from enum import Enum
+from enum import StrEnum
 from pathlib import Path
 from typing import Any
+
+from shad.vault.shadow_index import MemoryType, source_to_memory_type
 
 logger = logging.getLogger(__name__)
 
 
-class IngestPreset(str, Enum):
+class IngestPreset(StrEnum):
     """Ingestion presets defining what content to include.
 
     Per SPEC.md Section 2.12.1:
@@ -50,10 +52,11 @@ class SnapshotMetadata:
     content_hash: str
     snapshot_id: str
     extra: dict[str, Any] = field(default_factory=dict)
+    memory_type: MemoryType | None = None
 
     def to_frontmatter(self) -> dict[str, Any]:
         """Convert metadata to YAML frontmatter format."""
-        return {
+        result: dict[str, Any] = {
             "source_url": self.source_url,
             "source_type": self.source_type,
             "ingested_at": self.ingested_at.isoformat(),
@@ -62,6 +65,9 @@ class SnapshotMetadata:
             "snapshot_id": self.snapshot_id,
             **self.extra,
         }
+        if self.memory_type is not None:
+            result["memory_type"] = self.memory_type.value
+        return result
 
     def to_yaml(self) -> str:
         """Convert metadata to YAML string."""
@@ -282,7 +288,7 @@ class VaultIngester:
         target_path: Path,
         rel_path: str,
         metadata: SnapshotMetadata,
-    ) -> Path:
+    ) -> Path | None:
         """Convert a source file to a collection note.
 
         For markdown files: preserves content, adds/merges frontmatter.
@@ -295,7 +301,7 @@ class VaultIngester:
             metadata: Snapshot metadata for frontmatter
 
         Returns:
-            Path to the created note
+            Path to the created note, or None if the file was skipped.
         """
         try:
             content = source_file.read_text(encoding="utf-8")
@@ -308,13 +314,15 @@ class VaultIngester:
         is_markdown = self._is_markdown_file(source_file)
 
         # Build frontmatter
-        frontmatter = {
+        frontmatter: dict[str, Any] = {
             "type": "source",
             "source_url": metadata.source_url,
             "source_path": rel_path,
             "snapshot_id": metadata.snapshot_id,
             "ingested_at": metadata.ingested_at.isoformat(),
         }
+        if metadata.memory_type is not None:
+            frontmatter["memory_type"] = metadata.memory_type.value
 
         if not is_markdown:
             language = self.LANGUAGE_MAP.get(suffix, "")
@@ -510,6 +518,7 @@ class VaultIngester:
                 content_hash=content_hash,
                 snapshot_id=snapshot_id,
                 extra={"preset": preset.value},
+                memory_type=source_to_memory_type("github"),
             )
 
             # Convert files to collection notes

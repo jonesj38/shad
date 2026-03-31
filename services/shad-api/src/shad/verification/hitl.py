@@ -13,7 +13,7 @@ import json
 import logging
 from dataclasses import dataclass, field
 from datetime import UTC, datetime, timedelta
-from enum import Enum
+from enum import StrEnum
 from pathlib import Path
 from typing import Any
 
@@ -22,7 +22,7 @@ from shad.utils.config import get_settings
 logger = logging.getLogger(__name__)
 
 
-class ReviewStatus(str, Enum):
+class ReviewStatus(StrEnum):
     """Status of a review item."""
 
     PENDING = "pending"
@@ -32,7 +32,7 @@ class ReviewStatus(str, Enum):
     EXPIRED = "expired"
 
 
-class ReviewPriority(str, Enum):
+class ReviewPriority(StrEnum):
     """Priority levels for review items."""
 
     LOW = "low"

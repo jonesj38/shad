@@ -5,17 +5,17 @@ from __future__ import annotations
 import asyncio
 import json
 import logging
-from enum import Enum
+from enum import StrEnum
 from typing import Any
 
 from shad.models.run import ModelConfig
 from shad.utils.config import get_settings
-from shad.utils.models import get_ollama_env, is_ollama_model, normalize_model_name, is_gemini_model
+from shad.utils.models import get_ollama_env, is_gemini_model, is_ollama_model, normalize_model_name
 
 logger = logging.getLogger(__name__)
 
 
-class ModelTier(str, Enum):
+class ModelTier(StrEnum):
     """Model capability tiers."""
 
     ORCHESTRATOR = "orchestrator"  # Best reasoning/planning
@@ -212,18 +212,18 @@ class LLMProvider:
                     process.communicate(input=full_prompt.encode()),
                     timeout=timeout
                 )
-            except asyncio.TimeoutError:
+            except TimeoutError:
                 logger.error(f"[GEMINI_CLI] Timeout after {timeout}s - killing process")
                 try:
                     process.kill()
                     await process.wait()
                 except Exception as kill_err:
                     logger.warning(f"[GEMINI_CLI] Failed to kill process: {kill_err}")
-                
+
                 raise RuntimeError(
                     f"Gemini CLI timed out after {timeout}s. "
                     "Ensure you are authenticated (run 'gemini auth login') or increase gemini_cli_timeout."
-                )
+                ) from None
 
             if process.returncode != 0:
                 error_msg = stderr.decode() if stderr else "Unknown error"
@@ -236,7 +236,7 @@ class LLMProvider:
             return response, estimated_tokens
 
         except FileNotFoundError as e:
-            logger.error(f"[GEMINI_CLI] gemini CLI not found in PATH")
+            logger.error("[GEMINI_CLI] gemini CLI not found in PATH")
             raise RuntimeError(
                 "Gemini CLI not found. Install it or set use_gemini_cli=False"
             ) from e
@@ -308,7 +308,7 @@ class LLMProvider:
                     process.communicate(input=full_prompt.encode()),
                     timeout=timeout,
                 )
-            except asyncio.TimeoutError:
+            except TimeoutError:
                 logger.error(f"[{provider_label}] Timeout after {timeout}s - killing process")
                 try:
                     process.kill()
@@ -318,7 +318,7 @@ class LLMProvider:
                 raise RuntimeError(
                     f"Claude Code CLI timed out after {timeout}s for model {cli_model}. "
                     "Consider increasing claude_cli_timeout."
-                )
+                ) from None
 
             if process.returncode != 0:
                 error_msg = stderr.decode() if stderr else "Unknown error"
