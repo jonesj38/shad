@@ -50,6 +50,27 @@ class HistoryManager:
         """Get the path for a run's artifacts."""
         return self.runs_path / run_id
 
+    def save_incremental(self, run: Run) -> None:
+        """
+        Save run DAG and manifest incrementally (fast, safe for mid-run saves).
+
+        This writes just the DAG and manifest — enough for resume to pick up
+        where a killed process left off. Called after each node completes.
+        """
+        run_path = self.get_run_path(run.run_id)
+        run_path.mkdir(parents=True, exist_ok=True)
+        (run_path / "decisions").mkdir(exist_ok=True)
+        (run_path / "decisions" / "decomposition").mkdir(exist_ok=True)
+        (run_path / "metrics").mkdir(exist_ok=True)
+        (run_path / "errors").mkdir(exist_ok=True)
+        (run_path / "artifacts").mkdir(exist_ok=True)
+        (run_path / "replay").mkdir(exist_ok=True)
+
+        # Atomic write: write to temp file then rename
+        self._save_dag(run, run_path)
+        self._save_manifest(run, run_path)
+        logger.debug(f"Incremental save for run {run.run_id} ({len(run.completed_nodes())}/{len(run.nodes)} nodes)")
+
     def save_run(self, run: Run) -> Path:
         """
         Save a complete run with all artifacts.

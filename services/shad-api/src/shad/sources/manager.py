@@ -3,15 +3,20 @@
 from __future__ import annotations
 
 import logging
+from collections.abc import Callable
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
 from pathlib import Path
 
 from shad.sources.config import Source, SourceConfig, SourceSchedule, SourceType
 from shad.sources.ingest import FeedIngester, FolderIngester, IngestResult, URLIngester
-from shad.collection.ingestion import IngestPreset, VaultIngester
+from shad.vault.consolidation import ConsolidationConfig
+from shad.vault.ingestion import IngestPreset, VaultIngester
+from shad.vault.shadow_index import ShadowIndex, source_to_memory_type
 
 logger = logging.getLogger(__name__)
+
+_EPOCH = datetime(1970, 1, 1, tzinfo=UTC)
 
 
 @dataclass
@@ -29,8 +34,17 @@ class SyncResult:
 class SourceManager:
     """Manages source synchronization."""
 
-    def __init__(self, config_path: Path | None = None) -> None:
+    def __init__(
+        self,
+        config_path: Path | None = None,
+        consolidation_config: ConsolidationConfig | None = None,
+        shadow_index: ShadowIndex | None = None,
+        on_consolidation: Callable[[Source, int], None] | None = None,
+    ) -> None:
         self.config_path = config_path or Path.home() / ".shad" / "sources.yaml"
+        self.consolidation_config = consolidation_config or ConsolidationConfig()
+        self._shadow_index = shadow_index
+        self._on_consolidation = on_consolidation
         self._config: SourceConfig | None = None
 
     @property
@@ -111,6 +125,8 @@ class SourceManager:
             source.last_sync = datetime.now(UTC)
             if result.success:
                 source.last_error = None
+                result.metadata["memory_type"] = source_to_memory_type(source.type.value).value
+                self._check_consolidation(source)
             else:
                 source.last_error = "; ".join(result.errors) if result.errors else "Unknown error"
 
@@ -191,6 +207,36 @@ class SourceManager:
 
         ingester = FolderIngester(collection_path=collection_path)
         return await ingester.ingest(source.path)
+
+    def _check_consolidation(self, source: Source) -> None:
+        """Fire on_consolidation if episodic count exceeds the configured threshold.
+
+        Uses source.metadata["last_consolidation"] as the lower bound so only
+        entries accumulated since the previous consolidation run are counted.
+        Stamps the timestamp on firing so the next call measures the next window.
+        """
+        if self._shadow_index is None or self._on_consolidation is None:
+            return
+
+        last_str = source.metadata.get("last_consolidation")
+        since = datetime.fromisoformat(last_str) if last_str else _EPOCH
+        count = self._shadow_index.episodic_count(source.id, since)
+
+        if self.consolidation_config.should_consolidate(count):
+            logger.info(
+                "Consolidation triggered for source %s: %d episodic entries since %s",
+                source.id,
+                count,
+                since.isoformat(),
+            )
+            self._on_consolidation(source, count)
+            # Advance the watermark to the latest ingested_at of the entries
+            # that triggered consolidation (max of now and the latest entry's
+            # timestamp), so future-dated synthetic entries can't bleed into
+            # the next consolidation window.
+            latest = self._shadow_index.latest_episodic_ingested_at(source.id, since)
+            watermark = max(datetime.now(UTC), latest) if latest is not None else datetime.now(UTC)
+            source.metadata["last_consolidation"] = watermark.isoformat()
 
     def set_default_collection(self, collection_path: str) -> None:
         """Set the default collection path."""

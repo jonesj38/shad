@@ -17,6 +17,7 @@ from pathlib import Path
 from typing import Any
 
 from shad.retrieval.layer import RetrievalResult
+from shad.vault.decay import DecayConfig
 
 logger = logging.getLogger(__name__)
 
@@ -88,15 +89,21 @@ class QmdRetriever:
     def __init__(
         self,
         collection_names: dict[str, Any] | None = None,
+        decay_config: DecayConfig | None = None,
     ) -> None:
         """Initialize the qmd retriever.
 
         Args:
             collection_names: Optional mapping of collection name -> path.
                               Used to validate and resolve collection names.
+            decay_config:     Optional temporal decay config.  When provided,
+                              search results are re-sorted by decay-adjusted
+                              score (using ``ingested_at`` from each result's
+                              metadata).  Pass ``None`` to disable (default).
         """
         self._qmd_path: str | None = None
         self._collection_names = collection_names or {}
+        self._decay_config = decay_config
         # Cache for qmd-registered collection names mapped by path
         self._qmd_collections_by_path: dict[str, str] | None = None
         self._openai_support: bool | None = None
@@ -260,6 +267,8 @@ class QmdRetriever:
         collections: list[str] | None = None,
         limit: int = 10,
         min_score: float = 0.0,
+        memory_type: str | None = None,
+        memory_types: list[str] | None = None,
     ) -> list[RetrievalResult]:
         """Search for documents using qmd.
 
@@ -269,6 +278,15 @@ class QmdRetriever:
             collections: Optional list of collection names to search
             limit: Maximum number of results
             min_score: Minimum relevance score (0.0 to 1.0)
+            memory_type: Optional single-value frontmatter filter (e.g.
+                         "semantic_memory").  Passed to qmd as
+                         ``--filter memory_type=<value>`` (server-side).
+            memory_types: Optional list of memory type values to keep.
+                          Applied client-side after qmd returns results:
+                          only results whose ``metadata["memory_type"]`` is
+                          in this list are returned.  Non-matching results
+                          (including those without a ``memory_type`` field)
+                          are excluded.  ``None`` or ``[]`` disables filtering.
 
         Returns:
             List of RetrievalResult objects
@@ -311,6 +329,10 @@ class QmdRetriever:
         if min_score > 0:
             args.extend(["--min-score", str(min_score)])
 
+        # Add memory type filter (matches frontmatter field)
+        if memory_type:
+            args.extend(["--filter", f"memory_type={memory_type}"])
+
         try:
             logger.debug(f"Running qmd: {' '.join(args)}")
 
@@ -332,7 +354,7 @@ class QmdRetriever:
                     loop.run_in_executor(None, _run_qmd),
                     timeout=65.0,  # Slightly higher than subprocess timeout
                 )
-            except asyncio.TimeoutError:
+            except TimeoutError:
                 logger.warning("qmd search timed out after 65s")
                 return []
             except subprocess.TimeoutExpired:
@@ -358,7 +380,19 @@ class QmdRetriever:
 
             # Parse JSON output
             data = json.loads(output)
-            return self._parse_results(data)
+            results = self._parse_results(data)
+
+            if self._decay_config is not None and results:
+                from shad.vault.reranker import rerank_with_metadata
+                results = rerank_with_metadata(results, self._decay_config)
+
+            if memory_types:
+                results = [
+                    r for r in results
+                    if r.metadata.get("memory_type") in memory_types
+                ]
+
+            return results
 
         except json.JSONDecodeError as e:
             logger.error(f"Failed to parse qmd output: {e}")
@@ -397,7 +431,7 @@ class QmdRetriever:
                 stdout, stderr = await asyncio.wait_for(
                     process.communicate(), timeout=30,
                 )
-            except asyncio.TimeoutError:
+            except TimeoutError:
                 logger.error("[QMD] get timed out after 30s - killing")
                 process.kill()
                 await process.wait()
@@ -528,7 +562,7 @@ class QmdRetriever:
 
         try:
             process = await asyncio.create_subprocess_exec(
-                "qmd", "collection", "list", "--json",
+                "qmd", "collection", "list",
                 stdout=asyncio.subprocess.PIPE,
                 stderr=asyncio.subprocess.PIPE,
             )
@@ -537,7 +571,59 @@ class QmdRetriever:
             if process.returncode != 0:
                 return []
 
-            return json.loads(stdout.decode()) if stdout else []
+            output = stdout.decode() if stdout else ""
+            if not output.strip():
+                return []
+
+            # Try JSON first
+            try:
+                return list(json.loads(output))
+            except json.JSONDecodeError:
+                pass
+
+            # Parse text output format:
+            #   name (qmd://name/)
+            #     Pattern:  **/*.md
+            #     Files:    123
+            #     Updated:  1d ago
+            import re
+            collections = []
+            current: dict[str, Any] | None = None
+            for line in output.splitlines():
+                # Match collection header: "name (qmd://name/)"
+                m = re.match(r'^(\S+)\s+\(qmd://\S+/\)', line)
+                if m:
+                    if current:
+                        collections.append(current)
+                    current = {"name": m.group(1)}
+                    continue
+                if current and line.strip().startswith("Pattern:"):
+                    current["pattern"] = line.split(":", 1)[1].strip()
+                elif current and line.strip().startswith("Files:"):
+                    try:
+                        current["files"] = int(line.split(":", 1)[1].strip())
+                    except ValueError:
+                        current["files"] = line.split(":", 1)[1].strip()
+                elif current and line.strip().startswith("Updated:"):
+                    current["updated"] = line.split(":", 1)[1].strip()
+            if current:
+                collections.append(current)
+
+            # Resolve paths from qmd config
+            config_path = Path.home() / ".config" / "qmd" / "index.yml"
+            if config_path.exists():
+                try:
+                    import yaml
+                    with open(config_path) as f:
+                        config = yaml.safe_load(f) or {}
+                    config_collections = config.get("collections", {})
+                    for coll in collections:
+                        if coll["name"] in config_collections:
+                            coll["path"] = config_collections[coll["name"]].get("path", "")
+                except Exception:
+                    pass
+
+            return collections
 
         except Exception:
             return []
@@ -616,7 +702,7 @@ class QmdRetriever:
             else:
                 # Incremental embed — only embeds chunks without vectors
                 await asyncio.wait_for(self.embed_incremental(), timeout=30)
-        except asyncio.TimeoutError:
+        except TimeoutError:
             logger.warning("[QMD] Embedding timed out (30s) — continuing without full embeddings. BM25 search still works.")
         except Exception as e:
             logger.warning(f"[QMD] Embedding failed (non-fatal): {e}")
@@ -699,6 +785,32 @@ class QmdRetriever:
             logger.error(f"qmd embed error: {e}")
             return False
 
+    def _extract_frontmatter(self, content: str) -> dict[str, str]:
+        """Extract YAML frontmatter fields from document content.
+
+        Parses the leading ``---`` block present in qmd-ingested source
+        documents (e.g. ``ingested_at``, ``snapshot_id``, ``source_url``).
+        Only handles scalar string values — complex YAML is ignored.
+
+        Args:
+            content: Raw document content, possibly starting with ``---``.
+
+        Returns:
+            Dict of frontmatter key -> value strings (empty if none found).
+        """
+        if not content.startswith("---"):
+            return {}
+        try:
+            end = content.index("---", 3)
+        except ValueError:
+            return {}
+        fm: dict[str, str] = {}
+        for line in content[3:end].splitlines():
+            key, sep, value = line.partition(":")
+            if sep:
+                fm[key.strip()] = value.strip()
+        return fm
+
     def _parse_results(self, data: list[dict[str, Any]] | dict[str, Any]) -> list[RetrievalResult]:
         """Parse qmd JSON output into RetrievalResult objects.
 
@@ -716,6 +828,35 @@ class QmdRetriever:
             # qmd uses "file" field for the path
             # Fall back to snippet/context if content is empty (common with qmd search results)
             content = item.get("content", "") or item.get("snippet", item.get("context", ""))
+
+            # Start with fields that qmd may surface directly on the result object
+            ingested_at: str | None = item.get("ingested_at") or item.get("ingestedAt")
+            date: str | None = (
+                item.get("date") or item.get("created_at") or item.get("createdAt")
+            )
+
+            # Fall back to parsing YAML frontmatter embedded in the content
+            # (present in qmd-ingested source snapshots)
+            if ingested_at is None or date is None:
+                fm = self._extract_frontmatter(content)
+                if ingested_at is None:
+                    ingested_at = fm.get("ingested_at")
+                if date is None:
+                    date = fm.get("date") or fm.get("created") or fm.get("modified")
+
+            memory_type: str | None = item.get("memory_type")
+
+            metadata: dict[str, Any] = {
+                "title": item.get("title", ""),
+                "context": item.get("context", ""),
+            }
+            if ingested_at is not None:
+                metadata["ingested_at"] = ingested_at
+            if date is not None:
+                metadata["date"] = date
+            if memory_type is not None:
+                metadata["memory_type"] = memory_type
+
             result = RetrievalResult(
                 path=item.get("file", item.get("path", item.get("filepath", ""))),
                 content=content,
@@ -724,10 +865,7 @@ class QmdRetriever:
                 collection=item.get("collection", ""),
                 docid=item.get("docid", item.get("id", "")),
                 matched_line=item.get("matched_line", None),
-                metadata={
-                    "title": item.get("title", ""),
-                    "context": item.get("context", ""),
-                },
+                metadata=metadata,
             )
             results.append(result)
 

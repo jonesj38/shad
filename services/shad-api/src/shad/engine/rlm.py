@@ -46,6 +46,7 @@ from shad.refinement.manager import (
 from shad.retrieval import RetrievalLayer, get_retriever
 from shad.sandbox.executor import CodeExecutor, SandboxConfig
 from shad.utils.config import get_settings
+from shad.vault.decay import DecayConfig, apply_decay
 from shad.verification.layer import (
     VerificationConfig,
     VerificationLayer,
@@ -93,10 +94,13 @@ class RLMEngine:
         collections: list[str] | None = None,
         use_code_mode: bool = True,
         use_qmd_hybrid: bool = False,
+        decay_halflife_days: float = 30.0,
+        history: Any | None = None,
     ):
         self.llm = llm_provider or LLMProvider()
         self.cache: RedisCache | None = cache
         self.settings = get_settings()
+        self._history = history  # Optional HistoryManager for incremental saves
 
         # Store collection path
         self.collection_path = Path(collection_path) if collection_path else None
@@ -121,6 +125,12 @@ class RLMEngine:
         # Initialize CodeExecutor for Code Mode
         self._use_code_mode = use_code_mode and self.collection_path is not None
         self._use_qmd_hybrid = use_qmd_hybrid
+
+        # Temporal decay: halflife_days=0 disables decay entirely.
+        _hl_seconds = decay_halflife_days * 86_400.0
+        self._decay_config = DecayConfig(halflife_seconds=_hl_seconds)
+        self._retrieval_decay_config = DecayConfig(halflife_seconds=_hl_seconds)
+        self.code_executor: CodeExecutor | None = None
         if code_executor:
             self.code_executor = code_executor
         elif self._use_code_mode and self.collection_path:
@@ -159,6 +169,7 @@ class RLMEngine:
         run = Run(config=config)
         run.status = RunStatus.RUNNING
         run.started_at = datetime.now(UTC)
+        self._current_run = run  # Track for incremental saves
 
         # Initialize fresh state manager for this run (Phase 6)
         self.state_manager = RunStateManager()
@@ -347,6 +358,7 @@ class RLMEngine:
         run.status = RunStatus.RUNNING
         run.stop_reason = None
         run.error = None
+        self._current_run = run  # Track for incremental saves
 
         # Reset started_at so budget timer restarts from resume time
         run.started_at = datetime.now(UTC)
@@ -409,11 +421,11 @@ class RLMEngine:
 
                 context = ""  # Retrieve fresh context
                 if self.retriever.available:
-                    logger.info(f"[RESUME] Retrieving context for node...")
+                    logger.info("[RESUME] Retrieving context for node...")
                     context = await self._retrieve_collection_context(node.task, limit=5)
                     logger.info(f"[RESUME] Got {len(context)} chars of context")
 
-                logger.info(f"[RESUME] Executing node...")
+                logger.info("[RESUME] Executing node...")
                 await self._execute_node(run, node, context)
                 logger.info(f"[RESUME] Node complete: {node.status}")
 
@@ -496,6 +508,14 @@ class RLMEngine:
 
         finally:
             node.end_time = datetime.now(UTC)
+
+            # Incremental save: persist DAG after every node so progress
+            # survives if the process is killed
+            if self._history and self._current_run:
+                try:
+                    self._history.save_incremental(self._current_run)
+                except Exception as save_err:
+                    logger.warning(f"Incremental save failed (non-fatal): {save_err}")
 
     async def _decompose_and_execute(
         self,
@@ -627,27 +647,27 @@ class RLMEngine:
             )
 
             # Process results
-            for node_id, child in results:
-                if child is None:
+            for node_id, exec_node in results:
+                if exec_node is None:
                     continue
 
                 stage_name = node_to_stage[node_id]
 
                 # Create context packet for completed node
-                if child.status == NodeStatus.SUCCEEDED and child.result:
+                if exec_node.status == NodeStatus.SUCCEEDED and exec_node.result:
                     packet = self.context_manager.create_packet(
-                        node_id=child.node_id,
+                        node_id=exec_node.node_id,
                         stage_name=stage_name,
-                        result=child.result,
-                        artifacts=child.metadata.get("artifacts", []),
+                        result=exec_node.result,
+                        artifacts=exec_node.metadata.get("artifacts", []),
                     )
                     self.context_manager.store.add(packet)
                     logger.info(f"[CONTEXT_PACKET] Created packet for {stage_name}: {len(packet.keywords)} keywords")
 
-                    child_results.append((child.task, child.result))
+                    child_results.append((exec_node.task, exec_node.result))
 
                 # Update token count
-                run.total_tokens += child.tokens_used
+                run.total_tokens += exec_node.tokens_used
 
                 # Mark stage as completed
                 completed_stages.add(stage_name)
@@ -785,7 +805,7 @@ class RLMEngine:
         """Retrieve relevant context from the collection(s).
 
         Uses the configured retrieval backend (qmd or filesystem).
-        
+
         Modes:
         - qmd_hybrid (default): Full hybrid pipeline (BM25 + vector + RRF + reranking)
           with vector-only fallback if hybrid fails
@@ -810,6 +830,29 @@ class RLMEngine:
 
         # Fallback: Direct retriever search (BM25)
         return await self._retrieve_direct(query, limit)
+
+    def _apply_temporal_decay(self, results: list) -> list:
+        """Decay each result's score by its age, then re-sort descending.
+
+        Age is derived from ``metadata["ingested_at"]`` (preferred) or
+        ``metadata["date"]``.  Results without a parseable timestamp are
+        left unchanged so they naturally sink below fresh results.
+        """
+        now = datetime.now(UTC)
+        for result in results:
+            raw_ts = result.metadata.get("ingested_at") or result.metadata.get("date")
+            if not raw_ts:
+                continue
+            try:
+                ts = datetime.fromisoformat(str(raw_ts).rstrip("Z"))
+                if ts.tzinfo is None:
+                    ts = ts.replace(tzinfo=UTC)
+                age_seconds = (now - ts).total_seconds()
+                result.score = apply_decay(result.score, age_seconds, self._decay_config)
+            except (ValueError, TypeError):
+                pass
+        results.sort(key=lambda r: r.score, reverse=True)
+        return results
 
     async def _retrieve_qmd_hybrid(self, query: str, limit: int = 10) -> str:
         """Retrieve context using qmd's full hybrid search pipeline.
@@ -847,7 +890,8 @@ class RLMEngine:
                 logger.info(f"[RETRIEVAL] No results found for: {query[:60]}...")
                 return ""
 
-            logger.info(f"[RETRIEVAL] Found {len(results)} results (hybrid+rerank)")
+            results = self._apply_temporal_decay(results)
+            logger.info(f"[RETRIEVAL] Found {len(results)} results (hybrid+rerank+decay)")
 
             # Format results into context string
             context_parts = []
@@ -871,6 +915,7 @@ class RLMEngine:
                     limit=limit,
                 )
                 if results:
+                    results = self._apply_temporal_decay(results)
                     context_parts = []
                     for result in results:
                         header = f"## {result.path} (score: {result.score:.2f})"
@@ -893,7 +938,7 @@ class RLMEngine:
             return ""
 
         # Phase 1: Fast search via qmd to find relevant documents
-        logger.info(f"[CODE_MODE] Phase 1: Searching for relevant documents...")
+        logger.info("[CODE_MODE] Phase 1: Searching for relevant documents...")
         search_results = await self._search_for_code_mode(query, limit=15)
 
         if not search_results:
@@ -1066,7 +1111,13 @@ class RLMEngine:
                 logger.info("[RETRIEVAL] No results found")
                 return ""
 
-            # Sort by cumulative score (documents matching more keywords rank higher)
+            # Apply temporal decay to cumulative scores before sorting
+            now = datetime.now(UTC)
+            for path, cum_score in list(path_scores.items()):
+                age = self._path_age_seconds(path, now)
+                path_scores[path] = apply_decay(cum_score, age, self._retrieval_decay_config)
+
+            # Sort by decay-adjusted cumulative score (fresher + more-keyword matches rank higher)
             sorted_paths = sorted(path_scores.keys(), key=lambda p: path_scores[p], reverse=True)
             results = [all_results[p] for p in sorted_paths[:limit]]
 
@@ -1100,6 +1151,21 @@ class RLMEngine:
         except Exception as e:
             logger.error(f"[RETRIEVAL] Failed: {e}")
             return ""
+
+    @staticmethod
+    def _path_age_seconds(path: str, now: datetime) -> float:
+        """Return age in seconds by parsing a YYYY-MM-DD segment from *path*.
+
+        Returns 0.0 (no decay) when no date pattern is found.
+        """
+        m = re.search(r"(\d{4})-(\d{2})-(\d{2})", path)
+        if not m:
+            return 0.0
+        try:
+            doc_date = datetime(int(m.group(1)), int(m.group(2)), int(m.group(3)), tzinfo=UTC)
+            return max(0.0, (now - doc_date).total_seconds())
+        except ValueError:
+            return 0.0
 
     # Common stop words for keyword extraction
     STOP_WORDS = frozenset({

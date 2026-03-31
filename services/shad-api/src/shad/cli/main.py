@@ -30,7 +30,7 @@ from shad.engine.strategies import StrategySelector, StrategyType
 from shad.history import HistoryManager
 from shad.models import Budget, ModelConfig, RunConfig
 from shad.models.run import NodeStatus, Run, RunStatus, StopReason
-from shad.retrieval import FilesystemRetriever, QmdRetriever, get_retriever
+from shad.retrieval import QmdRetriever, get_retriever
 from shad.utils.config import get_settings
 
 console = Console()
@@ -49,7 +49,7 @@ def _get_system_specs() -> tuple[int, float]:
                 mem_bytes = int(result.stdout.strip() or 0)
                 mem_gb = max(mem_gb, mem_bytes / (1024 ** 3))
         elif system == "linux":
-            with open("/proc/meminfo", "r", encoding="utf-8") as f:
+            with open("/proc/meminfo", encoding="utf-8") as f:
                 for line in f:
                     if line.startswith("MemTotal"):
                         parts = line.split()
@@ -414,6 +414,8 @@ def cli() -> None:
 @click.option("--api", default=None, help="Shad API URL (uses local engine if not specified)")
 @click.option("--no-code-mode", is_flag=True, help="Disable Code Mode (LLM-generated retrieval scripts)")
 @click.option("--qmd-hybrid/--no-qmd-hybrid", default=True, help="Use qmd hybrid search with reranking (BM25 + vector + RRF + reranker, default: on)")
+@click.option("--decay-halflife", default=30.0, type=float, metavar="DAYS",
+              help="Half-life for temporal score decay in days (0 = disable decay, default: 30)")
 @click.option("--strategy", "-s", type=click.Choice(["software", "research", "analysis", "planning"]),
               help="Override automatic strategy selection")
 @click.option("--verify", type=click.Choice(["off", "basic", "build", "strict"]), default="basic",
@@ -442,6 +444,7 @@ def run(
     api: str | None,
     no_code_mode: bool,
     qmd_hybrid: bool,
+    decay_halflife: float,
     strategy: str | None,
     verify: str,
     write_files: bool,
@@ -629,7 +632,7 @@ def run(
     console.print(f"[dim][VERIFY] Level: {verify}[/dim]")
     if write_files:
         console.print(f"[dim][OUTPUT] Write files enabled{f' → {output_dir}' if output_dir else ''}[/dim]")
-    
+
     # Provider info
     if gemini:
         console.print("[dim][PROVIDER] Using Gemini CLI[/dim]")
@@ -670,6 +673,8 @@ def run(
         console.print(table)
         return
 
+    history = HistoryManager()
+
     async def _execute_run() -> Run:
         """Execute run."""
         engine = RLMEngine(
@@ -683,10 +688,10 @@ def run(
             collections=collections,
             use_code_mode=use_code_mode,
             use_qmd_hybrid=qmd_hybrid,
+            decay_halflife_days=decay_halflife,
+            history=history,
         )
         return await engine.execute(config)
-
-    history = HistoryManager()
 
     with Progress(
         SpinnerColumn(),
@@ -852,7 +857,7 @@ def plan(
         console.print(f"[dim][OUTPUT] write files -> {recommended_output_dir}[/dim]")
 
     if results:
-        console.print(f"\n[bold]Retrieval Check[/bold]")
+        console.print("\n[bold]Retrieval Check[/bold]")
         for idx, result in enumerate(results[:3], 1):
             prefix = f"[{result.collection}] " if result.collection else ""
             console.print(f"{idx}. [cyan]{prefix}{result.path}[/cyan] [dim](score: {result.score:.2f})[/dim]")
@@ -912,11 +917,34 @@ def list_runs_command(api: str | None, limit: int, active: bool, as_json: bool) 
     _render_runs_table(runs, title=title)
 
 
-@cli.command("collection")
+@cli.group("collection", invoke_without_command=True)
 @click.option("--collection", "-c", multiple=True, help="Collection path(s) to inspect")
 @click.option("--vault", "legacy_collection", "-v", multiple=True, hidden=True, help="[deprecated: use --collection]")
-def collection_status(collection: tuple[str, ...], legacy_collection: tuple[str, ...]) -> None:
-    """Inspect collection and retriever status."""
+@click.pass_context
+def collection_group(ctx: click.Context, collection: tuple[str, ...], legacy_collection: tuple[str, ...]) -> None:
+    """Manage collections and retriever status.
+
+    \b
+    Subcommands:
+        list           List all indexed collections
+        add <path>     Add a directory as a collection
+        remove <name>  Remove a collection
+        embed          Generate vector embeddings
+
+    \b
+    Without a subcommand, shows collection and retriever status.
+
+    \b
+    Examples:
+        shad collection                              # Show status
+        shad collection list                         # List all collections
+        shad collection add ~/Notes --name my-notes  # Add collection
+        shad collection remove my-notes              # Remove collection
+        shad collection embed                        # Generate embeddings
+    """
+    if ctx.invoked_subcommand is not None:
+        return
+
     import shutil
 
     collection_paths, collection_names, source = _resolve_collection_inputs(collection, legacy_collection)
@@ -941,12 +969,170 @@ def collection_status(collection: tuple[str, ...], legacy_collection: tuple[str,
         async def get_status() -> dict[str, Any]:
             return await retriever.status()
 
-        status = run_async(get_status())
-        collections = status.get("collections", [])
-        if collections:
-            console.print("\n[bold]qmd Collections[/bold]")
-            for coll in collections:
+        status_info = run_async(get_status())
+        collections_list = status_info.get("collections", [])
+        if collections_list:
+            console.print("\n[bold]Indexed Collections[/bold]")
+            for coll in collections_list:
                 console.print(f"[dim]- {coll.get('name', 'unknown')}: {coll.get('path', '')}[/dim]")
+
+
+@collection_group.command("list")
+@click.option("--json", "as_json", is_flag=True, default=False, help="Output as JSON")
+def collection_list(as_json: bool) -> None:
+    """List all indexed collections."""
+    retriever = QmdRetriever()
+    if not retriever.available:
+        console.print("[red]qmd is not installed. Install it for collection management.[/red]")
+        sys.exit(1)
+
+    collections_data = run_async(retriever.list_collections())
+
+    if as_json:
+        click.echo(json.dumps(collections_data, ensure_ascii=False, indent=2))
+        return
+
+    if not collections_data:
+        console.print("[yellow]No collections found. Use 'shad collection add <path>' to create one.[/yellow]")
+        return
+
+    table = Table(title="Collections", border_style="blue")
+    table.add_column("Name", style="cyan bold")
+    table.add_column("Path")
+    table.add_column("Pattern", style="dim")
+    table.add_column("Files", justify="right")
+
+    for coll in collections_data:
+        table.add_row(
+            coll.get("name", ""),
+            coll.get("path", ""),
+            coll.get("pattern", "**/*.md"),
+            str(coll.get("files", "")),
+        )
+
+    console.print(table)
+
+
+@collection_group.command("add")
+@click.argument("path")
+@click.option("--name", "-n", default=None, help="Collection name (defaults to directory name)")
+@click.option("--mask", "-m", default="**/*.md", help="File glob pattern (default: **/*.md)")
+def collection_add(path: str, name: str | None, mask: str) -> None:
+    """Add a directory as a searchable collection.
+
+    \b
+    Examples:
+        shad collection add ~/Notes
+        shad collection add ~/Code --name my-code --mask "**/*.py"
+        shad collection add ./docs --mask "**/*.md,**/*.txt"
+    """
+    retriever = QmdRetriever()
+    if not retriever.available:
+        console.print("[red]qmd is not installed. Install it for collection management.[/red]")
+        sys.exit(1)
+
+    target_path = Path(path).expanduser().resolve()
+    if not target_path.exists():
+        console.print(f"[red]Path does not exist: {target_path}[/red]")
+        sys.exit(1)
+
+    coll_name = name or target_path.name
+
+    with Progress(
+        SpinnerColumn(),
+        TextColumn("[progress.description]{task.description}"),
+        console=console,
+    ) as progress:
+        progress.add_task(f"Adding collection '{coll_name}'...", total=None)
+        success = run_async(retriever.add_collection(str(target_path), name=coll_name, mask=mask))
+
+    if success:
+        console.print(f"[green]✓[/green] Collection '{coll_name}' added: {target_path}")
+        console.print(f"[dim]  Pattern: {mask}[/dim]")
+        console.print("\n[dim]Run 'shad collection embed' to generate vector embeddings.[/dim]")
+    else:
+        console.print("[red]Failed to add collection. It may already exist.[/red]")
+        console.print("[dim]Use 'shad collection list' to check existing collections.[/dim]")
+        sys.exit(1)
+
+
+@collection_group.command("remove")
+@click.argument("name")
+@click.option("--yes", "-y", is_flag=True, help="Skip confirmation")
+def collection_remove(name: str, yes: bool) -> None:
+    """Remove a collection from the index.
+
+    This only removes the index entry — it does NOT delete any files.
+
+    \b
+    Examples:
+        shad collection remove my-notes
+        shad collection remove old-docs -y
+    """
+    retriever = QmdRetriever()
+    if not retriever.available:
+        console.print("[red]qmd is not installed.[/red]")
+        sys.exit(1)
+
+    if not yes:
+        click.confirm(f"Remove collection '{name}' from the index?", abort=True)
+
+    async def do_remove() -> bool:
+        try:
+            process = await asyncio.create_subprocess_exec(
+                "qmd", "collection", "remove", name,
+                stdout=asyncio.subprocess.PIPE,
+                stderr=asyncio.subprocess.PIPE,
+            )
+            _, stderr = await process.communicate()
+            if process.returncode != 0:
+                console.print(f"[red]{stderr.decode().strip()}[/red]")
+                return False
+            return True
+        except Exception as e:
+            console.print(f"[red]Error: {e}[/red]")
+            return False
+
+    if run_async(do_remove()):
+        console.print(f"[green]✓[/green] Collection '{name}' removed from index")
+    else:
+        sys.exit(1)
+
+
+@collection_group.command("embed")
+@click.option("--force", "-f", is_flag=True, help="Force re-embedding of all chunks")
+def collection_embed(force: bool) -> None:
+    """Generate vector embeddings for all collections.
+
+    Processes any chunks that don't yet have vector embeddings.
+    Uses the configured embedding provider (local GPU by default).
+
+    \b
+    Examples:
+        shad collection embed         # Embed new chunks only
+        shad collection embed --force  # Re-embed everything
+    """
+    import shutil
+    import subprocess
+
+    if not shutil.which("qmd"):
+        console.print("[red]qmd is not installed. Install it for embedding support.[/red]")
+        sys.exit(1)
+
+    # Run qmd embed with live output (streaming to terminal)
+    args = ["qmd", "embed"]
+    if force:
+        args.append("-f")
+
+    console.print(Panel("Generating Embeddings", border_style="blue"))
+    console.print(f"[dim]Running: {' '.join(args)}[/dim]\n")
+
+    result = subprocess.run(args, env={**os.environ, "QMD_OPENAI": "0"})
+    if result.returncode == 0:
+        console.print("\n[green]✓[/green] Embeddings generated successfully")
+    else:
+        console.print("\n[red]Embedding failed[/red]")
+        sys.exit(result.returncode)
 
 
 def _run_via_api(api: str, payload: dict[str, Any]) -> None:
@@ -994,7 +1180,7 @@ def _run_via_api(api: str, payload: dict[str, Any]) -> None:
 
                         status_response = client.get(f"{api}/v1/runs/{run_id}")
                         status_response.raise_for_status()
-                        run_data = status_response.json()
+                        run_data: dict[str, Any] = status_response.json()
                         status_value = run_data.get("status", "unknown")
 
                         if status_value == "running":
@@ -1013,7 +1199,7 @@ def _run_via_api(api: str, payload: dict[str, Any]) -> None:
                 TextColumn("[progress.description]{task.description}"),
                 console=console,
             ) as progress:
-                task_id = progress.add_task("Queued...", total=None)
+                progress.add_task("Queued...", total=None)
                 progress.stop()
 
             try:
@@ -1308,7 +1494,7 @@ def resume(
         elif model_config:
             console.print(f"[dim]Using original models: O={model_config.orchestrator_model}, W={model_config.worker_model}, L={model_config.leaf_model}[/dim]")
 
-        engine = RLMEngine(llm_provider=LLMProvider(model_config=model_config))
+        engine = RLMEngine(llm_provider=LLMProvider(model_config=model_config), history=history)
         return await engine.resume(run_data, replay_mode=replay)
 
     with Progress(
@@ -1795,7 +1981,7 @@ def ingest_github(
         shad ingest github https://github.com/user/repo --collection ~/MyCollection
         shad ingest github https://github.com/user/repo -c ~/MyCollection --preset deep
     """
-    from shad.collection.ingestion import IngestPreset, VaultIngester
+    from shad.vault.ingestion import IngestPreset, VaultIngester
 
     target = collection or legacy_collection
     if not target:
@@ -2380,7 +2566,7 @@ def sources_sync(sync_all: bool, daemon: bool, interval: int) -> None:
         console.print(f"[blue]Starting source scheduler (interval: {interval}s)[/blue]")
         console.print("[dim]Press Ctrl+C to stop[/dim]")
 
-        def on_sync(result: any) -> None:
+        def on_sync(result: Any) -> None:
             console.print(
                 f"[dim]Sync: {result.successful} ok, {result.failed} failed, "
                 f"{result.skipped} skipped[/dim]"
@@ -2711,7 +2897,7 @@ def doctor(fix: bool) -> None:
     console.print(Panel("Shad Doctor", border_style="blue"))
 
     # Check shad binary (self)
-    console.print(f"[green]✔[/green] Shad CLI available")
+    console.print("[green]✔[/green] Shad CLI available")
 
     # Check qmd
     qmd_path = shutil.which("qmd")
@@ -2748,11 +2934,11 @@ def doctor(fix: bool) -> None:
     redis_url = get_settings().redis_url
     try:
         hostport = redis_url.split("//", 1)[-1]
-        host, port = hostport.split(":", 1)
-        port = int(port.split("/", 1)[0])
+        host, port_str = hostport.split(":", 1)
+        port_int = int(port_str.split("/", 1)[0])
         import socket
-        with socket.create_connection((host, port), timeout=2):
-            console.print(f"[green]✔[/green] Redis reachable at {host}:{port}")
+        with socket.create_connection((host, port_int), timeout=2):
+            console.print(f"[green]✔[/green] Redis reachable at {host}:{port_int}")
     except Exception:
         console.print(f"[yellow]⚠[/yellow] Redis not reachable at {redis_url}")
 
@@ -2831,6 +3017,21 @@ def check_permissions(path: str) -> None:
         console.print("[dim]Run 'shad init --force' to update[/dim]")
     else:
         console.print("\n[green]All shad permissions are configured[/green]")
+
+
+# Top-level embed alias for convenience
+@cli.command("embed")
+@click.option("--force", "-f", is_flag=True, help="Force re-embedding of all chunks")
+@click.pass_context
+def embed_alias(ctx: click.Context, force: bool) -> None:
+    """Generate vector embeddings (alias for 'shad collection embed').
+
+    \b
+    Examples:
+        shad embed          # Embed new chunks only
+        shad embed --force  # Re-embed everything
+    """
+    ctx.invoke(collection_embed, force=force)
 
 
 if __name__ == "__main__":
