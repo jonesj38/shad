@@ -122,3 +122,5 @@ output/
 *.temp
 .cache/
 ARCHITECTURE_COMPARISON.md
+MEMORY_SYSTEMS_*.md
+GAP_REPORT_*.md
