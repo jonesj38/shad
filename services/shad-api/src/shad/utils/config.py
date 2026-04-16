@@ -55,9 +55,9 @@ class Settings(BaseSettings):
     gemini_leaf_model: str = "gemini-3-flash-preview"
 
     # Default model settings
-    orchestrator_model: str = "claude-sonnet-4-20250514"
-    worker_model: str = "claude-sonnet-4-20250514"
-    leaf_model: str = "claude-haiku-4-20250514"
+    orchestrator_model: str = "claude-opus-4-6"
+    worker_model: str = "claude-sonnet-4-6"
+    leaf_model: str = "claude-sonnet-4-6"
 
     # Path Settings (default to ~/.shad/)
     history_path: Path = _shad_home / "history"

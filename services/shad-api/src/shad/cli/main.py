@@ -24,6 +24,7 @@ from rich.table import Table
 from rich.tree import Tree
 
 from shad import __version__
+from shad.cache import RedisCache
 from shad.engine import LLMProvider, RLMEngine
 from shad.engine.llm import ModelTier
 from shad.engine.strategies import StrategySelector, StrategyType
@@ -677,21 +678,27 @@ def run(
 
     async def _execute_run() -> Run:
         """Execute run."""
-        engine = RLMEngine(
-            llm_provider=LLMProvider(
-                model_config=model_config,
-                use_gemini_cli=gemini,
-                use_claude_code=not gemini,
-            ),
-            retriever=retriever_instance,
-            collection_path=primary_collection,
-            collections=collections,
-            use_code_mode=use_code_mode,
-            use_qmd_hybrid=qmd_hybrid,
-            decay_halflife_days=decay_halflife,
-            history=history,
-        )
-        return await engine.execute(config)
+        cache = RedisCache()
+        await cache.connect()
+        try:
+            engine = RLMEngine(
+                llm_provider=LLMProvider(
+                    model_config=model_config,
+                    use_gemini_cli=gemini,
+                    use_claude_code=not gemini,
+                ),
+                cache=cache,
+                retriever=retriever_instance,
+                collection_path=primary_collection,
+                collections=collections,
+                use_code_mode=use_code_mode,
+                use_qmd_hybrid=qmd_hybrid,
+                decay_halflife_days=decay_halflife,
+                history=history,
+            )
+            return await engine.execute(config)
+        finally:
+            await cache.disconnect()
 
     with Progress(
         SpinnerColumn(),

@@ -755,14 +755,14 @@ class RLMEngine:
     ) -> str:
         """Generate a cache key for a task.
 
-        Per COLLECTION_PIVOT.md Section 6.2: Hash Validation
-        Cache keys include context_hash derived from file content/mtime.
+        Keys are based on the task text only, not retrieved context,
+        because context retrieval is non-deterministic across runs.
+        When a stable context_hash (from file content/mtime) is available,
+        it's appended as a validation suffix.
         """
-        # Include context hash for cache coherence
+        key_data = task.strip()
         if context_hash:
-            key_data = f"{task}::{context_hash}"
-        else:
-            key_data = f"{task}::{context[:500] if context else ''}"
+            key_data = f"{key_data}::{context_hash}"
         return hashlib.sha256(key_data.encode()).hexdigest()[:16]
 
     async def _get_context_hash(self, query: str) -> str | None:

@@ -122,7 +122,7 @@ class RedisCache:
         self._connected = False
 
     async def connect(self) -> None:
-        """Connect to Redis."""
+        """Connect to Redis, falling back to in-memory cache."""
         if self._connected:
             return
 
@@ -135,18 +135,21 @@ class RedisCache:
             # Test connection
             await cast(Any, self._client.ping())
             self._connected = True
+            self._using_memory_fallback = False
             logger.info(f"Connected to Redis at {self.redis_url}")
         except Exception as e:
-            logger.warning(f"Failed to connect to Redis: {e}")
+            logger.warning(f"Redis unavailable ({e}), using in-memory cache fallback")
             self._client = None
-            self._connected = False
+            self._memory_store: dict[str, tuple[str, float]] = {}
+            self._connected = True
+            self._using_memory_fallback = True
 
     async def disconnect(self) -> None:
         """Disconnect from Redis."""
         if self._client:
             await self._client.close()
             self._client = None
-            self._connected = False
+        self._connected = False
 
     async def get(self, key: str | CacheKey) -> str | None:
         """
@@ -158,18 +161,28 @@ class RedisCache:
         Returns:
             Cached result or None if not found
         """
-        if not self._connected or not self._client:
+        if not self._connected:
             return None
 
         str_key = key.to_string() if isinstance(key, CacheKey) else key
         full_key = self.MAIN_PREFIX + str_key
 
+        if getattr(self, "_using_memory_fallback", False):
+            entry = self._memory_store.get(full_key)
+            if entry:
+                logger.info(f"Cache hit (memory) for {str_key}")
+                return entry[0]
+            return None
+
+        if not self._client:
+            return None
+
         try:
             data = await self._client.get(full_key)
             if data:
-                entry = json.loads(data)
-                logger.debug(f"Cache hit for {str_key}")
-                return entry.get("value")
+                entry_data = json.loads(data)
+                logger.info(f"Cache hit (redis) for {str_key}")
+                return entry_data.get("value")
         except Exception as e:
             logger.warning(f"Cache get error: {e}")
 
@@ -198,17 +211,24 @@ class RedisCache:
         Returns:
             True if cached successfully
         """
-        if not self._connected or not self._client:
+        if not self._connected:
             return False
 
         str_key = key.to_string() if isinstance(key, CacheKey) else key
         prefix = self.STAGING_PREFIX if provisional else self.MAIN_PREFIX
         full_key = prefix + str_key
 
+        if getattr(self, "_using_memory_fallback", False):
+            import time
+            self._memory_store[full_key] = (value, time.time())
+            logger.debug(f"Cached result (memory) for {str_key}")
+            return True
+
+        if not self._client:
+            return False
+
         if ttl is None:
             ttl = self.DEFAULT_STAGING_TTL if provisional else self.DEFAULT_MAIN_TTL
-
-        from datetime import datetime
 
         entry = {
             "key": str_key,
@@ -226,7 +246,7 @@ class RedisCache:
                 ttl,
                 json.dumps(entry),
             )
-            logger.debug(f"Cached result for {str_key} (provisional={provisional})")
+            logger.debug(f"Cached result (redis) for {str_key}")
             return True
         except Exception as e:
             logger.warning(f"Cache set error: {e}")
