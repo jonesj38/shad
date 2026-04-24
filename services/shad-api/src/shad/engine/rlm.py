@@ -618,6 +618,22 @@ class RLMEngine:
 
             logger.info(f"[PARALLEL] Executing {len(ready_nodes)} nodes in parallel")
 
+            prefetched_contexts: dict[str, str] = {}
+            if self.retriever.available:
+                unique_ready_tasks = {pending_nodes[nid][0] for nid in ready_nodes}
+                if unique_ready_tasks:
+                    logger.info(
+                        f"[PARALLEL] Prefetching retrieval context for {len(unique_ready_tasks)} unique ready tasks"
+                    )
+                    prefetched = await asyncio.gather(
+                        *[
+                            self._retrieve_collection_context_cached(task, limit=5)
+                            for task in unique_ready_tasks
+                        ],
+                        return_exceptions=False,
+                    )
+                    prefetched_contexts = dict(zip(unique_ready_tasks, prefetched, strict=False))
+
             # Execute ready nodes in parallel (no semaphore here — semaphore is on LLM calls only)
             async def execute_single_node(nid: str) -> tuple[str, DAGNode | None]:
                 """Execute a single node and return (node_id, node)."""
@@ -641,7 +657,9 @@ class RLMEngine:
 
                     # Retrieve subtask-specific context from collection
                     if self.retriever.available:
-                        fresh_context = await self._retrieve_collection_context_cached(task, limit=5)
+                        fresh_context = prefetched_contexts.get(task, "")
+                        if not fresh_context:
+                            fresh_context = await self._retrieve_collection_context_cached(task, limit=5)
                         if fresh_context:
                             logger.info(f"[CONTEXT] Retrieved {len(fresh_context)} chars for subtask: {task[:50]}...")
                             subtask_context = f"{subtask_context}\n\n{fresh_context}"

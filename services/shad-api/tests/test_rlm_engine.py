@@ -424,3 +424,63 @@ async def test_parallel_frontier_prioritizes_nodes_with_more_dependents() -> Non
     await engine._decompose_and_execute(run, parent, "")
 
     assert execution_order[:2] == ["wide", "narrow"]
+
+
+@pytest.mark.asyncio
+async def test_parallel_frontier_prefetches_unique_ready_contexts() -> None:
+    """A ready frontier should prefetch each unique task context only once."""
+    mock_llm = MagicMock()
+    mock_llm.answer_task = AsyncMock(return_value=("Answer", 1))
+    mock_llm.synthesize_results = AsyncMock(return_value="Synth")
+
+    engine = RLMEngine(llm_provider=mock_llm)
+    engine._selected_strategy = object()
+    engine.decomposer.decompose = AsyncMock(return_value=SimpleNamespace(
+        is_valid=True,
+        validation_errors=[],
+        tokens_used=0,
+        nodes=[
+            SimpleNamespace(stage_name="a1", task="shared task", hard_deps=[], soft_deps=[]),
+            SimpleNamespace(stage_name="a2", task="shared task", hard_deps=[], soft_deps=[]),
+            SimpleNamespace(stage_name="b1", task="unique task", hard_deps=[], soft_deps=[]),
+        ],
+    ))
+
+    run = SimpleNamespace(
+        config=RunConfig(goal="goal", budget=Budget(max_depth=4, max_branching_factor=5)),
+        total_tokens=0,
+        nodes={},
+    )
+    run.add_node = lambda child: run.nodes.__setitem__(child.node_id, child)
+    run.get_node = lambda node_id: run.nodes.get(node_id)
+
+    parent = SimpleNamespace(
+        node_id="parent",
+        depth=0,
+        children=[],
+        task="x" * 200,
+        metadata={},
+        result=None,
+        status=None,
+        error=None,
+    )
+
+    prefetched_tasks: list[str] = []
+
+    async def fake_retrieve(task: str, limit: int = 10):
+        prefetched_tasks.append(task)
+        return f"ctx:{task}"
+
+    async def fake_execute_node(_run, child, context):
+        child.status = NodeStatus.SUCCEEDED
+        child.result = context
+        child.tokens_used = 1
+
+    engine._retrieve_collection_context_cached = fake_retrieve
+    engine._execute_node = fake_execute_node
+    engine._check_budgets = lambda *_args, **_kwargs: None
+    engine.retriever = MagicMock(available=True)
+
+    await engine._decompose_and_execute(run, parent, "")
+
+    assert sorted(prefetched_tasks) == ["shared task", "unique task"]
