@@ -7,7 +7,7 @@ from __future__ import annotations
 
 import json
 import logging
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from typing import Any
 
@@ -166,6 +166,8 @@ class HistoryManager:
         run.citations = manifest.get("citations", [])
         run.metadata = manifest.get("metadata", {})
 
+        self._reconcile_stale_run(run)
+
         # Load nodes
         for node_data in dag_data.get("nodes", []):
             node = DAGNode(
@@ -206,16 +208,55 @@ class HistoryManager:
             try:
                 with manifest_path.open() as f:
                     manifest = json.load(f)
+
+                status = manifest.get("status")
+                started_at_raw = manifest.get("started_at")
+                max_wall_time = manifest.get("config", {}).get("budget", {}).get("max_wall_time")
+                if (
+                    status == RunStatus.RUNNING.value
+                    and started_at_raw
+                    and isinstance(max_wall_time, (int, float))
+                ):
+                    started_at = datetime.fromisoformat(started_at_raw)
+                    deadline = started_at + timedelta(seconds=float(max_wall_time))
+                    if datetime.now(UTC) > deadline:
+                        status = RunStatus.PARTIAL.value
+
                 runs.append({
                     "run_id": run_dir.name,
                     "goal": manifest.get("config", {}).get("goal", "")[:80],
-                    "status": manifest.get("status"),
+                    "status": status,
                     "created_at": manifest.get("created_at"),
                 })
             except Exception as e:
                 logger.warning(f"Failed to load manifest for {run_dir.name}: {e}")
 
         return runs
+
+    def _reconcile_stale_run(self, run: Run) -> None:
+        """Promote obviously stale running runs into a terminal state."""
+        if run.status != RunStatus.RUNNING or not run.started_at:
+            return
+
+        max_wall_time = getattr(run.config.budget, "max_wall_time", None)
+        if not isinstance(max_wall_time, (int, float)):
+            return
+
+        deadline = run.started_at + timedelta(seconds=float(max_wall_time))
+        if datetime.now(UTC) <= deadline:
+            return
+
+        run.status = RunStatus.PARTIAL
+        run.stop_reason = StopReason.BUDGET_TIME
+        run.completed_at = run.completed_at or datetime.now(UTC)
+        if not run.error:
+            run.error = "Run exceeded max wall time before finalizing state"
+
+        self.save_run(run)
+        logger.warning(
+            "Reconciled stale running run %s to partial/budget_time in history",
+            run.run_id,
+        )
 
     def append_event(self, run_id: str, event: dict[str, Any]) -> None:
         """Append an event to the run's event log."""
