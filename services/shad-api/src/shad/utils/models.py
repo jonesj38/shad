@@ -23,6 +23,14 @@ MODEL_ALIASES: dict[str, str] = {
     "haiku": "haiku",  # Will be resolved from API or cache
 }
 
+# Friendly family aliases used in config/defaults.
+# These normalize to concrete dated model IDs for API/fallback paths.
+CLAUDE_FAMILY_ALIASES: dict[str, str] = {
+    "claude-opus-4-6": "claude-opus-4-20250514",
+    "claude-sonnet-4-6": "claude-sonnet-4-20250514",
+    "claude-haiku-4-6": "claude-haiku-4-20250514",
+}
+
 # Claude model shorthands (for quick detection)
 CLAUDE_SHORTHANDS = {"opus", "sonnet", "haiku"}
 
@@ -280,6 +288,10 @@ def normalize_model_name(name: str) -> str:
     Raises:
         ValueError: If Claude shorthand cannot be resolved
     """
+    # Check Claude family aliases first
+    if name in CLAUDE_FAMILY_ALIASES:
+        return CLAUDE_FAMILY_ALIASES[name]
+
     # Check if it's already a full Claude model ID
     if name.startswith("claude-"):
         return name
