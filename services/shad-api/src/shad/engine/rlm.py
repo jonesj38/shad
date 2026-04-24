@@ -487,10 +487,16 @@ class RLMEngine:
                     logger.debug(f"Cache hit for node {node.node_id}")
                     return
 
-            # Decide whether to decompose or answer directly
+            # Decide whether to decompose or answer directly.
+            # Avoid decomposing short/direct queries just because they cross a length threshold.
+            complexity_markers = (
+                "\n", ":", ";", " and ", " including ", " compare ", " analyze ", " evaluate ", " synthesize ",
+            )
+            looks_complex = any(marker in node.task.lower() for marker in complexity_markers)
             should_decompose = (
                 node.depth < run.config.budget.max_depth - 1
-                and len(node.task) > 100  # Simple heuristic: longer tasks may need decomposition
+                and len(node.task) > 140
+                and looks_complex
             )
 
             if should_decompose:

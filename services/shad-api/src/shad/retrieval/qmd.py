@@ -104,8 +104,9 @@ class QmdRetriever:
         self._qmd_path: str | None = None
         self._collection_names = collection_names or {}
         self._decay_config = decay_config
-        # Cache for qmd-registered collection names mapped by path
-        self._qmd_collections_by_path: dict[str, str] | None = None
+        # Cache for qmd-registered collection names mapped by path.
+        # A single path may have multiple qmd aliases, so keep all of them.
+        self._qmd_collections_by_path: dict[str, list[str]] | None = None
         self._openai_support: bool | None = None
         self._warned_openai_support: bool = False
 
@@ -189,11 +190,12 @@ class QmdRetriever:
             "https://github.com/jonesj38/qmd#feat/openai-embeddings (or set SHAD_QMD_NO_OPENAI_WARNING=1 to silence)."
         )
 
-    async def _load_qmd_collections(self) -> dict[str, str]:
+    async def _load_qmd_collections(self) -> dict[str, list[str]]:
         """Load qmd-registered collections and map by path.
 
         Returns:
-            Dict mapping normalized path -> collection name
+            Dict mapping normalized path -> list of collection names.
+            Order is preserved from qmd so the primary collection alias stays first.
         """
         if self._qmd_collections_by_path is not None:
             return self._qmd_collections_by_path
@@ -209,8 +211,10 @@ class QmdRetriever:
                 # Normalize path for comparison
                 from pathlib import Path
                 normalized = str(Path(path).resolve())
-                self._qmd_collections_by_path[normalized] = name
-                logger.debug(f"Mapped qmd collection: {normalized} -> {name}")
+                aliases = self._qmd_collections_by_path.setdefault(normalized, [])
+                if name not in aliases:
+                    aliases.append(name)
+                logger.debug(f"Mapped qmd collection: {normalized} -> {aliases}")
 
         return self._qmd_collections_by_path
 
@@ -234,7 +238,7 @@ class QmdRetriever:
 
         # Load qmd collections
         qmd_by_path = await self._load_qmd_collections()
-        qmd_names = set(qmd_by_path.values())
+        qmd_names = {alias for aliases in qmd_by_path.values() for alias in aliases}
 
         resolved = []
         for name in requested_names:
@@ -248,10 +252,13 @@ class QmdRetriever:
                 from pathlib import Path
                 path = self._collection_names[name]
                 normalized = str(Path(path).resolve())
-                if normalized in qmd_by_path:
-                    qmd_name = qmd_by_path[normalized]
-                    logger.info(f"Resolved collection '{name}' -> '{qmd_name}' by path")
-                    resolved.append(qmd_name)
+                aliases = qmd_by_path.get(normalized, [])
+                if aliases:
+                    preferred = aliases[0]
+                    if name in aliases:
+                        preferred = name
+                    logger.info(f"Resolved collection '{name}' -> '{preferred}' by path")
+                    resolved.append(preferred)
                     continue
 
             # Fall back to using the name as-is (may fail if not in qmd)
