@@ -62,3 +62,13 @@ async def test_gemini_cli_success():
         with patch("asyncio.create_subprocess_exec", return_value=mock_process):
             response, _ = await provider._complete_gemini_cli("test prompt")
             assert response == "response text"
+
+
+def test_resolve_max_concurrent_prefers_env_override(monkeypatch):
+    monkeypatch.setenv("SHAD_LLM_MAX_CONCURRENT", "6")
+    assert LLMProvider._resolve_max_concurrent(None) == 6
+
+
+def test_resolve_max_concurrent_falls_back_to_requested_when_env_invalid(monkeypatch):
+    monkeypatch.setenv("SHAD_LLM_MAX_CONCURRENT", "not-a-number")
+    assert LLMProvider._resolve_max_concurrent(3) == 3

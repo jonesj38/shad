@@ -5,6 +5,7 @@ from __future__ import annotations
 import asyncio
 import json
 import logging
+import os
 from enum import StrEnum
 from typing import Any
 
@@ -28,21 +29,29 @@ class ModelTier(StrEnum):
 class LLMProvider:
     """Abstraction over LLM providers with tiered model support."""
 
+    DEFAULT_MAX_CONCURRENT = 4
+
     def __init__(
         self,
         use_claude_code: bool = True,
         use_gemini_cli: bool = False,
         model_config: ModelConfig | None = None,
-        max_concurrent: int = 2,
+        max_concurrent: int | None = None,
     ) -> None:
         self.settings = get_settings()
         self.use_claude_code = use_claude_code
         self.use_gemini_cli = use_gemini_cli
         self._anthropic_client: Any = None
         self._openai_client: Any = None
+        self.max_concurrent = self._resolve_max_concurrent(max_concurrent)
         # Gate concurrent LLM subprocess calls to prevent resource exhaustion
-        self._semaphore = asyncio.Semaphore(max_concurrent)
-        logger.info(f"[LLM] Max concurrent calls: {max_concurrent}")
+        self._semaphore = asyncio.Semaphore(self.max_concurrent)
+        logger.info(
+            "[LLM] Max concurrent calls resolved to %s (requested=%s, env=%s)",
+            self.max_concurrent,
+            max_concurrent,
+            os.environ.get("SHAD_LLM_MAX_CONCURRENT"),
+        )
 
         # Model overrides (normalized to full model IDs)
         self._orchestrator_override: str | None = None
@@ -58,6 +67,25 @@ class LLMProvider:
                 self._worker_override = normalize_model_name(model_config.worker_model)
             if model_config.leaf_model:
                 self._leaf_override = normalize_model_name(model_config.leaf_model)
+
+    @classmethod
+    def _resolve_max_concurrent(cls, requested: int | None) -> int:
+        """Resolve effective LLM concurrency from explicit value, env, or safe default."""
+        raw_override = os.environ.get("SHAD_LLM_MAX_CONCURRENT")
+        if raw_override:
+            try:
+                return max(1, int(raw_override))
+            except ValueError:
+                logger.warning(
+                    "[LLM] Ignoring invalid SHAD_LLM_MAX_CONCURRENT=%r; using fallback",
+                    raw_override,
+                )
+
+        if requested is not None:
+            return max(1, requested)
+
+        cpu_count = os.cpu_count() or cls.DEFAULT_MAX_CONCURRENT
+        return max(cls.DEFAULT_MAX_CONCURRENT, min(8, cpu_count))
 
     def get_model_for_tier(self, tier: ModelTier) -> str:
         """Get the model name for a given tier.

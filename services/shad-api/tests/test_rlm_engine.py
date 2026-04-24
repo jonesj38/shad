@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio
 from datetime import datetime
+from types import SimpleNamespace
 from pathlib import Path
 from unittest.mock import AsyncMock, MagicMock, patch
 
@@ -329,3 +330,97 @@ class TestCacheValidation:
         assert key1 == key3
         # Different contexts should produce different keys
         assert key1 != key2
+
+
+@pytest.mark.asyncio
+async def test_retrieval_context_is_memoized_for_identical_queries(temp_collection: Path) -> None:
+    """Identical concurrent retrievals should share one underlying fetch."""
+    mock_llm = MagicMock()
+    mock_llm.answer_task = AsyncMock(return_value=("Answer", 1))
+    mock_llm.decompose_task = AsyncMock(return_value=["Sub1"])
+    mock_llm.synthesize_results = AsyncMock(return_value="Synthesis")
+
+    retriever = MagicMock()
+    retriever.available = True
+    call_count = 0
+
+    async def fake_search(*args, **kwargs):
+        nonlocal call_count
+        call_count += 1
+        await asyncio.sleep(0.05)
+        return []
+
+    retriever.search = AsyncMock(side_effect=fake_search)
+    retriever.get = AsyncMock(return_value="")
+    retriever.status = AsyncMock(return_value={"available": True})
+
+    engine = RLMEngine(llm_provider=mock_llm, retriever=retriever, collection_path=temp_collection)
+
+    results = await asyncio.gather(
+        engine._retrieve_collection_context_cached("same query", limit=5),
+        engine._retrieve_collection_context_cached("same query", limit=5),
+    )
+
+    assert results == ["", ""]
+    assert call_count == 2  # two keyword searches inside one retrieval pass
+
+    await engine._retrieve_collection_context_cached("same query", limit=5)
+    assert call_count == 2
+
+
+@pytest.mark.asyncio
+async def test_parallel_frontier_prioritizes_nodes_with_more_dependents() -> None:
+    """Ready nodes with more downstream dependents should start first."""
+    mock_llm = MagicMock()
+    mock_llm.answer_task = AsyncMock(return_value=("Answer", 1))
+    mock_llm.synthesize_results = AsyncMock(return_value="Synth")
+
+    engine = RLMEngine(llm_provider=mock_llm)
+    engine._selected_strategy = object()
+    engine.decomposer.decompose = AsyncMock(return_value=SimpleNamespace(
+        is_valid=True,
+        validation_errors=[],
+        tokens_used=0,
+        nodes=[
+            SimpleNamespace(stage_name="wide", task="wide task", hard_deps=[], soft_deps=[]),
+            SimpleNamespace(stage_name="narrow", task="narrow task", hard_deps=[], soft_deps=[]),
+            SimpleNamespace(stage_name="downstream_a", task="a task", hard_deps=["wide"], soft_deps=[]),
+            SimpleNamespace(stage_name="downstream_b", task="b task", hard_deps=["wide"], soft_deps=[]),
+            SimpleNamespace(stage_name="downstream_c", task="c task", hard_deps=["narrow"], soft_deps=[]),
+        ],
+    ))
+
+    run = SimpleNamespace(
+        config=RunConfig(goal="goal", budget=Budget(max_depth=4, max_branching_factor=5)),
+        total_tokens=0,
+        nodes={},
+    )
+    run.add_node = lambda child: run.nodes.__setitem__(child.node_id, child)
+    run.get_node = lambda node_id: run.nodes.get(node_id)
+
+    parent = SimpleNamespace(
+        node_id="parent",
+        depth=0,
+        children=[],
+        task="x" * 200,
+        metadata={},
+        result=None,
+        status=None,
+        error=None,
+    )
+
+    execution_order: list[str] = []
+
+    async def fake_execute_node(_run, child, _context):
+        execution_order.append(child.metadata["stage_name"])
+        child.status = NodeStatus.SUCCEEDED
+        child.result = child.task
+        child.tokens_used = 1
+
+    engine._execute_node = fake_execute_node
+    engine._check_budgets = lambda *_args, **_kwargs: None
+    engine.retriever = MagicMock(available=False)
+
+    await engine._decompose_and_execute(run, parent, "")
+
+    assert execution_order[:2] == ["wide", "narrow"]

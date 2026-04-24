@@ -19,6 +19,7 @@ import asyncio
 import hashlib
 import logging
 import re
+from collections import defaultdict
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
@@ -159,6 +160,12 @@ class RLMEngine:
         self.delta_verifier = DeltaVerifier()
         self.state_manager = RunStateManager()
         self.iterations_policy = MaxIterationsPolicy()
+
+        # Per-engine retrieval memoization for repeated subtask queries.
+        # Keep an in-flight map so concurrent identical retrievals await one fetch.
+        self._retrieval_cache: dict[tuple[Any, ...], str] = {}
+        self._retrieval_inflight: dict[tuple[Any, ...], asyncio.Future[str]] = {}
+        self._retrieval_lock = asyncio.Lock()
 
     async def execute(self, config: RunConfig) -> Run:
         """
@@ -561,6 +568,11 @@ class RLMEngine:
         stage_to_node: dict[str, str] = {}  # stage_name -> node_id
         node_to_stage: dict[str, str] = {}  # node_id -> stage_name
         pending_nodes: dict[str, tuple[str, list[str], list[str]]] = {}  # node_id -> (task, hard_deps, soft_deps)
+        downstream_counts: dict[str, int] = defaultdict(int)
+
+        for stage_name, _task, hard_deps, _soft_deps in subtasks:
+            for dep in hard_deps:
+                downstream_counts[dep] += 1
 
         for stage_name, task, hard_deps, soft_deps in subtasks:
             self._check_budgets(run, node)
@@ -597,6 +609,13 @@ class RLMEngine:
                 logger.warning("[PARALLEL] No ready nodes - possible circular dependency")
                 break
 
+            ready_nodes.sort(
+                key=lambda node_id: (
+                    -downstream_counts.get(node_to_stage[node_id], 0),
+                    node_to_stage[node_id],
+                )
+            )
+
             logger.info(f"[PARALLEL] Executing {len(ready_nodes)} nodes in parallel")
 
             # Execute ready nodes in parallel (no semaphore here — semaphore is on LLM calls only)
@@ -622,7 +641,7 @@ class RLMEngine:
 
                     # Retrieve subtask-specific context from collection
                     if self.retriever.available:
-                        fresh_context = await self._retrieve_collection_context(task, limit=5)
+                        fresh_context = await self._retrieve_collection_context_cached(task, limit=5)
                         if fresh_context:
                             logger.info(f"[CONTEXT] Retrieved {len(fresh_context)} chars for subtask: {task[:50]}...")
                             subtask_context = f"{subtask_context}\n\n{fresh_context}"
@@ -800,6 +819,55 @@ class RLMEngine:
             logger.warning(f"Failed to get context hash: {e}")
 
         return None
+
+    def _make_retrieval_cache_key(self, query: str, limit: int) -> tuple[Any, ...]:
+        """Create a stable cache key for retrieval calls within this engine instance."""
+        return (
+            query.strip(),
+            limit,
+            self._use_qmd_hybrid,
+            self._use_code_mode and self.code_executor is not None,
+            tuple(self.collections),
+            str(self.collection_path) if self.collection_path else None,
+        )
+
+    async def _retrieve_collection_context_cached(self, query: str, limit: int = 10) -> str:
+        """Memoize retrieval and coalesce concurrent identical retrieval requests."""
+        cache_key = self._make_retrieval_cache_key(query, limit)
+
+        async with self._retrieval_lock:
+            cached = self._retrieval_cache.get(cache_key)
+            if cached is not None:
+                return cached
+
+            in_flight = self._retrieval_inflight.get(cache_key)
+            if in_flight is None:
+                loop = asyncio.get_running_loop()
+                in_flight = loop.create_future()
+                self._retrieval_inflight[cache_key] = in_flight
+                owner = True
+            else:
+                owner = False
+
+        if not owner:
+            return await in_flight
+
+        try:
+            result = await self._retrieve_collection_context(query, limit)
+        except Exception as exc:
+            async with self._retrieval_lock:
+                current = self._retrieval_inflight.pop(cache_key, None)
+                if current is not None and not current.done():
+                    current.set_exception(exc)
+            raise
+
+        async with self._retrieval_lock:
+            self._retrieval_cache[cache_key] = result
+            current = self._retrieval_inflight.pop(cache_key, None)
+            if current is not None and not current.done():
+                current.set_result(result)
+
+        return result
 
     async def _retrieve_collection_context(self, query: str, limit: int = 10) -> str:
         """Retrieve relevant context from the collection(s).
