@@ -4,7 +4,7 @@ import os
 from functools import lru_cache
 from pathlib import Path
 
-from pydantic import Field
+from pydantic import AliasChoices, Field
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 # Get SHAD_HOME for .env file location
@@ -41,12 +41,41 @@ class Settings(BaseSettings):
         description="Default collection path (env var fallback)",
     )
 
-    # LLM Provider Settings (legacy fallback - Claude CLI is primary)
-    # API keys only needed if Claude CLI is unavailable
+    # LLM Provider Settings
+    # SHAD_LLM_PROVIDER supports: auto, claude-code, gemini-cli, anthropic,
+    # openai, openai-compatible, edwin-gateway. The OpenAI-compatible modes
+    # allow Shad to use EdwinPAI/provider-router style endpoints in addition
+    # to direct vendor APIs.
+    llm_provider: str = Field(
+        default="auto",
+        validation_alias=AliasChoices("SHAD_LLM_PROVIDER", "LLM_PROVIDER"),
+    )
     anthropic_api_key: str = ""
     openai_api_key: str = ""
+    openai_base_url: str = Field(
+        default="",
+        validation_alias=AliasChoices("SHAD_OPENAI_BASE_URL", "OPENAI_BASE_URL"),
+    )
+    openai_organization: str = Field(
+        default="",
+        validation_alias=AliasChoices("SHAD_OPENAI_ORGANIZATION", "OPENAI_ORGANIZATION"),
+    )
+    edwin_gateway_base_url: str = Field(
+        default="http://127.0.0.1:18789/v1",
+        validation_alias=AliasChoices(
+            "SHAD_EDWIN_GATEWAY_BASE_URL",
+            "EDWIN_GATEWAY_BASE_URL",
+        ),
+    )
+    edwin_gateway_api_key: str = Field(
+        default="",
+        validation_alias=AliasChoices(
+            "SHAD_EDWIN_GATEWAY_API_KEY",
+            "EDWIN_GATEWAY_API_KEY",
+        ),
+    )
 
-    # Gemini CLI Settings
+    # CLI Settings
     use_gemini_cli: bool = False
     gemini_cli_timeout: int = 120
     claude_cli_timeout: int = 300
@@ -55,9 +84,18 @@ class Settings(BaseSettings):
     gemini_leaf_model: str = "gemini-3-flash-preview"
 
     # Default model settings
-    orchestrator_model: str = "claude-opus-4-6"
-    worker_model: str = "claude-sonnet-4-6"
-    leaf_model: str = "claude-sonnet-4-6"
+    orchestrator_model: str = Field(
+        default="claude-opus-4-6",
+        validation_alias=AliasChoices("SHAD_ORCHESTRATOR_MODEL", "ORCHESTRATOR_MODEL"),
+    )
+    worker_model: str = Field(
+        default="claude-sonnet-4-6",
+        validation_alias=AliasChoices("SHAD_WORKER_MODEL", "WORKER_MODEL"),
+    )
+    leaf_model: str = Field(
+        default="claude-sonnet-4-6",
+        validation_alias=AliasChoices("SHAD_LEAF_MODEL", "LEAF_MODEL"),
+    )
 
     # Path Settings (default to ~/.shad/)
     history_path: Path = _shad_home / "history"

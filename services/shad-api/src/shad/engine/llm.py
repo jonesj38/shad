@@ -35,12 +35,14 @@ class LLMProvider:
         self,
         use_claude_code: bool = True,
         use_gemini_cli: bool = False,
+        provider: str | None = None,
         model_config: ModelConfig | None = None,
         max_concurrent: int | None = None,
     ) -> None:
         self.settings = get_settings()
+        self.provider = (provider or self.settings.llm_provider or "auto").strip().lower().replace("_", "-")
         self.use_claude_code = use_claude_code
-        self.use_gemini_cli = use_gemini_cli
+        self.use_gemini_cli = use_gemini_cli or self.settings.use_gemini_cli
         self._anthropic_client: Any = None
         self._openai_client: Any = None
         self.max_concurrent = self._resolve_max_concurrent(max_concurrent)
@@ -141,43 +143,75 @@ class LLMProvider:
         model = self.get_model_for_tier(tier)
         logger.debug(f"Using model {model} for tier {tier}")
 
-        # Check for Gemini CLI
-        if self.use_gemini_cli and is_gemini_model(model):
-            return await self._complete_gemini_cli(
-                prompt=prompt,
-                system=system,
-                model=model,
-            )
+        provider = self.provider
 
-        # Use Claude Code CLI as primary (uses subscription, not API costs)
-        if self.use_claude_code:
-            return await self._complete_claude_code(
-                prompt=prompt,
-                system=system,
-                model=model,
-            )
+        if provider == "gemini-cli":
+            return await self._complete_gemini_cli(prompt=prompt, system=system, model=model)
 
-        # Fallback to API if configured
-        if self.settings.anthropic_api_key:
+        if provider == "claude-code":
+            return await self._complete_claude_code(prompt=prompt, system=system, model=model)
+
+        if provider == "anthropic":
             return await self._complete_anthropic(
-                prompt=prompt,
-                model=model,
-                system=system,
-                max_tokens=max_tokens,
-                temperature=temperature,
+                prompt=prompt, model=model, system=system,
+                max_tokens=max_tokens, temperature=temperature,
             )
-        elif self.settings.openai_api_key:
+
+        if provider == "openai":
             return await self._complete_openai(
-                prompt=prompt,
-                model="gpt-4o",
-                system=system,
-                max_tokens=max_tokens,
-                temperature=temperature,
+                prompt=prompt, model=model, system=system,
+                max_tokens=max_tokens, temperature=temperature,
             )
-        else:
+
+        if provider in {"openai-compatible", "edwin-gateway", "edwinpai"}:
+            base_url = (
+                self.settings.edwin_gateway_base_url
+                if provider in {"edwin-gateway", "edwinpai"}
+                else self.settings.openai_base_url
+            )
+            api_key = (
+                self.settings.edwin_gateway_api_key
+                if provider in {"edwin-gateway", "edwinpai"}
+                else self.settings.openai_api_key
+            )
+            return await self._complete_openai(
+                prompt=prompt, model=model, system=system,
+                max_tokens=max_tokens, temperature=temperature,
+                base_url=base_url or None, api_key=api_key or None,
+            )
+
+        if provider != "auto":
             raise ValueError(
-                "No LLM provider configured. Use Claude Code CLI or set API keys."
+                f"Unknown SHAD_LLM_PROVIDER={provider!r}. Expected auto, claude-code, "
+                "gemini-cli, anthropic, openai, openai-compatible, or edwin-gateway."
             )
+
+        # Auto mode preserves existing behavior while allowing non-Claude models
+        # to route to direct/API-compatible providers when configured.
+        if self.use_gemini_cli and is_gemini_model(model):
+            return await self._complete_gemini_cli(prompt=prompt, system=system, model=model)
+
+        if self.use_claude_code and (model.startswith("claude-") or is_ollama_model(model)):
+            return await self._complete_claude_code(prompt=prompt, system=system, model=model)
+
+        if model.startswith("claude-") and self.settings.anthropic_api_key:
+            return await self._complete_anthropic(
+                prompt=prompt, model=model, system=system,
+                max_tokens=max_tokens, temperature=temperature,
+            )
+
+        if self.settings.openai_base_url or self.settings.openai_api_key:
+            return await self._complete_openai(
+                prompt=prompt, model=model, system=system,
+                max_tokens=max_tokens, temperature=temperature,
+                base_url=self.settings.openai_base_url or None,
+                api_key=self.settings.openai_api_key or None,
+            )
+
+        raise ValueError(
+            "No LLM provider configured. Set SHAD_LLM_PROVIDER/SHAD_OPENAI_BASE_URL "
+            "or enable Claude/Gemini CLI/API credentials."
+        )
 
     def _get_cli_model_name(self, model: str) -> str:
         """Convert API model name to Claude CLI model name.
@@ -403,12 +437,23 @@ class LLMProvider:
         system: str | None,
         max_tokens: int,
         temperature: float,
+        base_url: str | None = None,
+        api_key: str | None = None,
     ) -> tuple[str, int]:
-        """Complete using OpenAI API."""
+        """Complete using OpenAI or an OpenAI-compatible endpoint."""
         import openai
 
-        if self._openai_client is None:
-            self._openai_client = openai.OpenAI(api_key=self.settings.openai_api_key)
+        resolved_api_key = api_key or self.settings.openai_api_key or "not-needed"
+        resolved_base_url = base_url or self.settings.openai_base_url or None
+        client_key = (resolved_base_url or "openai", resolved_api_key)
+        if self._openai_client is None or getattr(self, "_openai_client_key", None) != client_key:
+            kwargs: dict[str, Any] = {"api_key": resolved_api_key}
+            if resolved_base_url:
+                kwargs["base_url"] = resolved_base_url
+            if self.settings.openai_organization:
+                kwargs["organization"] = self.settings.openai_organization
+            self._openai_client = openai.OpenAI(**kwargs)
+            self._openai_client_key = client_key
 
         messages: list[dict[str, str]] = []
         if system:

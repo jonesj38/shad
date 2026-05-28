@@ -428,6 +428,22 @@ def cli() -> None:
 @click.option("--worker-model", "-W", help="Model for mid-depth execution (e.g., opus, sonnet, haiku)")
 @click.option("--leaf-model", "-L", help="Model for fast parallel execution (e.g., opus, sonnet, haiku)")
 @click.option("--gemini", is_flag=True, help="Use Gemini CLI instead of Claude Code")
+@click.option(
+    "--provider",
+    type=click.Choice(
+        [
+            "auto",
+            "claude-code",
+            "gemini-cli",
+            "anthropic",
+            "openai",
+            "openai-compatible",
+            "edwin-gateway",
+        ],
+        case_sensitive=False,
+    ),
+    help="LLM provider/router for Shad RLM calls",
+)
 def run(
     goal: str,
     collection: tuple[str, ...],
@@ -455,6 +471,7 @@ def run(
     worker_model: str | None,
     leaf_model: str | None,
     gemini: bool,
+    provider: str | None,
 ) -> None:
     """Execute a reasoning task.
 
@@ -467,6 +484,7 @@ def run(
         shad run "Fast summary" --profile fast
         shad run "Auto profile" --auto-profile
         shad run "Using Gemini" --gemini -O gemini-3-pro-preview
+        shad run "Use Edwin models" --provider edwin-gateway -O openai-codex/gpt-5.5
     """
     # Configure logging (verbose by default, --quiet to suppress)
     if not quiet:
@@ -553,6 +571,7 @@ def run(
                 "write_files": write_files,
                 "output_path": output_dir,
                 "use_gemini_cli": gemini,
+                "llm_provider": provider,
                 "orchestrator_model": orchestrator_model,
                 "worker_model": worker_model,
                 "leaf_model": leaf_model,
@@ -635,10 +654,8 @@ def run(
         console.print(f"[dim][OUTPUT] Write files enabled{f' → {output_dir}' if output_dir else ''}[/dim]")
 
     # Provider info
-    if gemini:
-        console.print("[dim][PROVIDER] Using Gemini CLI[/dim]")
-    else:
-        console.print("[dim][PROVIDER] Using Claude Code CLI[/dim]")
+    effective_provider = provider or ("gemini-cli" if gemini else get_settings().llm_provider)
+    console.print(f"[dim][PROVIDER] {effective_provider}[/dim]")
 
     # Create model config if any model overrides specified
     model_config: ModelConfig | None = None
@@ -657,7 +674,7 @@ def run(
             console.print(f"[dim]  Leaf: {leaf_model}[/dim]")
 
     if dry_run:
-        llm = LLMProvider(model_config=model_config)
+        llm = LLMProvider(model_config=model_config, provider=provider)
         orch = llm.get_model_for_tier(ModelTier.ORCHESTRATOR)
         work = llm.get_model_for_tier(ModelTier.WORKER)
         leaf = llm.get_model_for_tier(ModelTier.LEAF)
@@ -684,6 +701,7 @@ def run(
             engine = RLMEngine(
                 llm_provider=LLMProvider(
                     model_config=model_config,
+                    provider=provider or ("gemini-cli" if gemini else None),
                     use_gemini_cli=gemini,
                     use_claude_code=not gemini,
                 ),
