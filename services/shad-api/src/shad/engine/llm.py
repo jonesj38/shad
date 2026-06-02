@@ -39,6 +39,16 @@ class LLMProvider:
         max_concurrent: int | None = None,
     ) -> None:
         self.settings = get_settings()
+        provider = (self.settings.llm_provider or "").strip().lower()
+        if provider in {"openai", "edwinpai"}:
+            use_claude_code = False
+            use_gemini_cli = False
+        elif provider in {"gemini", "gemini-cli"}:
+            use_claude_code = False
+            use_gemini_cli = True
+        elif provider in {"claude", "claude-cli", "claude_code"}:
+            use_claude_code = True
+            use_gemini_cli = False
         self.use_claude_code = use_claude_code
         self.use_gemini_cli = use_gemini_cli
         self._anthropic_client: Any = None
@@ -169,7 +179,7 @@ class LLMProvider:
         elif self.settings.openai_api_key:
             return await self._complete_openai(
                 prompt=prompt,
-                model="gpt-4o",
+                model=self.settings.openai_model or "gpt-4o",
                 system=system,
                 max_tokens=max_tokens,
                 temperature=temperature,
@@ -408,7 +418,10 @@ class LLMProvider:
         import openai
 
         if self._openai_client is None:
-            self._openai_client = openai.OpenAI(api_key=self.settings.openai_api_key)
+            kwargs: dict[str, str] = {"api_key": self.settings.openai_api_key}
+            if self.settings.openai_base_url:
+                kwargs["base_url"] = self.settings.openai_base_url
+            self._openai_client = openai.OpenAI(**kwargs)
 
         messages: list[dict[str, str]] = []
         if system:

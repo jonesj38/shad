@@ -45,6 +45,9 @@ class Settings(BaseSettings):
     # API keys only needed if Claude CLI is unavailable
     anthropic_api_key: str = ""
     openai_api_key: str = ""
+    openai_base_url: str = ""
+    openai_model: str = "gpt-4o"
+    llm_provider: str = ""  # "claude-cli" (default), "gemini-cli", "openai", or "edwinpai"
 
     # Gemini CLI Settings
     use_gemini_cli: bool = False
