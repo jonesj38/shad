@@ -270,10 +270,35 @@ title: {title}
 class FolderIngester:
     """Watch and sync local folders."""
 
+    TEXT_EXTENSIONS = {".md", ".txt", ".rst"}
+    CODE_EXTENSIONS = {
+        ".c", ".cc", ".cpp", ".css", ".go", ".h", ".hpp", ".html",
+        ".java", ".js", ".jsx", ".json", ".mjs", ".py", ".rs", ".sh",
+        ".sql", ".svelte", ".swift", ".toml", ".ts", ".tsx", ".vue",
+        ".yaml", ".yml", ".zig",
+    }
+    SKIP_DIRS = {
+        ".cache", ".git", ".next", ".nuxt", ".pnpm-store", ".pytest_cache",
+        ".ruff_cache", ".shad", ".svelte-kit", ".tauri", ".turbo", ".venv",
+        ".vite", "build", "coverage", "dist", "node_modules", "target", "vendor",
+    }
+    SKIP_SUFFIXES = {".lock", ".map", ".min.js"}
+    MAX_FILE_BYTES = 512_000
+
     def __init__(self, collection_path: Path) -> None:
         self.collection_path = collection_path
         self._sources_dir = collection_path / "Sources"
         self._sources_dir.mkdir(exist_ok=True)
+
+    def _should_skip_path(self, path: Path, source_path: Path) -> bool:
+        rel_parts = path.relative_to(source_path).parts
+        if any(part in self.SKIP_DIRS for part in rel_parts):
+            return True
+        name = path.name.lower()
+        return any(name.endswith(suffix) for suffix in self.SKIP_SUFFIXES)
+
+    def _language_for(self, suffix: str) -> str:
+        return suffix.lower().lstrip(".") or "text"
 
     async def ingest(self, folder_path: str) -> IngestResult:
         """Sync files from a local folder."""
@@ -292,20 +317,28 @@ class FolderIngester:
 
         files_created = []
         errors = []
+        memory_type = source_to_memory_type("folder")
 
-        # Copy markdown and text files
         for file_path in source_path.rglob("*"):
-            if file_path.is_file() and file_path.suffix.lower() in (".md", ".txt", ".rst"):
-                try:
-                    rel_path = file_path.relative_to(source_path)
-                    target_path = target_dir / rel_path
-                    target_path.parent.mkdir(parents=True, exist_ok=True)
+            if not file_path.is_file() or self._should_skip_path(file_path, source_path):
+                continue
 
-                    # Copy with frontmatter
-                    content = file_path.read_text()
-                    if not content.startswith("---"):
-                        memory_type = source_to_memory_type("folder")
-                        frontmatter = f"""---
+            suffix = file_path.suffix.lower()
+            if suffix not in self.TEXT_EXTENSIONS and suffix not in self.CODE_EXTENSIONS:
+                continue
+
+            try:
+                if file_path.stat().st_size > self.MAX_FILE_BYTES:
+                    continue
+
+                rel_path = file_path.relative_to(source_path)
+                target_path = target_dir / rel_path
+                if suffix in self.CODE_EXTENSIONS:
+                    target_path = target_path.with_name(f"{target_path.name}.md")
+                target_path.parent.mkdir(parents=True, exist_ok=True)
+
+                raw = file_path.read_text(errors="replace")
+                frontmatter = f"""---
 source_path: {file_path}
 source_type: folder
 memory_type: {memory_type.value}
@@ -313,12 +346,22 @@ ingested_at: {datetime.now(UTC).isoformat()}
 ---
 
 """
-                        content = frontmatter + content
 
-                    target_path.write_text(content)
-                    files_created.append(str(target_path.relative_to(self.collection_path)))
-                except Exception as e:
-                    errors.append(f"Failed to copy {file_path}: {e}")
+                if suffix in self.TEXT_EXTENSIONS:
+                    content = raw if raw.startswith("---") else frontmatter + raw
+                else:
+                    language = self._language_for(suffix)
+                    content = f"""{frontmatter}# {rel_path}
+
+```{language}
+{raw}
+```
+"""
+
+                target_path.write_text(content)
+                files_created.append(str(target_path.relative_to(self.collection_path)))
+            except Exception as e:
+                errors.append(f"Failed to copy {file_path}: {e}")
 
         return IngestResult(
             success=len(files_created) > 0,
