@@ -325,12 +325,13 @@ class QmdRetriever:
             "--json",
         ]
 
-        # Add collection filter if specified
+        # Add collection filter if specified. qmd accepts repeated -c flags;
+        # passing a comma-joined string is treated as one literal collection name.
         if collections:
             # Resolve collection names (handles path-based lookup)
             resolved_collections = await self.resolve_collection_names(collections)
-            if resolved_collections:
-                args.extend(["-c", ",".join(resolved_collections)])
+            for collection_name in resolved_collections:
+                args.extend(["-c", collection_name])
 
         # Add minimum score filter
         if min_score > 0:

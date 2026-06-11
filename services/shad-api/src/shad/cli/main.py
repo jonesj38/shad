@@ -250,32 +250,116 @@ def _clear_server_meta(shad_home: Path) -> None:
     (shad_home / "shad-api.pid").unlink(missing_ok=True)
 
 
+def _looks_like_path(value: str) -> bool:
+    """Heuristic: does this value look like a filesystem path rather than a collection name?"""
+    if "/" in value or "\\" in value or value.startswith("~") or value.startswith("."):
+        return True
+    expanded = Path(value).expanduser()
+    if expanded.is_absolute() and expanded.exists() and expanded.is_dir():
+        return True
+    return False
+
+
+def _resolve_sources_and_collections(
+    sources: tuple[str, ...] = (),
+    collection: tuple[str, ...] = (),
+    legacy_collection: tuple[str, ...] = (),
+) -> tuple[list[Path], list[str], dict[str, Path], str]:
+    """Resolve --sources and --collection CLI inputs.
+
+    --sources: filesystem paths containing documents to index/populate.
+    --collection: named QMD collections to search.
+
+    Backward compatibility:
+      - --vault is treated as --sources with a deprecation warning.
+      - --collection with a filesystem path is treated as --sources with a
+        deprecation warning.
+
+    Returns:
+        source_paths: Filesystem paths for indexing/populating.
+        search_collections: All collection names to search (source-derived + named).
+        source_map: Mapping of collection name -> source Path (for ensure_collections).
+        origin: Label describing input origin ("CLI", "env", "none").
+    """
+    source_paths: list[Path] = []
+    named_collections: list[str] = []
+    source_map: dict[str, Path] = {}
+    origin = "none"
+
+    # Handle deprecated --vault -> treat as --sources
+    if legacy_collection:
+        console.print("[yellow]--vault is deprecated. Use --sources for filesystem paths.[/yellow]")
+        for v in legacy_collection:
+            p = Path(v).expanduser()
+            if not p.is_absolute():
+                p = Path.cwd() / p
+            source_paths.append(p)
+            source_map[p.name] = p
+        origin = "CLI"
+
+    # Handle --sources (filesystem paths)
+    for s in sources:
+        p = Path(s).expanduser()
+        if not p.is_absolute():
+            p = Path.cwd() / p
+        source_paths.append(p)
+        source_map[p.name] = p
+        if origin == "none":
+            origin = "CLI"
+
+    # Handle --collection (named collections, with backward-compat path detection)
+    for c in collection:
+        if _looks_like_path(c):
+            console.print(
+                f"[yellow]Deprecated: --collection with a filesystem path now means --sources. "
+                f"Use: --sources {c} --collection <name>[/yellow]"
+            )
+            p = Path(c).expanduser()
+            if not p.is_absolute():
+                p = Path.cwd() / p
+            source_paths.append(p)
+            source_map[p.name] = p
+        else:
+            named_collections.append(c)
+        if origin == "none":
+            origin = "CLI"
+
+    # Env fallback (backward compat with SHAD_COLLECTION_PATH)
+    if not source_paths and not named_collections and get_settings().default_collection_path:
+        origin = "env"
+        p = Path(get_settings().default_collection_path).expanduser()
+        source_paths.append(p)
+        source_map[p.name] = p
+
+    # If callers provide filesystem sources plus exactly one named collection,
+    # treat the named collection as the indexing/search identity for those
+    # sources. This implements the intended split:
+    #   --sources /path/to/files --collection my-index
+    # means "populate/search my-index from these sources", not "search both
+    # the source directory basename and my-index".
+    if source_paths and len(source_paths) == 1 and len(named_collections) == 1:
+        source_map = {named_collections[0]: source_paths[0]}
+
+    # Search explicitly named collections when provided. Otherwise fall back to
+    # source-derived collection names for backwards-compatible `--sources PATH`.
+    search_collections = named_collections or list(source_map.keys())
+
+    return source_paths, search_collections, source_map, origin
+
+
 def _resolve_collection_inputs(
     collection: tuple[str, ...],
     legacy_collection: tuple[str, ...],
 ) -> tuple[list[Path], dict[str, Path], str]:
-    """Resolve collection paths from CLI options or environment."""
-    _all_paths = collection or legacy_collection
-    collection_paths: list[Path] = []
-    collection_names: dict[str, Path] = {}
+    """Resolve collection paths from CLI options or environment.
 
-    if _all_paths:
-        source = "CLI"
-        for value in _all_paths:
-            path = Path(value).expanduser()
-            if not path.is_absolute():
-                path = Path.cwd() / path
-            collection_paths.append(path)
-            collection_names[path.name] = path
-    elif get_settings().default_collection_path:
-        source = "env"
-        path = Path(get_settings().default_collection_path).expanduser()
-        collection_paths.append(path)
-        collection_names[path.name] = path
-    else:
-        source = "none"
-
-    return collection_paths, collection_names, source
+    DEPRECATED: Use _resolve_sources_and_collections() instead.
+    Kept for commands not yet migrated to --sources/--collection split.
+    """
+    source_paths, _search, source_map, origin = _resolve_sources_and_collections(
+        sources=(), collection=collection, legacy_collection=legacy_collection,
+    )
+    return source_paths, source_map, origin
 
 
 def _recommended_profile(explicit: str | None, auto_profile: bool) -> tuple[str | None, str | None]:
@@ -297,17 +381,28 @@ def _slugify_goal(goal: str) -> str:
 
 def _build_run_command_preview(
     goal: str,
-    collection_paths: list[Path],
-    strategy: str,
-    profile: str | None,
-    verify: str,
-    write_files: bool,
-    output_dir: str | None,
+    collection_paths: list[Path] | None = None,
+    source_paths: list[Path] | None = None,
+    search_collections: list[str] | None = None,
+    strategy: str = "research",
+    profile: str | None = None,
+    verify: str = "basic",
+    write_files: bool = False,
+    output_dir: str | None = None,
 ) -> str:
     """Build a recommended shad run command."""
     parts = ["shad", "run", shlex.quote(goal)]
-    for path in collection_paths:
-        parts.extend(["--collection", shlex.quote(str(path))])
+    # New --sources/--collection style
+    if source_paths:
+        for path in source_paths:
+            parts.extend(["--sources", shlex.quote(str(path))])
+    if search_collections:
+        for coll in search_collections:
+            parts.extend(["--collection", shlex.quote(coll)])
+    # Backward compat: if caller still passes collection_paths (old-style)
+    if collection_paths and not source_paths:
+        for path in collection_paths:
+            parts.extend(["--sources", shlex.quote(str(path))])
     parts.extend(["--strategy", strategy])
     if profile:
         parts.extend(["--profile", profile])
@@ -389,8 +484,8 @@ def cli() -> None:
     \b
     Quick Start:
         shad init                                    # Set up project permissions
-        shad plan "Build a REST API" --collection ~/Notes
-        shad run "Build a REST API" --collection ~/Notes  # Run with collection context
+        shad plan "Build a REST API" --sources ~/Notes
+        shad run "Build a REST API" --sources ~/Notes  # Run with source context
         shad status <run_id>                         # Check progress
     """
     pass
@@ -398,8 +493,9 @@ def cli() -> None:
 
 @cli.command("run")
 @click.argument("goal")
-@click.option("--collection", "-c", multiple=True, help="Collection path(s) for context (can specify multiple)")
-@click.option("--vault", "legacy_collection", "-v", multiple=True, hidden=True, help="[deprecated: use --collection] Collection path(s)")
+@click.option("--sources", multiple=True, help="Source directory path(s) to index/populate (can specify multiple)")
+@click.option("--collection", "-c", multiple=True, help="Named collection(s) to search (can specify multiple)")
+@click.option("--vault", "legacy_collection", "-v", multiple=True, hidden=True, help="[deprecated: use --sources] Collection path(s)")
 @click.option("--retriever", "-r", type=click.Choice(["auto", "qmd", "filesystem"]), default="auto",
               help="Retrieval backend (auto detects qmd)")
 @click.option("--profile", type=click.Choice(["fast", "balanced", "deep"], case_sensitive=False),
@@ -446,6 +542,7 @@ def cli() -> None:
 )
 def run(
     goal: str,
+    sources: tuple[str, ...],
     collection: tuple[str, ...],
     legacy_collection: tuple[str, ...],
     retriever: str,
@@ -478,12 +575,12 @@ def run(
     \b
     Examples:
         shad run "Explain quantum computing"
-        shad run "Summarize research" --collection ~/Notes
-        shad run "Build REST API" --collection ~/Project --collection ~/Patterns
+        shad run "Summarize research" --sources ~/Notes
+        shad run "Build REST API" --sources ~/Project --collection my-project
+        shad run "Search existing index" --collection edwinpai-discipline
+        shad run "Multiple sources" --sources ~/docs --sources ~/src --collection my-proj
         shad run "Complex task" -O opus -W sonnet -L haiku
         shad run "Fast summary" --profile fast
-        shad run "Auto profile" --auto-profile
-        shad run "Using Gemini" --gemini -O gemini-3-pro-preview
         shad run "Use Edwin models" --provider edwin-gateway -O openai-codex/gpt-5.5
     """
     # Configure logging (verbose by default, --quiet to suppress)
@@ -557,8 +654,11 @@ def run(
             api=api,
             payload={
                 "goal": goal,
-                "collection_path": (collection or legacy_collection)[0] if (collection or legacy_collection) else None,
-                "collection_paths": list(collection or legacy_collection) if (collection or legacy_collection) else None,
+                "source_paths": list(sources) if sources else None,
+                "collections": list(collection) if collection else None,
+                # Backward compat fields for remote APIs that haven't upgraded
+                "collection_path": list(sources or collection or legacy_collection)[0] if (sources or collection or legacy_collection) else None,
+                "collection_paths": list(sources or collection or legacy_collection) if (sources or collection or legacy_collection) else None,
                 "budget": {
                     "max_depth": max_depth,
                     "max_nodes": max_nodes,
@@ -579,15 +679,18 @@ def run(
         )
         return
 
-    # Merge --collection and deprecated --vault
-    collection_paths, collection_names, source = _resolve_collection_inputs(collection, legacy_collection)
+    # Resolve --sources (filesystem paths) and --collection (named collections)
+    source_paths, search_collections, source_map, source_origin = _resolve_sources_and_collections(
+        sources=sources, collection=collection, legacy_collection=legacy_collection,
+    )
 
-    # Primary collection path (first one) for backward compatibility
-    primary_collection = collection_paths[0] if collection_paths else None
+    # Primary source path (first one) for engine backward compatibility
+    primary_source = source_paths[0] if source_paths else None
 
     config = RunConfig(
         goal=goal,
-        collection_path=str(primary_collection) if primary_collection else None,
+        collection_path=str(primary_source) if primary_source else None,
+        source_paths=[str(p) for p in source_paths],
         budget=Budget(
             max_depth=max_depth,
             max_nodes=max_nodes,
@@ -607,27 +710,35 @@ def run(
     retriever_instance = None
     collections: list[str] = []
 
-    if collection_paths:
-        if len(collection_paths) == 1:
-            console.print(f"[dim][CONTEXT] Using collection ({source}): {collection_paths[0]}[/dim]")
-        else:
-            console.print(f"[dim][CONTEXT] Using {len(collection_paths)} collections ({source}):[/dim]")
-            for cp in collection_paths:
-                console.print(f"[dim]  - {cp.name}: {cp}[/dim]")
-        collections = list(collection_names.keys())
+    if source_paths or search_collections:
+        # Display source paths
+        if source_paths:
+            if len(source_paths) == 1:
+                console.print(f"[dim][SOURCES] {source_paths[0]} ({source_origin})[/dim]")
+            else:
+                console.print(f"[dim][SOURCES] {len(source_paths)} source paths ({source_origin}):[/dim]")
+                for sp in source_paths:
+                    console.print(f"[dim]  - {sp}[/dim]")
 
-        # Get retriever based on preference
+        # Display named collections
+        named_only = [c for c in search_collections if c not in source_map]
+        if named_only:
+            console.print(f"[dim][COLLECTIONS] Searching: {', '.join(named_only)}[/dim]")
+
+        collections = search_collections
+
+        # Get retriever — source_map provides paths for filesystem fallback + qmd provisioning
         retriever_instance = get_retriever(
-            paths=collection_paths,
-            collection_names=collection_names,
+            paths=source_paths if source_paths else None,
+            collection_names=source_map if source_map else None,
             prefer=retriever,
         )
         console.print(f"[dim][RETRIEVER] Using {type(retriever_instance).__name__}[/dim]")
 
-        # Auto-provision qmd collections for collection paths
-        if isinstance(retriever_instance, QmdRetriever) and collection_names:
-            console.print("[dim][QMD] Ensuring collections are provisioned and indexed...[/dim]")
-            provision_results = run_async(retriever_instance.ensure_collections(collection_names))
+        # Auto-provision qmd collections for source paths
+        if isinstance(retriever_instance, QmdRetriever) and source_map:
+            console.print("[dim][QMD] Ensuring source collections are provisioned and indexed...[/dim]")
+            provision_results = run_async(retriever_instance.ensure_collections(source_map))
             for cname, success in provision_results.items():
                 if success:
                     console.print(f"[dim][QMD] ✓ {cname}[/dim]")
@@ -643,7 +754,7 @@ def run(
         else:
             console.print("[dim][CODE_MODE] Disabled - using direct search[/dim]")
     else:
-        console.print("[dim][CONTEXT] No collection specified (use --collection or set SHAD_COLLECTION_PATH)[/dim]")
+        console.print("[dim][CONTEXT] No sources or collections specified (use --sources or --collection)[/dim]")
         use_code_mode = False
 
     # Display strategy and verification options
@@ -685,7 +796,8 @@ def run(
         table.add_column("Value")
         table.add_row("Budget", f"depth={max_depth}, nodes={max_nodes}, time={max_time}s, tokens={max_tokens}")
         table.add_row("Retriever", retriever_name)
-        table.add_row("Collections", str(len(collection_paths)) if collection_paths else "none")
+        table.add_row("Sources", str(len(source_paths)) if source_paths else "none")
+        table.add_row("Collections", ", ".join(collections) if collections else "none")
         table.add_row("Models", f"O={orch}, W={work}, L={leaf}")
         table.add_row("Mode", "qmd-hybrid" if qmd_hybrid else ("code-mode" if use_code_mode else "direct"))
         console.print(table)
@@ -707,7 +819,7 @@ def run(
                 ),
                 cache=cache,
                 retriever=retriever_instance,
-                collection_path=primary_collection,
+                collection_path=primary_source,
                 collections=collections,
                 use_code_mode=use_code_mode,
                 use_qmd_hybrid=qmd_hybrid,
@@ -773,8 +885,9 @@ def run(
 
 @cli.command("plan")
 @click.argument("goal")
-@click.option("--collection", "-c", multiple=True, help="Collection path(s) for context (can specify multiple)")
-@click.option("--vault", "legacy_collection", "-v", multiple=True, hidden=True, help="[deprecated: use --collection] Collection path(s)")
+@click.option("--sources", multiple=True, help="Source directory path(s) to index/populate (can specify multiple)")
+@click.option("--collection", "-c", multiple=True, help="Named collection(s) to search (can specify multiple)")
+@click.option("--vault", "legacy_collection", "-v", multiple=True, hidden=True, help="[deprecated: use --sources] Collection path(s)")
 @click.option("--retriever", "-r", type=click.Choice(["auto", "qmd", "filesystem"]), default="auto",
               help="Retrieval backend (auto detects qmd)")
 @click.option("--profile", type=click.Choice(["fast", "balanced", "deep"], case_sensitive=False),
@@ -787,6 +900,7 @@ def run(
 @click.option("--json", "as_json", is_flag=True, default=False, help="Output plan as JSON")
 def plan(
     goal: str,
+    sources: tuple[str, ...],
     collection: tuple[str, ...],
     legacy_collection: tuple[str, ...],
     retriever: str,
@@ -799,14 +913,16 @@ def plan(
     """Preflight a task and recommend a run command.
 
     Examples:
-        shad plan "Build a task app" --collection ~/TeamDocs
-        shad plan "Analyze this architecture" --collection ~/Docs --json
+        shad plan "Build a task app" --sources ~/TeamDocs
+        shad plan "Search existing index" --collection my-docs --json
     """
     import json as json_mod
 
-    collection_paths, collection_names, source = _resolve_collection_inputs(collection, legacy_collection)
-    if not collection_paths:
-        console.print("[yellow]No collection specified. Use --collection or set SHAD_COLLECTION_PATH[/yellow]")
+    source_paths, search_collections, source_map, source_origin = _resolve_sources_and_collections(
+        sources=sources, collection=collection, legacy_collection=legacy_collection,
+    )
+    if not source_paths and not search_collections:
+        console.print("[yellow]No sources or collections specified. Use --sources or --collection.[/yellow]")
         sys.exit(1)
 
     profile_choice, profile_source = _recommended_profile(profile, auto_profile)
@@ -819,8 +935,8 @@ def plan(
     recommended_output_dir = f"./{_slugify_goal(goal)}" if should_write_files else None
 
     retriever_instance = get_retriever(
-        paths=collection_paths,
-        collection_names=collection_names,
+        paths=source_paths if source_paths else None,
+        collection_names=source_map if source_map else None,
         prefer=retriever,
     )
 
@@ -828,14 +944,15 @@ def plan(
         return await retriever_instance.search(
             goal,
             mode="hybrid",
-            collections=list(collection_names.keys()),
+            collections=search_collections,
             limit=5,
         )
 
     results = run_async(do_search())
     command_preview = _build_run_command_preview(
         goal=goal,
-        collection_paths=collection_paths,
+        source_paths=source_paths,
+        search_collections=search_collections,
         strategy=recommended_strategy,
         profile=profile_choice,
         verify=recommended_verify,
@@ -845,8 +962,9 @@ def plan(
 
     plan_data = {
         "goal": goal,
-        "collections": [str(path) for path in collection_paths],
-        "collection_source": source,
+        "sources": [str(path) for path in source_paths],
+        "collections": search_collections,
+        "collection_source": source_origin,
         "retriever": type(retriever_instance).__name__,
         "strategy": recommended_strategy,
         "strategy_confidence": round(strategy_result.confidence, 2),
@@ -943,10 +1061,11 @@ def list_runs_command(api: str | None, limit: int, active: bool, as_json: bool) 
 
 
 @cli.group("collection", invoke_without_command=True)
-@click.option("--collection", "-c", multiple=True, help="Collection path(s) to inspect")
-@click.option("--vault", "legacy_collection", "-v", multiple=True, hidden=True, help="[deprecated: use --collection]")
+@click.option("--sources", multiple=True, help="Source directory path(s) to inspect")
+@click.option("--collection", "-c", multiple=True, help="Named collection(s) to inspect")
+@click.option("--vault", "legacy_collection", "-v", multiple=True, hidden=True, help="[deprecated: use --sources]")
 @click.pass_context
-def collection_group(ctx: click.Context, collection: tuple[str, ...], legacy_collection: tuple[str, ...]) -> None:
+def collection_group(ctx: click.Context, sources: tuple[str, ...], collection: tuple[str, ...], legacy_collection: tuple[str, ...]) -> None:
     """Manage collections and retriever status.
 
     \b
@@ -972,23 +1091,27 @@ def collection_group(ctx: click.Context, collection: tuple[str, ...], legacy_col
 
     import shutil
 
-    collection_paths, collection_names, source = _resolve_collection_inputs(collection, legacy_collection)
+    source_paths, search_collections, source_map, source_origin = _resolve_sources_and_collections(
+        sources=sources, collection=collection, legacy_collection=legacy_collection,
+    )
     retriever = get_retriever(
-        paths=collection_paths or None,
-        collection_names=collection_names or None,
-    ) if collection_paths else QmdRetriever()
+        paths=source_paths or None,
+        collection_names=source_map or None,
+    ) if source_paths else QmdRetriever()
 
     console.print(Panel("Collection Status", border_style="blue"))
     console.print(f"[dim][RETRIEVER] {type(retriever).__name__}[/dim]")
     console.print(f"[dim][QMD] {'available' if shutil.which('qmd') else 'not installed'}[/dim]")
 
-    if collection_paths:
-        console.print(f"[dim][SOURCE] {source}[/dim]")
-        for path in collection_paths:
+    if source_paths:
+        console.print(f"[dim][SOURCE] {source_origin}[/dim]")
+        for path in source_paths:
             exists = "exists" if path.exists() else "missing"
             console.print(f"[dim]  - {path} ({exists})[/dim]")
-    else:
-        console.print("[yellow]No collection specified. Use --collection or set SHAD_COLLECTION_PATH[/yellow]")
+    if search_collections:
+        console.print(f"[dim][COLLECTIONS] {', '.join(search_collections)}[/dim]")
+    if not source_paths and not search_collections:
+        console.print("[yellow]No sources or collections specified. Use --sources or --collection.[/yellow]")
 
     if isinstance(retriever, QmdRetriever) and retriever.available:
         async def get_status() -> dict[str, Any]:
@@ -1671,14 +1794,16 @@ def list_models(refresh: bool, ollama: bool) -> None:
 
 @cli.command("search")
 @click.argument("query")
-@click.option("--collection", "-c", multiple=True, help="Collection path(s) to search")
-@click.option("--vault", "legacy_collection", "-v", multiple=True, hidden=True, help="[deprecated: use --collection]")
+@click.option("--sources", multiple=True, help="Source directory path(s) to search")
+@click.option("--collection", "-c", multiple=True, help="Named collection(s) to search")
+@click.option("--vault", "legacy_collection", "-v", multiple=True, hidden=True, help="[deprecated: use --sources]")
 @click.option("--limit", "-l", default=10, help="Maximum results")
 @click.option("--mode", "-m", type=click.Choice(["hybrid", "bm25", "vector"]), default="hybrid",
               help="Search mode (default: hybrid)")
 @click.option("--json", "as_json", is_flag=True, default=False, help="Output results as JSON")
 def search(
     query: str,
+    sources: tuple[str, ...],
     collection: tuple[str, ...],
     legacy_collection: tuple[str, ...],
     limit: int,
@@ -1689,38 +1814,28 @@ def search(
 
     \b
     Examples:
-        shad search "machine learning"
-        shad search "authentication" --collection ~/Notes
+        shad search "machine learning" --sources ~/Notes
+        shad search "authentication" --collection my-notes
         shad search "API design" --mode bm25 --limit 20
     """
-    # Build collection paths (merge --collection and deprecated --vault)
-    _all_paths = collection or legacy_collection
-    collection_paths: list[Path] = []
-    collection_names: dict[str, Path] = {}
-
-    if _all_paths:
-        for v in _all_paths:
-            vp = Path(v).expanduser()
-            if not vp.is_absolute():
-                vp = Path.cwd() / vp
-            collection_paths.append(vp)
-            collection_names[vp.name] = vp
-    elif get_settings().default_collection_path:
-        vp = Path(get_settings().default_collection_path).expanduser()
-        collection_paths.append(vp)
-        collection_names[vp.name] = vp
-    else:
-        console.print("[yellow]No collection specified. Use --collection or set SHAD_COLLECTION_PATH[/yellow]")
+    source_paths, search_collections, source_map, _ = _resolve_sources_and_collections(
+        sources=sources, collection=collection, legacy_collection=legacy_collection,
+    )
+    if not source_paths and not search_collections:
+        console.print("[yellow]No sources or collections specified. Use --sources or --collection.[/yellow]")
         sys.exit(1)
 
     # Get retriever
-    retriever = get_retriever(paths=collection_paths, collection_names=collection_names)
+    retriever = get_retriever(
+        paths=source_paths if source_paths else None,
+        collection_names=source_map if source_map else None,
+    )
 
     async def do_search() -> list:
         return await retriever.search(
             query,
             mode=mode,
-            collections=list(collection_names.keys()),
+            collections=search_collections,
             limit=limit,
         )
 
@@ -1775,8 +1890,9 @@ Retrieved documents:
 
 @cli.command("context")
 @click.argument("query")
-@click.option("--collection", "-c", multiple=True, help="Collection path(s) to search")
-@click.option("--vault", "legacy_collection", "-v", multiple=True, hidden=True, help="[deprecated: use --collection]")
+@click.option("--sources", multiple=True, help="Source directory path(s) to search")
+@click.option("--collection", "-c", multiple=True, help="Named collection(s) to search")
+@click.option("--vault", "legacy_collection", "-v", multiple=True, hidden=True, help="[deprecated: use --sources]")
 @click.option("--limit", "-l", default=10, help="Max retrieval results")
 @click.option("--max-chars", default=4000, help="Max output chars for brief")
 @click.option("--mode", "-m", type=click.Choice(["hybrid", "bm25", "vector"]), default="hybrid",
@@ -1785,6 +1901,7 @@ Retrieved documents:
 @click.option("--leaf-model", "-L", default=None, help="Model for synthesis (default: leaf tier)")
 def context(
     query: str,
+    sources: tuple[str, ...],
     collection: tuple[str, ...],
     legacy_collection: tuple[str, ...],
     limit: int,
@@ -1800,40 +1917,30 @@ def context(
 
     \b
     Examples:
-        shad context "BSV authentication decisions" -c ~/Notes
-        shad context "API design patterns" --collection ~/docs --max-chars 2000
-        shad context "project architecture" --collection ~/docs --json
+        shad context "BSV authentication decisions" --sources ~/Notes
+        shad context "API design patterns" --collection my-docs --max-chars 2000
+        shad context "project architecture" --collection my-docs --json
     """
     import json as json_mod
 
-    # Build collection paths (merge --collection and deprecated --vault)
-    _all_paths = collection or legacy_collection
-    collection_paths: list[Path] = []
-    collection_names: dict[str, Path] = {}
-
-    if _all_paths:
-        for v in _all_paths:
-            vp = Path(v).expanduser()
-            if not vp.is_absolute():
-                vp = Path.cwd() / vp
-            collection_paths.append(vp)
-            collection_names[vp.name] = vp
-    elif get_settings().default_collection_path:
-        vp = Path(get_settings().default_collection_path).expanduser()
-        collection_paths.append(vp)
-        collection_names[vp.name] = vp
-    else:
-        console.print("[yellow]No collection specified. Use --collection or set SHAD_COLLECTION_PATH[/yellow]")
+    source_paths, search_collections, source_map, _ = _resolve_sources_and_collections(
+        sources=sources, collection=collection, legacy_collection=legacy_collection,
+    )
+    if not source_paths and not search_collections:
+        console.print("[yellow]No sources or collections specified. Use --sources or --collection.[/yellow]")
         sys.exit(1)
 
     # Retrieve
-    retriever = get_retriever(paths=collection_paths, collection_names=collection_names)
+    retriever = get_retriever(
+        paths=source_paths if source_paths else None,
+        collection_names=source_map if source_map else None,
+    )
 
     async def do_search() -> list:
         return await retriever.search(
             query,
             mode=mode,
-            collections=list(collection_names.keys()),
+            collections=search_collections,
             limit=limit,
         )
 
@@ -2972,7 +3079,7 @@ def doctor(fix: bool) -> None:
     if collection_path:
         console.print(f"[green]✔[/green] SHAD_COLLECTION_PATH set: {collection_path}")
     else:
-        console.print("[yellow]⚠[/yellow] SHAD_COLLECTION_PATH not set (pass --collection)")
+        console.print("[yellow]⚠[/yellow] SHAD_COLLECTION_PATH not set (pass --sources or --collection)")
 
     # Offer to register collection + embed if fixing and collection set
     if fix and collection_path and qmd_path:

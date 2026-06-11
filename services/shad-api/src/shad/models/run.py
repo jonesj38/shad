@@ -74,7 +74,8 @@ class RunConfig(BaseModel):
     """Configuration for a run."""
 
     goal: str = Field(..., description="The goal/task to accomplish")
-    collection_path: str | None = Field(default=None, description="Collection path for context")
+    source_paths: list[str] = Field(default_factory=list, description="Filesystem paths to index/populate")
+    collection_path: str | None = Field(default=None, description="Primary source path (backward compat)")
     budget: Budget = Field(default_factory=Budget)
     voice: str | None = Field(default=None, description="Voice to use for output rendering")
 
