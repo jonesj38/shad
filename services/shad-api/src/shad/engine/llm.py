@@ -178,6 +178,7 @@ class LLMProvider:
                 prompt=prompt, model=model, system=system,
                 max_tokens=max_tokens, temperature=temperature,
                 base_url=base_url or None, api_key=api_key or None,
+                headers={"x-edwinpai-local-shad": "allow-openai-compatible"},
             )
 
         if provider != "auto":
@@ -439,13 +440,14 @@ class LLMProvider:
         temperature: float,
         base_url: str | None = None,
         api_key: str | None = None,
+        headers: dict[str, str] | None = None,
     ) -> tuple[str, int]:
         """Complete using OpenAI or an OpenAI-compatible endpoint."""
         import openai
 
         resolved_api_key = api_key or self.settings.openai_api_key or "not-needed"
         resolved_base_url = base_url or self.settings.openai_base_url or None
-        client_key = (resolved_base_url or "openai", resolved_api_key)
+        client_key = (resolved_base_url or "openai", resolved_api_key, tuple(sorted((headers or {}).items())))
         if self._openai_client is None or getattr(self, "_openai_client_key", None) != client_key:
             kwargs: dict[str, Any] = {"api_key": resolved_api_key}
             if resolved_base_url:
@@ -460,12 +462,16 @@ class LLMProvider:
             messages.append({"role": "system", "content": system})
         messages.append({"role": "user", "content": prompt})
 
-        response = self._openai_client.chat.completions.create(
-            model=model,
-            messages=messages,
-            max_tokens=max_tokens,
-            temperature=temperature,
-        )
+        create_kwargs: dict[str, Any] = {
+            "model": model,
+            "messages": messages,
+            "max_tokens": max_tokens,
+            "temperature": temperature,
+        }
+        if headers:
+            create_kwargs["extra_headers"] = headers
+
+        response = self._openai_client.chat.completions.create(**create_kwargs)
 
         text = response.choices[0].message.content or ""
         tokens = response.usage.total_tokens if response.usage else 0
