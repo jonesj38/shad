@@ -379,6 +379,7 @@ class RLMEngine:
         try:
             # Determine which nodes to replay based on delta verification
             nodes_to_replay: list[str] = []
+            leaf_only_resume = replay_mode is None
 
             if replay_mode == "stale":
                 # Get current collection hashes and find stale nodes
@@ -394,23 +395,53 @@ class RLMEngine:
                 # Replay specific node
                 nodes_to_replay = [replay_mode]
             else:
-                # Default: replay pending nodes
+                # Default: resume unfinished *leaf* work only. Pending internal
+                # nodes may already have children from a previous partial run;
+                # re-executing them would decompose again and append duplicate
+                # subtrees, causing budget_nodes explosions on every resume.
                 pending = run.pending_nodes()
                 logger.info(f"[RESUME] Found {len(pending)} pending nodes")
-                nodes_to_replay = [n.node_id for n in pending]
+                internal_pending = [n for n in pending if n.children]
+                leaf_pending = [n for n in pending if not n.children]
+                if internal_pending:
+                    logger.info(
+                        f"[RESUME] Skipping {len(internal_pending)} already-expanded pending internal nodes"
+                    )
+                nodes_to_replay = [n.node_id for n in leaf_pending]
 
-            # If no nodes to replay, check root
+            # If no leaf nodes need replay, try to synthesize already-expanded
+            # parents from completed children before falling back to root replay.
+            if not nodes_to_replay:
+                synthesized = await self._synthesize_resumable_internal_nodes(run)
+                if synthesized:
+                    logger.info(f"[RESUME] Synthesized {synthesized} internal nodes from completed children")
+
+            # If no nodes to replay, check root. Do not replay an already-expanded
+            # root; synthesize it from children if possible, otherwise leave the
+            # run partial instead of recursively expanding more nodes.
             if not nodes_to_replay and run.root_node_id:
                 root = run.get_node(run.root_node_id)
-                logger.info(f"[RESUME] No pending nodes, checking root: {root.status if root else 'None'}")
+                logger.info(f"[RESUME] No pending leaves, checking root: {root.status if root else 'None'}")
                 if root and root.status != NodeStatus.SUCCEEDED:
-                    nodes_to_replay = [run.root_node_id]
+                    if root.children:
+                        synthesized = await self._synthesize_resumable_internal_nodes(run, include_partial=True)
+                        if synthesized:
+                            logger.info(f"[RESUME] Synthesized {synthesized} internal nodes including partial parents")
+                    else:
+                        nodes_to_replay = [run.root_node_id]
 
-            logger.info(f"[RESUME] Nodes to replay: {len(nodes_to_replay)}")
+            logger.info(f"[RESUME] Leaf nodes to replay: {len(nodes_to_replay)}")
 
             if not nodes_to_replay:
-                logger.warning("[RESUME] No nodes to replay - run may already be complete or stuck")
-                run.status = RunStatus.COMPLETE if (root and root.status == NodeStatus.SUCCEEDED) else RunStatus.FAILED
+                root = run.get_node(run.root_node_id) if run.root_node_id else None
+                if root and root.status == NodeStatus.SUCCEEDED:
+                    logger.info("[RESUME] Root already synthesized; marking run complete")
+                    run.status = RunStatus.COMPLETE
+                    run.final_result = root.result
+                else:
+                    logger.warning("[RESUME] No leaf nodes to replay and root is not complete; leaving run partial")
+                    run.status = RunStatus.PARTIAL
+                    run.stop_reason = run.stop_reason or StopReason.BUDGET_NODES
                 return run
 
             # Execute nodes to replay
@@ -419,12 +450,20 @@ class RLMEngine:
                 if not node:
                     continue
 
-                # Reset node status for re-execution
+                if node.children:
+                    logger.info(
+                        f"[RESUME] Skipping already-expanded node {node_id} with {len(node.children)} children"
+                    )
+                    continue
+
+                # Reset leaf status for re-execution. Internal nodes are never
+                # reset here because doing so would discard prior child results
+                # and trigger another decomposition wave.
                 node.status = NodeStatus.CREATED
                 node.result = None
                 node.error = None
 
-                logger.info(f"[RESUME] Replaying node {node_id}: {node.task[:50]}...")
+                logger.info(f"[RESUME] Replaying leaf node {node_id}: {node.task[:50]}...")
 
                 context = ""  # Retrieve fresh context
                 if self.retriever.available:
@@ -432,9 +471,17 @@ class RLMEngine:
                     context = await self._retrieve_collection_context(node.task, limit=5)
                     logger.info(f"[RESUME] Got {len(context)} chars of context")
 
-                logger.info("[RESUME] Executing node...")
-                await self._execute_node(run, node, context)
+                if leaf_only_resume:
+                    logger.info("[RESUME] Executing leaf directly without decomposition...")
+                    await self._execute_leaf(run, node, context)
+                else:
+                    logger.info("[RESUME] Executing node...")
+                    await self._execute_node(run, node, context)
                 logger.info(f"[RESUME] Node complete: {node.status}")
+
+            synthesized = await self._synthesize_resumable_internal_nodes(run, include_partial=True)
+            if synthesized:
+                logger.info(f"[RESUME] Synthesized {synthesized} internal nodes after leaf replay")
 
             # Update status
             root = run.get_node(run.root_node_id) if run.root_node_id else None
@@ -459,6 +506,68 @@ class RLMEngine:
             run.completed_at = datetime.now(UTC)
 
         return run
+
+    async def _synthesize_resumable_internal_nodes(
+        self,
+        run: Run,
+        include_partial: bool = False,
+    ) -> int:
+        """Synthesize already-expanded resume nodes without re-decomposing them.
+
+        Resume can leave parent/internal nodes in CREATED/STARTED while their
+        children contain useful completed results. Re-executing those parents
+        calls decomposition again and appends duplicate children. Instead, walk
+        deepest-first and synthesize any internal node that has completed child
+        results. By default this requires all non-pruned children to be terminal;
+        include_partial allows best-effort synthesis from available successful
+        children when budgets have already stopped the run.
+        """
+        synthesized = 0
+        internal_nodes = [n for n in run.nodes.values() if n.children and n.status != NodeStatus.SUCCEEDED]
+        for node in sorted(internal_nodes, key=lambda n: n.depth, reverse=True):
+            children = [run.get_node(child_id) for child_id in node.children]
+            existing_children = [child for child in children if child is not None]
+            if not existing_children:
+                continue
+
+            successful = [
+                child for child in existing_children
+                if child.status == NodeStatus.SUCCEEDED and child.result
+            ]
+            if not successful:
+                continue
+
+            terminal_statuses = {NodeStatus.SUCCEEDED, NodeStatus.FAILED, NodeStatus.PRUNED, NodeStatus.CACHE_HIT}
+            all_terminal = all(child.status in terminal_statuses for child in existing_children)
+            if not include_partial and not all_terminal:
+                continue
+
+            if node.result and node.status == NodeStatus.SUCCEEDED:
+                continue
+
+            logger.info(
+                f"[RESUME] Synthesizing internal node {node.node_id} from "
+                f"{len(successful)}/{len(existing_children)} successful children"
+            )
+            child_results = [(child.task, child.result or "") for child in successful]
+            context = ""
+            if self.retriever.available:
+                try:
+                    context = await self._retrieve_collection_context_cached(node.task, limit=5)
+                except Exception as e:
+                    logger.warning(f"[RESUME] Context retrieval for synthesis failed: {e}")
+
+            synthesis = await self.llm.synthesize_results(
+                task=node.task,
+                subtask_results=child_results,
+                context=context,
+            )
+            node.result = synthesis
+            node.status = NodeStatus.SUCCEEDED
+            node.error = None
+            synthesized += 1
+
+        return synthesized
 
     async def _execute_node(
         self,
