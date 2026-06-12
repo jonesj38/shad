@@ -21,6 +21,31 @@ from shad.vault.decay import DecayConfig
 
 logger = logging.getLogger(__name__)
 
+_QMD_SEARCH_SEMAPHORE: asyncio.Semaphore | None = None
+_QMD_SEARCH_SEMAPHORE_LIMIT: int | None = None
+
+
+def _resolve_qmd_max_concurrent() -> int:
+    raw = os.environ.get("SHAD_QMD_MAX_CONCURRENT")
+    if raw:
+        try:
+            value = int(raw)
+            if value > 0:
+                return value
+        except ValueError:
+            logger.warning("Ignoring invalid SHAD_QMD_MAX_CONCURRENT=%r; using default", raw)
+    return 2
+
+
+def _get_qmd_search_semaphore() -> asyncio.Semaphore:
+    global _QMD_SEARCH_SEMAPHORE, _QMD_SEARCH_SEMAPHORE_LIMIT
+    limit = _resolve_qmd_max_concurrent()
+    if _QMD_SEARCH_SEMAPHORE is None or _QMD_SEARCH_SEMAPHORE_LIMIT != limit:
+        _QMD_SEARCH_SEMAPHORE = asyncio.Semaphore(limit)
+        _QMD_SEARCH_SEMAPHORE_LIMIT = limit
+        logger.info("[QMD] Max concurrent searches set to %s", limit)
+    return _QMD_SEARCH_SEMAPHORE
+
 
 class QmdRetriever:
     """Retrieval backend using qmd for hybrid search.
@@ -357,11 +382,13 @@ class QmdRetriever:
                 )
 
             loop = asyncio.get_running_loop()
+            semaphore = _get_qmd_search_semaphore()
             try:
-                result = await asyncio.wait_for(
-                    loop.run_in_executor(None, _run_qmd),
-                    timeout=65.0,  # Slightly higher than subprocess timeout
-                )
+                async with semaphore:
+                    result = await asyncio.wait_for(
+                        loop.run_in_executor(None, _run_qmd),
+                        timeout=65.0,  # Slightly higher than subprocess timeout
+                    )
             except TimeoutError:
                 logger.warning("qmd search timed out after 65s")
                 return []
