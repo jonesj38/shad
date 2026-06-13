@@ -24,6 +24,7 @@ from datetime import UTC, datetime
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
+from shad.discipline.source_map import SourceMapGenerator
 from shad.engine.context_packets import NodeContextManager
 from shad.engine.decomposition import StrategyDecomposer
 from shad.engine.llm import LLMProvider, ModelTier
@@ -166,6 +167,7 @@ class RLMEngine:
         self._retrieval_cache: dict[tuple[Any, ...], str] = {}
         self._retrieval_inflight: dict[tuple[Any, ...], asyncio.Future[str]] = {}
         self._retrieval_lock = asyncio.Lock()
+        self._retrieval_revision_key = self._make_retrieval_revision_key()
 
     async def execute(self, config: RunConfig) -> Run:
         """
@@ -209,6 +211,29 @@ class RLMEngine:
                     logger.debug("[CONTEXT] Retriever NOT available - cannot retrieve context")
             else:
                 logger.debug("[CONTEXT] No collection_path or collections specified")
+
+            # Discipline-report runs get a deterministic, model-free source map before
+            # any section synthesis. This reduces exploratory decomposition/retrieval
+            # calls while improving coverage. Named qmd collections may not have a
+            # filesystem root; in that case the strategy still uses QMD retrieval.
+            if (
+                self._selected_strategy
+                and self._selected_strategy.strategy_type == StrategyType.DISCIPLINE_REPORT
+                and (config.source_paths or config.collection_path)
+            ):
+                source_map_roots = config.source_paths or ([config.collection_path] if config.collection_path else [])
+                try:
+                    source_map = SourceMapGenerator().generate(source_map_roots)
+                    source_map_markdown = source_map.to_markdown()
+                    context = f"<deterministic_source_map>\n{source_map_markdown[:12000]}\n</deterministic_source_map>\n\n{context}"
+                    run.metadata["discipline_source_map"] = source_map_markdown
+                    logger.info(
+                        "[DISCIPLINE] Source map generated: %s files across %s root(s)",
+                        source_map.total_files,
+                        len(source_map.roots),
+                    )
+                except Exception as e:
+                    logger.warning(f"[DISCIPLINE] Source map generation failed (non-fatal): {e}")
 
             # Create root node
             root_node = DAGNode(
@@ -602,8 +627,15 @@ class RLMEngine:
                 "\n", ":", ";", " and ", " including ", " compare ", " analyze ", " evaluate ", " synthesize ",
             )
             looks_complex = any(marker in node.task.lower() for marker in complexity_markers)
+            discipline_report_child = (
+                hasattr(self, '_selected_strategy')
+                and self._selected_strategy
+                and self._selected_strategy.strategy_type == StrategyType.DISCIPLINE_REPORT
+                and node.depth > 0
+            )
             should_decompose = (
-                node.depth < run.config.budget.max_depth - 1
+                not discipline_report_child
+                and node.depth < run.config.budget.max_depth - 1
                 and len(node.task) > 140
                 and looks_complex
             )
@@ -651,11 +683,16 @@ class RLMEngine:
         """
         # Use strategy-aware decomposition if strategy is selected (Phase 3)
         if hasattr(self, '_selected_strategy') and self._selected_strategy:
+            decomp_max_nodes = (
+                run.config.budget.max_nodes
+                if self._selected_strategy.strategy_type == StrategyType.DISCIPLINE_REPORT
+                else run.config.budget.max_branching_factor
+            )
             decomp_result = await self.decomposer.decompose(
                 task=node.task,
                 strategy=self._selected_strategy,
                 context=context,
-                max_nodes=run.config.budget.max_branching_factor,
+                max_nodes=decomp_max_nodes,
             )
 
             if not decomp_result.is_valid:
@@ -685,7 +722,7 @@ class RLMEngine:
         pending_nodes: dict[str, tuple[str, list[str], list[str]]] = {}  # node_id -> (task, hard_deps, soft_deps)
         downstream_counts: dict[str, int] = defaultdict(int)
 
-        for stage_name, _task, hard_deps, _soft_deps in subtasks:
+        for _stage_name, _task, hard_deps, _soft_deps in subtasks:
             for dep in hard_deps:
                 downstream_counts[dep] += 1
 
@@ -750,7 +787,10 @@ class RLMEngine:
                     prefetched_contexts = dict(zip(unique_ready_tasks, prefetched, strict=False))
 
             # Execute ready nodes in parallel (no semaphore here — semaphore is on LLM calls only)
-            async def execute_single_node(nid: str) -> tuple[str, DAGNode | None]:
+            async def execute_single_node(
+                nid: str,
+                context_lookup: dict[str, str] = prefetched_contexts,
+            ) -> tuple[str, DAGNode | None]:
                 """Execute a single node and return (node_id, node)."""
                 try:
                     child = run.get_node(nid)
@@ -772,7 +812,7 @@ class RLMEngine:
 
                     # Retrieve subtask-specific context from collection
                     if self.retriever.available:
-                        fresh_context = prefetched_contexts.get(task, "")
+                        fresh_context = context_lookup.get(task, "")
                         if not fresh_context:
                             fresh_context = await self._retrieve_collection_context_cached(task, limit=5)
                         if fresh_context:
@@ -847,8 +887,21 @@ class RLMEngine:
         context: str,
     ) -> None:
         """Execute a leaf node directly without decomposition."""
-        # Select model tier based on depth
-        tier = ModelTier.LEAF if node.depth >= 2 else ModelTier.WORKER
+        # Select model tier based on depth and strategy. Discipline-report
+        # section tasks are intentionally leaf-tier parallel work; final
+        # synthesis/quality stages use the orchestrator/judge-capable tier.
+        stage_name = node.metadata.get("stage_name") if node.metadata else None
+        if (
+            hasattr(self, '_selected_strategy')
+            and self._selected_strategy
+            and self._selected_strategy.strategy_type == StrategyType.DISCIPLINE_REPORT
+        ):
+            if stage_name in {"final_synthesis", "quality_gate"}:
+                tier = ModelTier.ORCHESTRATOR
+            else:
+                tier = ModelTier.LEAF
+        else:
+            tier = ModelTier.LEAF if node.depth >= 2 else ModelTier.WORKER
 
         answer, tokens = await self.llm.answer_task(
             task=node.task,
@@ -953,15 +1006,38 @@ class RLMEngine:
 
         return None
 
+    def _make_retrieval_revision_key(self) -> tuple[Any, ...]:
+        """Best-effort revision key for in-run retrieval memoization.
+
+        Named qmd collections do not expose a cheap revision ID here, so this key
+        intentionally remains scoped to one engine/run. Filesystem roots include
+        path mtimes so repeated retrieval within a run is safe without turning
+        the cache into stale cross-run state.
+        """
+        path_key: tuple[Any, ...] | None = None
+        if self.collection_path and self.collection_path.exists():
+            try:
+                stat = self.collection_path.stat()
+                path_key = (str(self.collection_path), stat.st_mtime_ns, stat.st_size)
+            except OSError:
+                path_key = (str(self.collection_path), None)
+
+        return (
+            tuple(self.collections),
+            path_key,
+        )
+
     def _make_retrieval_cache_key(self, query: str, limit: int) -> tuple[Any, ...]:
         """Create a stable cache key for retrieval calls within this engine instance."""
+        normalized_query = " ".join(query.lower().split())
+        task_hash = hashlib.sha256(query.strip().encode()).hexdigest()[:16]
         return (
-            query.strip(),
+            normalized_query,
+            task_hash,
             limit,
+            self._retrieval_revision_key,
             self._use_qmd_hybrid,
             self._use_code_mode and self.code_executor is not None,
-            tuple(self.collections),
-            str(self.collection_path) if self.collection_path else None,
         )
 
     async def _retrieve_collection_context_cached(self, query: str, limit: int = 10) -> str:

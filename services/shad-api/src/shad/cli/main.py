@@ -25,6 +25,7 @@ from rich.tree import Tree
 
 from shad import __version__
 from shad.cache import RedisCache
+from shad.discipline.source_map import SourceMapGenerator
 from shad.engine import LLMProvider, RLMEngine
 from shad.engine.llm import ModelTier
 from shad.engine.strategies import StrategySelector, StrategyType
@@ -513,7 +514,7 @@ def cli() -> None:
 @click.option("--qmd-hybrid/--no-qmd-hybrid", default=True, help="Use qmd hybrid search with reranking (BM25 + vector + RRF + reranker, default: on)")
 @click.option("--decay-halflife", default=30.0, type=float, metavar="DAYS",
               help="Half-life for temporal score decay in days (0 = disable decay, default: 30)")
-@click.option("--strategy", "-s", type=click.Choice(["software", "research", "analysis", "planning"]),
+@click.option("--strategy", "-s", type=click.Choice(["software", "discipline-report", "research", "analysis", "planning"]),
               help="Override automatic strategy selection")
 @click.option("--verify", type=click.Choice(["off", "basic", "build", "strict"]), default="basic",
               help="Verification level (default: basic)")
@@ -883,6 +884,54 @@ def run(
         sys.exit(2)
 
 
+@cli.group("discipline")
+def discipline_group() -> None:
+    """Discipline-building utilities."""
+    pass
+
+
+@discipline_group.command("source-map")
+@click.argument("paths", nargs=-1, type=click.Path(exists=True))
+@click.option("--output", "output", "-o", type=click.Path(), help="Write source-map Markdown to this file")
+@click.option("--max-files-per-section", default=80, show_default=True, help="Maximum file paths per source-map section")
+@click.option("--json", "as_json", is_flag=True, default=False, help="Output source-map data as JSON")
+def discipline_source_map(
+    paths: tuple[str, ...],
+    output: str | None,
+    max_files_per_section: int,
+    as_json: bool,
+) -> None:
+    """Generate a deterministic, model-free source map for discipline runs.
+
+    The source map is suitable for committing as source-map.md or passing into
+    `shad run --strategy discipline-report` as pre-RLM context.
+    """
+    if not paths:
+        console.print("[yellow]Provide at least one source path.[/yellow]")
+        sys.exit(1)
+
+    source_map = SourceMapGenerator(max_files_per_section=max_files_per_section).generate(
+        [Path(path) for path in paths]
+    )
+
+    if as_json:
+        import json as json_mod
+        from dataclasses import asdict
+
+        rendered = json_mod.dumps(asdict(source_map), ensure_ascii=False, indent=2)
+    else:
+        rendered = source_map.to_markdown()
+
+    if output:
+        output_path = Path(output).expanduser()
+        output_path.parent.mkdir(parents=True, exist_ok=True)
+        output_path.write_text(rendered, encoding="utf-8")
+        console.print(f"[green]✓ Wrote source map to {output_path}[/green]")
+    else:
+        click.echo(rendered)
+
+
+
 @cli.command("plan")
 @click.argument("goal")
 @click.option("--sources", multiple=True, help="Source directory path(s) to index/populate (can specify multiple)")
@@ -893,7 +942,7 @@ def run(
 @click.option("--profile", type=click.Choice(["fast", "balanced", "deep"], case_sensitive=False),
               help="Preset budget profile override")
 @click.option("--auto-profile", is_flag=True, help="Auto-select profile based on machine specs")
-@click.option("--strategy", "-s", type=click.Choice(["software", "research", "analysis", "planning"]),
+@click.option("--strategy", "-s", type=click.Choice(["software", "discipline-report", "research", "analysis", "planning"]),
               help="Override automatic strategy selection")
 @click.option("--verify", type=click.Choice(["off", "basic", "build", "strict"]),
               help="Verification level override")

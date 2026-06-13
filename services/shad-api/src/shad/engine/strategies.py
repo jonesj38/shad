@@ -7,6 +7,7 @@ Per SPEC.md Section 2.2:
 
 Strategies:
 - software: Build software with contracts-first, type consistency
+- discipline-report: Produce source-grounded discipline artifacts for future agents
 - research: Gather and cite sources from collection
 - analysis: Analyze data with explicit criteria and tradeoffs
 - planning: Create plans with milestones and dependencies
@@ -25,6 +26,7 @@ class StrategyType(StrEnum):
     """Types of decomposition strategies."""
 
     SOFTWARE = "software"
+    DISCIPLINE_REPORT = "discipline-report"
     RESEARCH = "research"
     ANALYSIS = "analysis"
     PLANNING = "planning"
@@ -321,6 +323,191 @@ Add optional stages as needed:
 - openapi: If task involves REST API
 - migrations: If task involves database changes
 - docs: If documentation is requested"""
+
+
+class DisciplineReportStrategy(Strategy):
+    """Source-grounded discipline-report strategy for building agent disciplines.
+
+    This strategy is intentionally wide and shallow: produce one deterministic
+    source map, run independent section analyses in parallel, then synthesize and
+    verify. It avoids software implementation stages because discipline builds
+    are documentation/retrieval artifacts, not requests to design new code.
+    """
+
+    @property
+    def strategy_type(self) -> StrategyType:
+        return StrategyType.DISCIPLINE_REPORT
+
+    @property
+    def skeleton(self) -> StrategySkeleton:
+        section_deps = ["source_map"]
+        final_deps = [
+            "product_model",
+            "repo_architecture",
+            "core_concepts",
+            "protocols_security",
+            "formal_methods",
+            "developer_workflows",
+            "operational_pitfalls",
+            "routing_hints",
+        ]
+        return StrategySkeleton(
+            strategy_type=StrategyType.DISCIPLINE_REPORT,
+            required_stages=[
+                StrategyStage(
+                    name="source_map",
+                    description="Create or consume a deterministic source map and source revision summary",
+                    required=True,
+                    tags=["deterministic", "source-map"],
+                ),
+                StrategyStage(
+                    name="product_model",
+                    description="Explain the product/system mental model and user-facing purpose",
+                    required=True,
+                    depends_on=section_deps,
+                    tags=["overview", "artifact-section"],
+                ),
+                StrategyStage(
+                    name="repo_architecture",
+                    description="Map repository architecture, major packages/modules, and ownership boundaries",
+                    required=True,
+                    depends_on=section_deps,
+                    tags=["architecture", "artifact-section"],
+                ),
+                StrategyStage(
+                    name="core_concepts",
+                    description="Describe core runtime concepts, data models, state, and protocols",
+                    required=True,
+                    depends_on=section_deps,
+                    tags=["concepts", "artifact-section"],
+                ),
+                StrategyStage(
+                    name="protocols_security",
+                    description="Document protocols, trust assumptions, security model, and invariants",
+                    required=True,
+                    depends_on=section_deps,
+                    tags=["security", "artifact-section"],
+                ),
+                StrategyStage(
+                    name="formal_methods",
+                    description="Connect proof/spec/fuzz assets to implementation behavior and invariants",
+                    required=True,
+                    depends_on=section_deps,
+                    tags=["formal-methods", "artifact-section"],
+                ),
+                StrategyStage(
+                    name="developer_workflows",
+                    description="Document build, test, release, deploy, and operational workflows",
+                    required=True,
+                    depends_on=section_deps,
+                    tags=["workflow", "artifact-section"],
+                ),
+                StrategyStage(
+                    name="operational_pitfalls",
+                    description="List common pitfalls, source authority/conflict rules, and checklists",
+                    required=True,
+                    depends_on=section_deps,
+                    tags=["pitfalls", "artifact-section"],
+                ),
+                StrategyStage(
+                    name="routing_hints",
+                    description="Recommend runtime useWhen/avoidWhen hints and retrieval collection usage",
+                    required=True,
+                    depends_on=section_deps,
+                    tags=["routing", "artifact-section"],
+                ),
+                StrategyStage(
+                    name="final_synthesis",
+                    description="Assemble the canonical discipline report and layered artifact manifest",
+                    required=True,
+                    depends_on=final_deps,
+                    tags=["synthesis", "artifact"],
+                ),
+                StrategyStage(
+                    name="quality_gate",
+                    description="Verify required coverage, citations, unsupported claims, and routing hints",
+                    required=True,
+                    depends_on=["final_synthesis"],
+                    tags=["verification", "quality-gate"],
+                ),
+            ],
+            optional_stages=[],
+            constraints=[
+                StrategyConstraint(
+                    name="source_grounded",
+                    description="Every substantive claim must be grounded in retrieved source context or explicitly marked uncertain",
+                    value=True,
+                ),
+                StrategyConstraint(
+                    name="wide_shallow_dag",
+                    description="Major section tasks should run in parallel after source-map preparation; avoid nested implementation loops",
+                    value=True,
+                ),
+                StrategyConstraint(
+                    name="no_new_implementation_design",
+                    description="Do not design new packages, schemas, APIs, or code unless they already exist in the source corpus",
+                    value=True,
+                ),
+                StrategyConstraint(
+                    name="layered_artifacts",
+                    description="Return a canonical report plus section-level artifact recommendations",
+                    value=True,
+                ),
+            ],
+            default_dependencies=[
+                ("source_map", "product_model"),
+                ("source_map", "repo_architecture"),
+                ("source_map", "core_concepts"),
+                ("source_map", "protocols_security"),
+                ("source_map", "formal_methods"),
+                ("source_map", "developer_workflows"),
+                ("source_map", "operational_pitfalls"),
+                ("source_map", "routing_hints"),
+                ("product_model", "final_synthesis"),
+                ("repo_architecture", "final_synthesis"),
+                ("core_concepts", "final_synthesis"),
+                ("protocols_security", "final_synthesis"),
+                ("formal_methods", "final_synthesis"),
+                ("developer_workflows", "final_synthesis"),
+                ("operational_pitfalls", "final_synthesis"),
+                ("routing_hints", "final_synthesis"),
+                ("final_synthesis", "quality_gate"),
+            ],
+        )
+
+    def get_hint_pack(self) -> str:
+        """Get hint pack for discipline-report strategy."""
+        return """You are decomposing a source-grounded discipline report task.
+
+IMPORTANT CONSTRAINTS:
+1. SOURCE GROUNDED: Every substantive claim must cite or quote source context when possible.
+   - Prefer concrete file paths, symbols, commands, specs, and examples.
+   - Mark uncertainty explicitly when evidence is weak or absent.
+
+2. WIDE/SHALLOW: Do one source-map/setup step, then independent major section analyses in parallel.
+   - Do NOT recursively design contracts, packages, APIs, or implementation plans.
+   - Section tasks should answer directly from retrieved context.
+
+3. NO NEW IMPLEMENTATION DESIGN: This is a discipline/report artifact, not a software build.
+   - Do not invent schemas, packages, modules, or APIs unless they already exist in the corpus.
+   - If the source lacks an answer, say what is missing and how to verify it.
+
+4. LAYERED ARTIFACTS: The final answer should be usable as a durable discipline.
+   - Include a canonical report plus section artifact recommendations.
+   - Include useWhen/avoidWhen routing hints and collection guidance.
+
+DECOMPOSITION STRUCTURE:
+1. source_map - summarize deterministic source map/revision context
+2. product_model - product/system mental model
+3. repo_architecture - packages, modules, source authority
+4. core_concepts - data models, runtime concepts, protocols
+5. protocols_security - trust assumptions, invariants, security model
+6. formal_methods - TLA+/Lean/fuzz/spec assets and implementation linkage
+7. developer_workflows - build/test/release/deploy/ops surfaces
+8. operational_pitfalls - pitfalls, conflict rules, checklists
+9. routing_hints - useWhen/avoidWhen and retrieval guidance
+10. final_synthesis - canonical report and artifact manifest
+11. quality_gate - coverage/citation/speculation verification"""
 
 
 class ResearchStrategy(Strategy):
@@ -639,6 +826,13 @@ Add optional stages as needed:
 
 # Strategy keyword patterns for heuristic selection
 STRATEGY_KEYWORDS: dict[StrategyType, list[str]] = {
+    StrategyType.DISCIPLINE_REPORT: [
+        "discipline", "discipline report", "agent discipline", "build discipline",
+        "source-grounded", "source grounded", "runtime retrieval", "retrieval hints",
+        "usewhen", "avoidwhen", "collection guidance", "artifact report",
+        "source map", "architecture map", "future agents", "knowledge discipline",
+        "semantos discipline", "edwinpai discipline",
+    ],
     StrategyType.SOFTWARE: [
         "build", "create", "implement", "develop", "code", "program",
         "api", "app", "application", "service", "system", "backend",
@@ -761,6 +955,7 @@ class StrategySelector:
 # Strategy registry
 _STRATEGIES: dict[StrategyType, Strategy] = {
     StrategyType.SOFTWARE: SoftwareStrategy(),
+    StrategyType.DISCIPLINE_REPORT: DisciplineReportStrategy(),
     StrategyType.RESEARCH: ResearchStrategy(),
     StrategyType.ANALYSIS: AnalysisStrategy(),
     StrategyType.PLANNING: PlanningStrategy(),

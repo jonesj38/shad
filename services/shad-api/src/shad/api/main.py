@@ -121,7 +121,7 @@ class RunRequest(BaseModel):
     collection_paths: list[str] | None = Field(default=None, description="Collection paths for multi-collection context")
     budget: dict[str, int] | None = Field(default=None, description="Budget overrides")
     voice: str | None = Field(default=None, description="Voice for output rendering")
-    strategy: str | None = Field(default=None, description="Strategy override: software, research, analysis, planning")
+    strategy: str | None = Field(default=None, description="Strategy override: software, discipline-report, research, analysis, planning")
     verify: str | None = Field(default="basic", description="Verification level: off, basic, build, strict")
     write_files: bool = Field(default=False, description="Write output files to disk")
     output_path: str | None = Field(default=None, description="Output directory for files")

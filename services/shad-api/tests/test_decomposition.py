@@ -18,9 +18,9 @@ from shad.engine.decomposition import (
     StrategyDecomposer,
 )
 from shad.engine.strategies import (
-    StrategyType,
-    SoftwareStrategy,
     ResearchStrategy,
+    SoftwareStrategy,
+    StrategyType,
     get_strategy,
 )
 
@@ -339,3 +339,39 @@ class TestDecomposerWithBudget:
 
         # Should respect max_nodes
         assert len(result.nodes) <= 10
+
+    @pytest.mark.asyncio
+    async def test_discipline_report_decomposition_is_static_wide_and_shallow(
+        self, decomposer: StrategyDecomposer, mock_llm: MagicMock
+    ) -> None:
+        """Discipline reports use deterministic section DAGs, not LLM planning."""
+        strategy = get_strategy(StrategyType.DISCIPLINE_REPORT)
+
+        result = await decomposer.decompose(
+            task="Build the Semantos discipline from source snapshots",
+            strategy=strategy,
+            max_nodes=50,
+        )
+
+        stage_names = [node.stage_name for node in result.nodes]
+        assert result.is_valid is True
+        assert result.tokens_used == 0
+        mock_llm.complete.assert_not_called()
+        assert "source_map" in stage_names
+        assert "repo_architecture" in stage_names
+        assert "formal_methods" in stage_names
+        assert "routing_hints" in stage_names
+        assert "final_synthesis" in stage_names
+        assert "quality_gate" in stage_names
+        assert "implementation" not in stage_names
+
+        architecture = next(node for node in result.nodes if node.stage_name == "repo_architecture")
+        formal = next(node for node in result.nodes if node.stage_name == "formal_methods")
+        final = next(node for node in result.nodes if node.stage_name == "final_synthesis")
+        quality = next(node for node in result.nodes if node.stage_name == "quality_gate")
+
+        assert architecture.hard_deps == ["source_map"]
+        assert formal.hard_deps == ["source_map"]
+        assert "repo_architecture" in final.hard_deps
+        assert "formal_methods" in final.hard_deps
+        assert quality.hard_deps == ["final_synthesis"]

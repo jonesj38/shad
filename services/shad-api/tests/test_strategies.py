@@ -11,16 +11,16 @@ from __future__ import annotations
 import pytest
 
 from shad.engine.strategies import (
-    Strategy,
-    StrategySkeleton,
-    StrategyStage,
+    AnalysisStrategy,
+    DisciplineReportStrategy,
+    PlanningStrategy,
+    ResearchStrategy,
+    SoftwareStrategy,
     StrategyConstraint,
     StrategySelector,
+    StrategySkeleton,
+    StrategyStage,
     StrategyType,
-    SoftwareStrategy,
-    ResearchStrategy,
-    AnalysisStrategy,
-    PlanningStrategy,
 )
 
 
@@ -176,6 +176,40 @@ class TestSoftwareStrategy:
         assert ("types_contracts", "implementation") in deps
 
 
+class TestDisciplineReportStrategy:
+    """Tests for discipline-report strategy."""
+
+    def test_discipline_report_strategy_has_wide_section_stages(self) -> None:
+        strategy = DisciplineReportStrategy()
+        skeleton = strategy.skeleton
+        required_names = [s.name for s in skeleton.required_stages]
+
+        assert strategy.strategy_type == StrategyType.DISCIPLINE_REPORT
+        assert "source_map" in required_names
+        assert "repo_architecture" in required_names
+        assert "formal_methods" in required_names
+        assert "routing_hints" in required_names
+        assert "final_synthesis" in required_names
+        assert "quality_gate" in required_names
+        assert "implementation" not in required_names
+
+    def test_discipline_report_parallel_dependencies(self) -> None:
+        strategy = DisciplineReportStrategy()
+        deps = strategy.default_dependencies
+
+        assert ("source_map", "repo_architecture") in deps
+        assert ("source_map", "formal_methods") in deps
+        assert ("repo_architecture", "final_synthesis") in deps
+        assert ("final_synthesis", "quality_gate") in deps
+
+    def test_discipline_report_forbids_implementation_drift(self) -> None:
+        strategy = DisciplineReportStrategy()
+        hint_pack = strategy.get_hint_pack().lower()
+
+        assert "no new implementation design" in hint_pack
+        assert "do not invent" in hint_pack
+
+
 class TestResearchStrategy:
     """Tests for the research strategy."""
 
@@ -232,6 +266,16 @@ class TestStrategySelector:
     def selector(self) -> StrategySelector:
         """Create a strategy selector."""
         return StrategySelector()
+
+    def test_select_discipline_report_strategy_by_keywords(
+        self, selector: StrategySelector
+    ) -> None:
+        """Test selecting discipline-report strategy by keywords."""
+        task = "Build a source-grounded Semantos discipline report with useWhen and avoidWhen hints"
+        result = selector.select(task)
+
+        assert result.strategy_type == StrategyType.DISCIPLINE_REPORT
+        assert result.confidence >= 0.7
 
     def test_select_software_strategy_by_keywords(
         self, selector: StrategySelector
@@ -334,7 +378,7 @@ class TestStrategyRegistry:
         from shad.engine.strategies import get_all_strategies
 
         strategies = get_all_strategies()
-        assert len(strategies) >= 4  # software, research, analysis, planning
+        assert len(strategies) >= 5  # software, discipline-report, research, analysis, planning
 
 
 class TestStrategyIntegration:

@@ -87,6 +87,9 @@ class StrategyDecomposer:
         logger.info(f"[DECOMPOSE] Starting decomposition for: {task[:100]}...")
         logger.info(f"[DECOMPOSE] Strategy: {strategy.strategy_type.value}")
 
+        if strategy.strategy_type == StrategyType.DISCIPLINE_REPORT:
+            return self._decompose_discipline_report(task, strategy, max_nodes)
+
         # Build prompt with strategy constraints
         prompt = self._build_decomposition_prompt(task, strategy, context, max_nodes)
 
@@ -122,6 +125,123 @@ class StrategyDecomposer:
                 is_valid=False,
                 validation_errors=[f"Decomposition failed: {e!s}"],
             )
+
+    def _decompose_discipline_report(
+        self,
+        task: str,
+        strategy: Strategy,
+        max_nodes: int,
+    ) -> DecompositionResult:
+        """Build a deterministic wide/shallow DAG for discipline reports.
+
+        Generic LLM decomposition tends to treat "build a discipline" as a
+        software implementation task and creates serial contract/implementation
+        loops. Discipline reports have a known artifact shape, so generate the
+        section DAG directly and spend LLM calls on source-grounded section
+        writing instead of planning the plan.
+        """
+        skeleton = strategy.skeleton
+        nodes: list[DecompositionNode] = []
+        stage_by_name = {stage.name: stage for stage in skeleton.required_stages}
+
+        section_artifacts = {
+            "source_map": "source-map.md",
+            "product_model": "product-model.md",
+            "repo_architecture": "architecture.md",
+            "core_concepts": "runtime-concepts.md",
+            "protocols_security": "protocols-security.md",
+            "formal_methods": "formal-methods.md",
+            "developer_workflows": "developer-workflows.md",
+            "operational_pitfalls": "pitfalls-checklists.md",
+            "routing_hints": "routing-hints.md",
+            "final_synthesis": "discipline-report.md",
+            "quality_gate": "quality-gate.md",
+        }
+
+        task_templates = {
+            "source_map": (
+                "Summarize the deterministic source-map and source revision context already provided. "
+                "Identify the source corpus boundaries, important file groups, formal/spec assets, "
+                "build/test/deploy surfaces, and any obvious coverage gaps. Do not invent files."
+            ),
+            "product_model": (
+                "Write the product/system mental model section for the discipline report. Explain what "
+                "the system is, who/what it serves, major capabilities, and how a future agent should "
+                "think about it. Ground claims in retrieved source context."
+            ),
+            "repo_architecture": (
+                "Write the repository architecture section. Map major packages, modules, languages, "
+                "entrypoints, generated/vendor areas, and source-authority rules. Cite paths and symbols."
+            ),
+            "core_concepts": (
+                "Write the core concepts section. Cover runtime concepts, data models, state machines, "
+                "protocol flows, APIs, and important invariants visible in source. Cite files."
+            ),
+            "protocols_security": (
+                "Write the protocols/security/trust section. Cover cryptographic or trust assumptions, "
+                "authorization boundaries, threat model hints, policies, services, and security-sensitive "
+                "runtime behavior. Mark uncertainty explicitly."
+            ),
+            "formal_methods": (
+                "Write the formal methods section. Connect TLA+, Lean, fuzzing, specs, proofs, configs, "
+                "and invariants to implementation behavior. Explain what has evidence and what remains "
+                "unverified. Cite formal/spec files."
+            ),
+            "developer_workflows": (
+                "Write the developer workflows section. Cover build, test, release, deployment, service, "
+                "mobile/runtime, and operational commands/files. Prefer exact commands from source."
+            ),
+            "operational_pitfalls": (
+                "Write the pitfalls/checklists section. Include common mistakes, source conflict rules, "
+                "safe update workflow, validation checklist, and escalation points for future agents."
+            ),
+            "routing_hints": (
+                "Write recommended runtime retrieval hints for the discipline. Include useWhen, avoidWhen, "
+                "preferred source/artifact collections, query patterns, and when to fall back to raw sources."
+            ),
+            "final_synthesis": (
+                "Assemble the canonical discipline report from section results. Include a layered artifact "
+                "manifest for source-map.md, architecture.md, formal-methods.md, runtime-concepts.md, "
+                "developer-workflows.md, pitfalls-checklists.md, routing-hints.md, and the canonical final "
+                "report. Keep it source-grounded and do not design new code."
+            ),
+            "quality_gate": (
+                "Verify the discipline report against quality criteria: required sections present, major "
+                "claims grounded with citations/paths/quotes, formal/runtime/deploy surfaces covered, "
+                "useWhen/avoidWhen hints actionable, and unsupported/speculative claims clearly marked. "
+                "Return PASS/NEEDS_WORK with concrete fixes."
+            ),
+        }
+
+        for stage in skeleton.required_stages:
+            if len(nodes) >= max_nodes:
+                break
+            nodes.append(
+                DecompositionNode(
+                    stage_name=stage.name,
+                    task=(
+                        f"{task}\n\n"
+                        f"Discipline-report stage: {stage.name}. {task_templates[stage.name]}\n"
+                        f"Expected layered artifact: {section_artifacts[stage.name]}"
+                    ),
+                    hard_deps=list(stage.depends_on),
+                    soft_deps=[] if stage.name == "source_map" else ["source_map"],
+                    metadata={
+                        "artifact": section_artifacts[stage.name],
+                        "discipline_report_section": True,
+                        "tags": list(stage_by_name[stage.name].tags),
+                    },
+                )
+            )
+
+        validation_errors = self._validate_decomposition(nodes, strategy)
+        return DecompositionResult(
+            strategy_type=strategy.strategy_type,
+            nodes=nodes,
+            is_valid=len(validation_errors) == 0,
+            validation_errors=validation_errors,
+            tokens_used=0,
+        )
 
     def _build_system_prompt(self, strategy: Strategy) -> str:
         """Build system prompt with strategy hint pack."""
