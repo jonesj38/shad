@@ -272,10 +272,12 @@ class FolderIngester:
 
     TEXT_EXTENSIONS = {".md", ".txt", ".rst"}
     CODE_EXTENSIONS = {
-        ".c", ".cc", ".cpp", ".css", ".go", ".h", ".hpp", ".html",
-        ".java", ".js", ".jsx", ".json", ".mjs", ".py", ".rs", ".sh",
-        ".sql", ".svelte", ".swift", ".toml", ".ts", ".tsx", ".vue",
-        ".yaml", ".yml", ".zig",
+        ".c", ".cc", ".cfg", ".cmake", ".cpp", ".cs", ".css", ".dart",
+        ".ex", ".exs", ".go", ".gradle", ".h", ".hpp", ".html", ".java",
+        ".js", ".jsx", ".json", ".kt", ".kts", ".lean", ".mjs", ".pbxproj",
+        ".plist", ".podspec", ".policy", ".py", ".rs", ".service", ".sh",
+        ".sql", ".svelte", ".swift", ".tla", ".toml", ".ts", ".tsx",
+        ".vue", ".xml", ".yaml", ".yml", ".zig",
     }
     SKIP_DIRS = {
         ".cache", ".git", ".next", ".nuxt", ".pnpm-store", ".pytest_cache",
