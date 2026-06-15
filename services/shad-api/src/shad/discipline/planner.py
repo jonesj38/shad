@@ -236,7 +236,7 @@ class DisciplinePackageScaffolder:
 
     @staticmethod
     def _render_stage_runner(plan: DisciplinePlan) -> str:
-        quoted_sources = " ".join(shlex.quote(root) for root in plan.source_roots)
+        quoted_sources = " ".join(f"--sources {shlex.quote(root)}" for root in plan.source_roots)
         lines = [
             "#!/usr/bin/env bash",
             "set -euo pipefail",
@@ -252,7 +252,7 @@ class DisciplinePackageScaffolder:
             ")",
             "mkdir -p \"$ROOT/$(dirname \"$OUT\")\" \"$ROOT/07-Out-Reports/logs\"",
             "shad run \"$(cat \"$PROMPT\")\" --strategy discipline-report --profile deep "
-            f"--sources {quoted_sources} > \"$ROOT/$OUT\" 2> \"$ROOT/07-Out-Reports/logs/$STAGE.log\"",
+            f"{quoted_sources} > \"$ROOT/$OUT\" 2> \"$ROOT/07-Out-Reports/logs/$STAGE.log\"",
             "echo \"wrote $ROOT/$OUT\"",
             "",
         ]

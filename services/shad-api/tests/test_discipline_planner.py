@@ -60,7 +60,10 @@ def test_scaffold_writes_package_layout_source_map_and_prompts(tmp_path: Path) -
     assert (package / "02-Source-Map" / "source-map.md").is_file()
     assert (package / "04-Data" / "discipline-plan.json").is_file()
     assert (package / "05-Scripts" / "stage-prompts" / "architecture.md").is_file()
-    assert (package / "05-Scripts" / "run-discipline-stage.sh").is_file()
+    runner = (package / "05-Scripts" / "run-discipline-stage.sh")
+    assert runner.is_file()
+    runner_text = runner.read_text()
+    assert runner_text.count("--sources ") == 2
     assert "edwin-docs-private" not in (package / "02-Source-Map" / "source-map.md").read_text()
 
     saved = json.loads((package / "04-Data" / "discipline-plan.json").read_text())
