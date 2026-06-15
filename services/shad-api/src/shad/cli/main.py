@@ -25,6 +25,7 @@ from rich.tree import Tree
 
 from shad import __version__
 from shad.cache import RedisCache
+from shad.discipline.planner import DisciplinePackageScaffolder
 from shad.discipline.source_map import SourceMapGenerator
 from shad.engine import LLMProvider, RLMEngine
 from shad.engine.llm import ModelTier
@@ -930,6 +931,55 @@ def discipline_source_map(
     else:
         click.echo(rendered)
 
+
+
+@discipline_group.command("scaffold")
+@click.argument("name")
+@click.argument("package_dir", type=click.Path())
+@click.option("--source", "sources", multiple=True, type=click.Path(exists=True), required=True,
+              help="Source root to include in the discipline package (repeatable)")
+@click.option("--exclude", "excludes", multiple=True,
+              help="Path/name/glob to exclude from source-map and generated plan (repeatable)")
+@click.option("--overwrite", is_flag=True, default=False,
+              help="Allow writing into a non-empty package directory")
+@click.option("--max-files-per-section", default=120, show_default=True,
+              help="Maximum file paths per source-map section")
+@click.option("--json", "as_json", is_flag=True, default=False,
+              help="Print the generated plan as JSON instead of Markdown summary")
+def discipline_scaffold(
+    name: str,
+    package_dir: str,
+    sources: tuple[str, ...],
+    excludes: tuple[str, ...],
+    overwrite: bool,
+    max_files_per_section: int,
+    as_json: bool,
+) -> None:
+    """Create a deterministic staged discipline package scaffold.
+
+    This command does not run expensive RLM calls. It creates the standard
+    staged package layout, source-map, run plan, and per-stage prompts so a
+    discipline can be built as focused parallel stages instead of one giant
+    recursive run.
+    """
+    try:
+        plan = DisciplinePackageScaffolder(max_files_per_section=max_files_per_section).scaffold(
+            name=name,
+            package_dir=Path(package_dir),
+            source_roots=[Path(source) for source in sources],
+            excludes=list(excludes),
+            overwrite=overwrite,
+        )
+    except FileExistsError as exc:
+        console.print(f"[red]{exc}[/red]")
+        console.print("[yellow]Use --overwrite to write into an existing package directory.[/yellow]")
+        sys.exit(1)
+
+    if as_json:
+        click.echo(plan.to_json())
+    else:
+        click.echo(plan.to_markdown())
+    console.print(f"[green]✓ Scaffolded discipline package at {plan.package_dir}[/green]")
 
 
 @cli.command("plan")
