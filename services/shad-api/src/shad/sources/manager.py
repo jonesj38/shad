@@ -90,12 +90,74 @@ class SourceManager:
         self.save_config()
         return source
 
-    def remove_source(self, source_id: str) -> bool:
-        """Remove a source by ID."""
+    def remove_source(self, source_id: str, cleanup: bool = False) -> tuple[bool, list[str]]:
+        """Remove a source by ID.
+
+        Args:
+            source_id: The source identifier.
+            cleanup: If True, delete ingested markdown snapshots from the
+                     collection directory before removing the config entry.
+
+        Returns:
+            Tuple of (was_removed, list_of_deleted_paths).
+        """
+        import shutil
+
+        deleted_paths: list[str] = []
+
+        if cleanup:
+            source = self.config.get_source(source_id)
+            if source is not None:
+                deleted_paths = self._cleanup_source_files(source)
+
         removed = self.config.remove_source(source_id)
         if removed:
             self.save_config()
-        return removed
+        return removed, deleted_paths
+
+    def _cleanup_source_files(self, source: Source) -> list[str]:
+        """Delete ingested snapshot files for a source from its collection.
+
+        Returns list of deleted directory/file paths.
+        """
+        import shutil
+
+        collection_path = Path(source.collection_path).expanduser().resolve()
+        sources_dir = collection_path / "Sources"
+        deleted: list[str] = []
+
+        if source.type == SourceType.FOLDER and source.path:
+            # Folder sources are stored under Sources/local/<folder_name>/
+            folder_name = Path(source.path).expanduser().resolve().name
+            snapshot_dir = sources_dir / "local" / folder_name
+            if snapshot_dir.exists():
+                shutil.rmtree(snapshot_dir)
+                deleted.append(str(snapshot_dir))
+                logger.info("Deleted folder source snapshots: %s", snapshot_dir)
+
+        elif source.type == SourceType.GITHUB and source.url:
+            # GitHub sources are stored under Sources/<domain>/<date>/
+            from urllib.parse import urlparse
+            parsed = urlparse(source.url)
+            domain = parsed.netloc.replace("www.", "")
+            domain_dir = sources_dir / domain
+            if domain_dir.exists():
+                # Only delete if this is the only source using this domain dir
+                shutil.rmtree(domain_dir)
+                deleted.append(str(domain_dir))
+                logger.info("Deleted github source snapshots: %s", domain_dir)
+
+        elif source.type == SourceType.URL and source.url:
+            from urllib.parse import urlparse
+            parsed = urlparse(source.url)
+            domain = parsed.netloc.replace("www.", "")
+            domain_dir = sources_dir / domain
+            if domain_dir.exists():
+                shutil.rmtree(domain_dir)
+                deleted.append(str(domain_dir))
+                logger.info("Deleted URL source snapshots: %s", domain_dir)
+
+        return deleted
 
     def list_sources(self) -> list[Source]:
         """List all sources."""

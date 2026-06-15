@@ -2710,20 +2710,36 @@ def sources_list() -> None:
 
 @sources.command("remove")
 @click.argument("source_id")
-def sources_remove(source_id: str) -> None:
-    """Remove a source by ID."""
+@click.option("--keep-files", is_flag=True, default=False,
+              help="Keep ingested snapshot files (only remove config entry)")
+def sources_remove(source_id: str, keep_files: bool) -> None:
+    """Remove a source by ID.
+
+    By default, also deletes ingested markdown snapshots from the collection
+    directory. Use --keep-files to only remove the config entry.
+    """
     from shad.sources import SourceManager
 
     manager = SourceManager()
 
     # Allow partial ID matching
+    matched_source = None
     for s in manager.list_sources():
         if s.id.startswith(source_id):
             source_id = s.id
+            matched_source = s
             break
 
-    if manager.remove_source(source_id):
+    if matched_source and not keep_files:
+        console.print(f"[dim]Cleaning up ingested files for: {matched_source.url or matched_source.path}[/dim]")
+
+    removed, deleted_paths = manager.remove_source(source_id, cleanup=not keep_files)
+    if removed:
         console.print(f"[green]✓ Removed source: {source_id}[/green]")
+        if deleted_paths:
+            for p in deleted_paths:
+                console.print(f"  [dim]Deleted: {p}[/dim]")
+            console.print(f"[yellow]→ Run 'qmd update' on the collection to prune the index[/yellow]")
     else:
         console.print(f"[red]Source not found: {source_id}[/red]")
 
