@@ -41,6 +41,25 @@ async def test_openai_compatible_provider_uses_base_url_and_model(monkeypatch):
 
 
 @pytest.mark.asyncio
+async def test_edwin_gateway_provider_uses_gateway_url_model_and_local_header(monkeypatch):
+    monkeypatch.setenv("SHAD_LLM_PROVIDER", "edwin-gateway")
+    monkeypatch.setenv("SHAD_EDWIN_GATEWAY_BASE_URL", "http://127.0.0.1:18789/v1")
+    get_settings.cache_clear()
+    provider = LLMProvider(use_claude_code=True)
+    provider._complete_openai = AsyncMock(return_value=("ok", 12))
+
+    provider._worker_override = "openai-codex/gpt-5.5"
+    await provider.complete("hello", tier=ModelTier.WORKER)
+
+    kwargs = provider._complete_openai.await_args.kwargs
+    assert kwargs["model"] == "openai-codex/gpt-5.5"
+    assert kwargs["base_url"] == "http://127.0.0.1:18789/v1"
+    assert kwargs["headers"] == {
+        "x-edwinpai-local-shad": "allow-openai-compatible",
+    }
+
+
+@pytest.mark.asyncio
 async def test_auto_provider_prefers_gemini_cli_for_gemini_model(monkeypatch):
     monkeypatch.setenv("SHAD_LLM_PROVIDER", "auto")
     get_settings.cache_clear()
